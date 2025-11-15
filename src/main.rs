@@ -1,6 +1,6 @@
 use axum::{
     Router,
-    routing::{get, post},
+    routing::{get, post, put, delete},
 };
 use std::net::SocketAddr;
 use tower_http::cors::CorsLayer;
@@ -41,10 +41,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build application routes
     let app = Router::new()
         .route("/", get(root))
+        // Auth routes
         .route("/api/auth/discord", get(handlers::auth::discord_login))
         .route("/api/auth/callback", get(handlers::auth::discord_callback))
         .route("/api/auth/me", get(handlers::auth::get_current_user))
         .route("/api/auth/logout", post(handlers::auth::logout))
+        // Calendar event routes
+        .route("/api/events", post(handlers::calendar::create_event))
+        .route("/api/events", get(handlers::calendar::list_events))
+        .route("/api/events/:id", get(handlers::calendar::get_event))
+        .route("/api/events/:id", put(handlers::calendar::update_event))
+        .route("/api/events/:id", delete(handlers::calendar::delete_event))
+        // Participant routes
+        .route("/api/events/:id/participants", post(handlers::calendar::invite_participants))
+        .route("/api/events/:id/participation", put(handlers::calendar::update_participation))
+        .route("/api/events/:id/participants/:user_id", delete(handlers::calendar::remove_participant))
         .layer(cors)
         .with_state(state);
 

@@ -13,6 +13,7 @@ pub enum AppError {
     JwtError(String),
     Unauthorized,
     NotFound,
+    ValidationError(String),
 }
 
 impl IntoResponse for AppError {
@@ -24,6 +25,7 @@ impl IntoResponse for AppError {
             AppError::JwtError(msg) => (StatusCode::UNAUTHORIZED, msg),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
             AppError::NotFound => (StatusCode::NOT_FOUND, "Not found".to_string()),
+            AppError::ValidationError(msg) => (StatusCode::BAD_REQUEST, msg), 
         };
 
         let body = Json(json!({
