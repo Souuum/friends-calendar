@@ -5,7 +5,7 @@ use axum::{
     Json,
 };
 use oauth2::{
-    AuthorizationCode, CsrfToken, PkceCodeChallenge, PkceCodeVerifier, Scope,
+    AuthorizationCode, CsrfToken, PkceCodeChallenge, Scope,
     TokenResponse,
 };
 
