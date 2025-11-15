@@ -62,7 +62,7 @@ impl AppState {
 
         let jwt_secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set");
         let frontend_url = env::var("FRONTEND_URL")
-            .unwrap_or_else(|_| "http://localhost:5173".to_string());
+            .unwrap_or_else(|_| "http://localhost:1420".to_string());
 
         Ok(Self {
             db,

@@ -1,0 +1,15 @@
+{
+  "name": "friends-calendar-monorepo",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"yarn dev:backend\" \"yarn dev:web\"",
+    "dev:backend": "cd backend && cargo run",
+    "dev:web": "cd desktop && yarn dev",
+    "dev:desktop": "cd desktop && yarn tauri dev",
+    "build:backend": "cd backend && cargo build --release",
+    "build:desktop": "cd desktop && yarn tauri build"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

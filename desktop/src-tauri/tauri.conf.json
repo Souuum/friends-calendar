@@ -1,0 +1,28 @@
+{
+  "$schema": "https://schema.tauri.app/config/2.0.0",
+  "productName": "Friends Calendar",
+  "version": "0.1.0",
+  "identifier": "com.friendscalendar.app",
+  "build": {
+    "beforeDevCommand": "yarn dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "yarn build",
+    "frontendDist": "../build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Friends Calendar",
+        "width": 1200,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://localhost:8080; img-src 'self' https://cdn.discordapp.com data: blob:; style-src 'self' 'unsafe-inline'"
+    }
+  }
+}

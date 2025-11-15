@@ -105,9 +105,9 @@ pub async fn get_event_with_participants(
     };
 
     // Get participants with user info
-    let participant_rows = sqlx::query_as::<_, (Uuid, String, Option<String>, ParticipationStatus, Option<DateTime<Utc>>)>(
+    let participant_rows = sqlx::query_as::<_, (Uuid, String, String, Option<String>, ParticipationStatus, Option<DateTime<Utc>>)>(
         r#"
-        SELECT u.id, u.username, u.avatar, ep.status, ep.responded_at
+        SELECT u.id, u.discord_id, u.username, u.avatar, ep.status, ep.responded_at
         FROM event_participants ep
         JOIN users u ON ep.user_id = u.id
         WHERE ep.event_id = $1
@@ -120,10 +120,11 @@ pub async fn get_event_with_participants(
 
     let participants: Vec<ParticipantInfo> = participant_rows
         .into_iter()
-        .map(|(user_id, username, avatar, status, responded_at)| ParticipantInfo {
+        .map(|(user_id, discord_id, username, avatar, status, responded_at)| ParticipantInfo {
             user_id,
+            discord_id: discord_id.clone(),
             username,
-            avatar_url: avatar.map(|a| format!("https://cdn.discordapp.com/avatars/{}/{}.png", user_id, a)),
+            avatar_url: avatar.map(|a| format!("https://cdn.discordapp.com/avatars/{}/{}.png", discord_id, a)),
             status,
             responded_at,
         })

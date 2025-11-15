@@ -64,6 +64,7 @@ pub struct EventWithParticipants {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParticipantInfo {
     pub user_id: Uuid,
+    pub discord_id: String,
     pub username: String,
     pub avatar_url: Option<String>,
     pub status: ParticipationStatus,
