@@ -21,7 +21,6 @@
   const navItems = [
     { label: 'Calendars', icon: '📅', view: 'calendar' },
     { label: 'Announcement', icon: '🔔', view: 'announcements' },
-    { label: 'Some feature', icon: '🪶', view: 'feature' }
   ];
 </script>
 
@@ -29,7 +28,7 @@
   {#if user}
     <Header {avatar_url} {user} on:logout={handleLogout} />
   {/if}
-  <div class="flex h-screen">
+          <div class="flex">
     <aside class="w-48 bg-white flex flex-col p-3 gap-2 h-full">
       {#each navItems as item}
         <button
@@ -42,7 +41,7 @@
         </button>
       {/each}
     </aside>
-    <main class="w-14/16 shadow-2xl rounded-xl">
+    <main class="w-14/16 fit-content">
         <slot />
     </main>
   </div>
