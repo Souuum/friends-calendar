@@ -73,5 +73,8 @@
     </main>
 
 {#if showCreateModal}
-  <CreateEventModal on:close={() => (showCreateModal = false)} on:created={handleEventCreated} />
+  <CreateEventModal
+    on:close={() => showCreateModal = false}
+    on:created={handleEventCreated}
+  />
 {/if}
