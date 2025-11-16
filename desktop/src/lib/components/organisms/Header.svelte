@@ -3,6 +3,7 @@
   import ProfileMenuTrigger from "$lib/components/molecules/ProfileMenu/ProfileMenuTrigger.svelte";
   import ProfileMenu from "$lib/components/molecules/ProfileMenu/ProfileMenu.svelte";
   import { clickOutside } from "$lib/actions/clickOutside";
+  import { api } from "$lib/api";
 
   export let user;
   export let avatar_url;
@@ -11,7 +12,6 @@
   let showCreateModal = false;
 
   function toggleMenu() {
-    console.log("toggling menu");
     showMenu = !showMenu;
   }
 
@@ -19,12 +19,13 @@
     console.log("settings clicked");
   }
 
-  function logout() {
-    console.log("logout clicked");
+  function handleLogout() {
+    api.clearToken();
+    window.location.reload();
   }
 </script>
 
-<header class="bg-white shadow">
+<header class="bg-white">
   <div class="mx-auto px-4 py-4 sm:px-6 lg:px-8 flex justify-end">
 
       {#if user}
@@ -32,16 +33,17 @@
           username={$user.username}
           avatar={avatar_url}
           onClick={toggleMenu}
+          show={showMenu}
         />
       {/if}
 
       {#if showMenu}
       {console.log("showing profile menu")}
-      <div class="absolute w-48 bg-white shadow-lg rounded-lg p-2 mt-16"
+      <div class="absolute w-48 bg-white shadow-lg rounded-lg p-2 top-16"
         use:clickOutside={() => (showMenu = false)}>
           <ProfileMenu
             onSettings={goToSettings}
-            onLogout={logout}
+            onLogout={handleLogout}
           />
         </div>
       {/if}
