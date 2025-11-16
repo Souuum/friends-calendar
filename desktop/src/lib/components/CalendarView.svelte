@@ -3,13 +3,17 @@
   import { api } from '$lib//api';
   import type { EventWithParticipants } from '$lib/types';
   import { user } from '$lib/stores';
+  import Calendar from '$lib/components/Calendar.svelte';
   import EventCard from '$lib/components/EventCard.svelte';
   import CreateEventModal from '$lib/components/CreateEventModal.svelte';
+  import Header from '$lib/components/organisms/Header.svelte';
+  import { page } from '$app/stores';
 
   let events: EventWithParticipants[] = [];
   let loading = true;
   let error = '';
   let showCreateModal = false;
+  let avatar_url  = `https://cdn.discordapp.com/avatars/${$user?.discord_id}/${$user?.avatar}.png`
 
   async function loadEvents() {
     try {
@@ -33,43 +37,35 @@
     window.location.reload();
   }
 
+    const navItems = [
+    { label: "Calendars", icon: "📅", href: "/calendar" },
+    { label: "Announcement", icon: "🔔", href: "/announcements" },
+    { label: "Some feature", icon: "🪶", href: "/feature" }
+  ];
+
   onMount(loadEvents);
 </script>
 
-<div class="min-h-screen bg-gray-50">
+<div class="bg-white">
   <!-- Header -->
-  <header class="bg-white shadow">
-    <div class="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8 flex justify-between items-center">
-      <div class="flex items-center gap-4">
-        <h1 class="text-2xl font-bold text-gray-900">📅 My Calendar</h1>
-        {#if $user}
-          <div class="flex items-center gap-2">
-            {#if $user.avatar_url}
-              <img src={$user.avatar_url} alt="Avatar" class="w-8 h-8 rounded-full" />
-            {/if}
-            <span class="text-sm text-gray-600">{$user.username}</span>
-          </div>
-        {/if}
-      </div>
-      <div class="flex gap-2">
-        <button
-          on:click={() => showCreateModal = true}
-          class="bg-discord-blurple hover:bg-blue-600 text-white px-4 py-2 rounded-lg font-medium transition"
-        >
-          + New Event
-        </button>
-        <button
-          on:click={handleLogout}
-          class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-lg font-medium transition"
-        >
-          Logout
-        </button>
-      </div>
-    </div>
-  </header>
-
+  {#if $user}
+  <Header {avatar_url} {user} on:logout={handleLogout} />
+  {/if}
+  <div class="flex h-screen">
+  <aside class="w-48 bg-white flex flex-col p-3 gap-2 h-full">
+    {#each navItems as item}
+      <a 
+        href={item.href}
+        class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100
+               {($page.url.pathname === item.href ? 'bg-gray-100 font-semibold' : '')}">
+        <span>{item.icon}</span>
+        <span>{item.label}</span>
+      </a>
+    {/each}
+  </aside>
   <!-- Content -->
-  <main class="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
+  <main class="w-14/16 py-8 sm:px-6 lg:px-8 rounded-t-xl bg-gray-300">
+    
     {#if loading}
       <div class="text-center py-12">
         <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-discord-blurple"></div>
@@ -85,13 +81,15 @@
         <p class="text-gray-500 mt-2">Create your first event to get started!</p>
       </div>
     {:else}
-      <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {#each events as event (event.id)}
-          <EventCard {event} on:refresh={loadEvents} />
-        {/each}
-      </div>
+    <Calendar {events}>
+         <svelte:fragment slot="event" let:event>
+            <EventCard {event} on:refresh={loadEvents} />
+        </svelte:fragment>
+    </Calendar>
     {/if}
+
   </main>
+  </div>
 </div>
 
 {#if showCreateModal}

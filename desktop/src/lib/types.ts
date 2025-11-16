@@ -3,7 +3,7 @@ export interface User {
   discord_id: string;
   username: string;
   discriminator?: string;
-  avatar_url?: string;
+  avatar?: string;
   email?: string;
 }
 
@@ -33,3 +33,5 @@ export interface EventWithParticipants extends CalendarEvent {
   is_creator: boolean;
   my_status?: 'pending' | 'accepted' | 'declined' | 'maybe';
 }
+
+export type ButtonType = 'button' | 'submit' | 'reset';
