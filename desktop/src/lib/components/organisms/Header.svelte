@@ -39,7 +39,7 @@
     {#if showMenu}
       {console.log('showing profile menu')}
       <div
-        class="absolute w-48 bg-white shadow-lg rounded-lg p-2 top-16"
+        class="absolute w-48 bg-white shadow-lg rounded-lg p-2 top-16 z-50"
         use:clickOutside={() => (showMenu = false)}
       >
         <ProfileMenu onSettings={goToSettings} onLogout={handleLogout} />
