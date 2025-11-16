@@ -9,7 +9,7 @@
 </script>
 
 <div class="flex items-center gap-3 select-none bg-none border-none">
-  <Avatar src={avatar} size={48} />
+  <Avatar src={avatar} size={32} />
   <span class="p-1 text-black font-bold text-xl">{username}</span>
 
   <button class="p-1 hover:bg-gray-100 rounded-lg transition" on:click|stopPropagation={onClick}>

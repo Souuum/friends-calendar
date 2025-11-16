@@ -23,7 +23,8 @@
   </div>
 {:else if variant === 'detailed'}
   <div
-    class="p-4 bg-primary bg-opacity-10 border-l-4 border-primary rounded-lg hover:bg-opacity-20 transition-colors">
+    class="p-4 bg-primary bg-opacity-10 border-l-4 border-primary rounded-lg hover:bg-opacity-20 transition-colors"
+  >
     <h3 class="font-semibold text-lg mb-1">{event.title || 'Untitled Event'}</h3>
     {#if event.start_time}
       <p class="text-sm text-gray-600">

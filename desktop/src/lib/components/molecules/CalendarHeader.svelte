@@ -21,7 +21,8 @@
   <div class="flex items-center gap-3">
     <button
       on:click={onToday}
-      class="px-4 py-2 text-sm font-medium hover:bg-gray-100 rounded-lg transition-colors">
+      class="px-4 py-2 text-sm font-medium hover:bg-gray-100 rounded-lg transition-colors"
+    >
       Today
     </button>
     <ViewSwitcher {view} onChange={onViewChange} />

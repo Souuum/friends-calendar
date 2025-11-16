@@ -46,35 +46,34 @@
   onMount(loadEvents);
 </script>
 
-    <main class=" py-8 sm:px-6 lg:px-8 rounded-xl">
-      {#if loading}
-        <div class="text-center py-12">
-          <div
-            class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-discord-blurple"
-          ></div>
-          <p class="mt-4 text-gray-600">Loading events...</p>
-        </div>
-      {:else if error}
-        <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
-          {error}
-        </div>
-      {:else if events.length === 0}
-        <div class="text-center py-12">
-          <p class="text-gray-600 text-lg">No events yet</p>
-          <p class="text-gray-500 mt-2">Create your first event to get started!</p>
-        </div>
-      {:else}
-        <Calendar {events}>
-          <!-- <svelte:fragment slot="event" let:eventt>
+<main class=" py-4 rounded-xl">
+  {#if loading}
+    <div class="text-center py-12">
+      <div
+        class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-discord-blurple"
+      ></div>
+      <p class="mt-4 text-gray-600">Loading events...</p>
+    </div>
+  {:else if error}
+    <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+      {error}
+    </div>
+  {:else if events.length === 0}
+    <div class="text-center py-12">
+      <p class="text-gray-600 text-lg">No events yet</p>
+      <p class="text-gray-500 mt-2">Create your first event to get started!</p>
+    </div>
+  {:else}
+    <div class="bg-white rounded-lg shadow-sm relative">
+      <Calendar {events}>
+        <!-- <svelte:fragment slot="event" let:eventt>
             <EventCard {event} on:refresh={loadEvents} />
           </svelte:fragment> -->
-        </Calendar>
-      {/if}
-    </main>
+      </Calendar>
+    </div>
+  {/if}
+</main>
 
 {#if showCreateModal}
-  <CreateEventModal
-    on:close={() => showCreateModal = false}
-    on:created={handleEventCreated}
-  />
+  <CreateEventModal on:close={() => (showCreateModal = false)} on:created={handleEventCreated} />
 {/if}

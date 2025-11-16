@@ -15,12 +15,12 @@ body {
 }
 
 @theme {
-  --color-primary: #5030E5;
-  --color-red: #FB2C2C;
-  --color-yellow: #FBB13C;
-  --color-grey: #EBEBEB;
+  --color-primary: #5030e5;
+  --color-red: #fb2c2c;
+  --color-yellow: #fbb13c;
+  --color-grey: #ebebeb;
   --color-dark-grey: #949494;
-  --color-white: #FFFFFF;
+  --color-white: #ffffff;
   --color-black: #000000;
-  --color-primary-hover: rgba(238,232,255,0.45)
+  --color-primary-hover: rgba(238, 232, 255, 0.45);
 }

@@ -22,6 +22,7 @@
   class:flex={isToday}
   class:items-center={isToday}
   class:justify-center={isToday}
-  class:opacity-60={!isCurrentMonth && size === 'small'}>
+  class:opacity-60={!isCurrentMonth && size === 'small'}
+>
   {date.getDate()}
 </span>

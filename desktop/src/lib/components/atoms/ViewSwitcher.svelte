@@ -18,7 +18,8 @@
       class="px-3 py-1 text-sm rounded transition-colors"
       class:bg-white={view === viewOption.value}
       class:shadow-sm={view === viewOption.value}
-      class:font-semibold={view === viewOption.value}>
+      class:font-semibold={view === viewOption.value}
+    >
       {viewOption.label}
     </button>
   {/each}

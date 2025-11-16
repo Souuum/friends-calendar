@@ -67,9 +67,9 @@
       </div>
     </div>
   {:else if $isAuthenticated}
-  <Frame>
-    <CalendarView />
-  </Frame>
+    <Frame>
+      <CalendarView />
+    </Frame>
   {:else}
     <LoginScreen />
   {/if}

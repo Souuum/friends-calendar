@@ -85,10 +85,6 @@
       {#each event.participants.slice(0, 5) as participant}
         <div class="flex items-center gap-1">
           {#if participant.avatar_url}
-<<<<<<< HEAD
-=======
-            <!-- {console.log("participant avatar url :",participant.avatar_url)} -->
->>>>>>> 6c97023d747da653df2b30852e686ab6b31a2bab
             <img
               src={participant.avatar_url}
               alt={participant.username}
