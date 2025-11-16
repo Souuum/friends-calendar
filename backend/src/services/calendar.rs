@@ -1,4 +1,5 @@
 use crate::models::{
+    User,
     CalendarEvent, CreateEventRequest, UpdateEventRequest, Visibility,
     EventParticipant, ParticipationStatus, EventWithParticipants, ParticipantInfo
 };
@@ -124,7 +125,7 @@ pub async fn get_event_with_participants(
             user_id,
             discord_id: discord_id.clone(),
             username,
-            avatar_url: avatar.map(|a| format!("https://cdn.discordapp.com/avatars/{}/{}.png", discord_id, a)),
+            avatar_url: User::build_avatar_url(&discord_id, &avatar),
             status,
             responded_at,
         })

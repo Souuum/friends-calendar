@@ -16,13 +16,10 @@ pub struct User {
     pub updated_at: DateTime<Utc>,
 }
 
-impl User {
-    pub fn avatar_url(&self) -> Option<String> {
-        self.avatar.as_ref().map(|avatar| {
-            format!(
-                "https://cdn.discordapp.com/avatars/{}/{}.png",
-                self.discord_id, avatar
-            )
+impl User {    
+    pub fn build_avatar_url(discord_id: &str, avatar: &Option<String>) -> Option<String> {
+        avatar.as_ref().map(|a| {
+            format!("https://cdn.discordapp.com/avatars/{}/{}.png", discord_id, a)
         })
     }
 }
