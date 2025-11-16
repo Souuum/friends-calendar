@@ -26,7 +26,7 @@
 </script>
 
 <header class="bg-white">
-  <div class="mx-auto px-4  pt-2 sm:px-6 lg:px-8 flex justify-end">
+  <div class="mx-auto px-4 pt-2 sm:px-6 lg:px-8 flex justify-end">
     {#if user}
       <ProfileMenuTrigger
         username={$user.username}
