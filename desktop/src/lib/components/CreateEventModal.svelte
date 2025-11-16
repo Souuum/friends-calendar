@@ -28,7 +28,7 @@
         start_time: new Date(startTime).toISOString(),
         end_time: new Date(endTime).toISOString(),
         location: location || undefined,
-        visibility,
+        visibility
       });
       dispatch('created');
     } catch (err) {
@@ -48,10 +48,7 @@
     <div class="p-6">
       <div class="flex justify-between items-center mb-6">
         <h2 class="text-2xl font-bold text-gray-900">Create New Event</h2>
-        <button
-          on:click={handleClose}
-          class="text-gray-400 hover:text-gray-600 text-2xl"
-        >
+        <button on:click={handleClose} class="text-gray-400 hover:text-gray-600 text-2xl">
           ×
         </button>
       </div>
@@ -82,11 +79,9 @@
             Description
           </label>
           <textarea>
-            id="description"
-            bind:value={description}
-            rows="3"
-            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
-            placeholder="What's this event about?"
+            id="description" bind:value={description}
+            rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple
+            focus:border-transparent" placeholder="What's this event about?"
           </textarea>
         </div>
 

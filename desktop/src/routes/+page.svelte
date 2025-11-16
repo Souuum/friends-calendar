@@ -12,7 +12,7 @@
     // Check if token is in URL (from Discord callback)
     const urlParams = new URLSearchParams(window.location.search);
     const tokenFromUrl = urlParams.get('token');
-    
+
     if (tokenFromUrl) {
       console.log('Token found in URL, logging in...');
       try {
@@ -20,7 +20,7 @@
         const userData = await api.getCurrentUser();
         user.set(userData);
         isAuthenticated.set(true);
-        
+
         // Clean URL (remove token from URL bar)
         window.history.replaceState({}, document.title, window.location.pathname);
       } catch (err) {
@@ -31,7 +31,7 @@
     } else {
       // Check for existing token in localStorage
       const token = api.getToken();
-      
+
       if (token) {
         try {
           const userData = await api.getCurrentUser();
@@ -46,7 +46,7 @@
         isAuthenticated.set(false);
       }
     }
-    
+
     isLoading.set(false);
   });
 </script>
@@ -59,7 +59,9 @@
   {#if $isLoading}
     <div class="flex items-center justify-center min-h-screen bg-gray-50">
       <div class="text-center">
-        <div class="animate-spin rounded-full h-16 w-16 border-4 border-discord-blurple border-t-transparent mx-auto mb-4"></div>
+        <div
+          class="animate-spin rounded-full h-16 w-16 border-4 border-discord-blurple border-t-transparent mx-auto mb-4"
+        ></div>
         <p class="text-gray-600">Loading...</p>
       </div>
     </div>

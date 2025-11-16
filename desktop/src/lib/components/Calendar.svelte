@@ -1,11 +1,11 @@
 <script lang="ts">
-  import type { EventWithParticipants } from "$lib/types";
-  import { onMount } from "svelte";
+  import type { EventWithParticipants } from '$lib/types';
+  import { onMount } from 'svelte';
 
   export let events: EventWithParticipants[] = [];
 
   // View states: "month" | "week" | "day"
-  let view: "month" | "week" | "day" = "month";
+  let view: 'month' | 'week' | 'day' = 'month';
 
   let currentDate = new Date();
 
@@ -22,9 +22,9 @@
 
   // Move in time depending on view
   function prev() {
-    if (view === "month") {
+    if (view === 'month') {
       currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
-    } else if (view === "week") {
+    } else if (view === 'week') {
       currentDate = new Date(currentDate.setDate(currentDate.getDate() - 7));
     } else {
       currentDate = new Date(currentDate.setDate(currentDate.getDate() - 1));
@@ -32,9 +32,9 @@
   }
 
   function next() {
-    if (view === "month") {
+    if (view === 'month') {
       currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1);
-    } else if (view === "week") {
+    } else if (view === 'week') {
       currentDate = new Date(currentDate.setDate(currentDate.getDate() + 7));
     } else {
       currentDate = new Date(currentDate.setDate(currentDate.getDate() + 1));
@@ -43,7 +43,7 @@
 
   // Filter events for a given day
   function eventsForDay(day: Date) {
-    return events.filter(event => {
+    return events.filter((event) => {
       const eventDate = new Date(event.start_time);
       return (
         eventDate.getFullYear() === day.getFullYear() &&
@@ -87,9 +87,9 @@
   </div>
 
   <h2 class="text-xl font-bold">
-    {currentDate.toLocaleDateString("en-US", {
-      month: "long",
-      year: "numeric"
+    {currentDate.toLocaleDateString('en-US', {
+      month: 'long',
+      year: 'numeric'
     })}
   </h2>
 
@@ -101,9 +101,15 @@
 </div>
 
 <!-- MONTH VIEW -->
-{#if view === "month"}
+{#if view === 'month'}
   <div class="grid grid-cols-7 text-center text-gray-600 font-semibold mb-2">
-    <div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
+    <div>Sun</div>
+    <div>Mon</div>
+    <div>Tue</div>
+    <div>Wed</div>
+    <div>Thu</div>
+    <div>Fri</div>
+    <div>Sat</div>
   </div>
 
   <div class="grid grid-cols-7 gap-1">
@@ -113,13 +119,13 @@
 
         <div class="space-y-1 overflow-y-auto h-20">
           {#each eventsForDay(day) as event}
-          <!-- if an event match, console.log it-->
-           {#if event}
-            {console.log("event for day :", event)}
+            <!-- if an event match, console.log it-->
+            {#if event}
+              {console.log('event for day :', event)}
             {:else}
-            {console.log("no event for day")}
-           {/if}
-           
+              {console.log('no event for day')}
+            {/if}
+
             <slot name="event" {event}></slot>
           {/each}
         </div>
@@ -129,10 +135,10 @@
 {/if}
 
 <!-- WEEK VIEW -->
-{#if view === "week"}
+{#if view === 'week'}
   <div class="grid grid-cols-7 text-center text-gray-600 font-semibold mb-2">
     {#each getWeekDays() as day}
-      <div>{day.toLocaleDateString("en-US", { weekday: "short" })}</div>
+      <div>{day.toLocaleDateString('en-US', { weekday: 'short' })}</div>
     {/each}
   </div>
 
@@ -140,7 +146,7 @@
     {#each getWeekDays() as day}
       <div class="border p-1 h-48 rounded bg-white hover:bg-gray-50 transition">
         <div class="text-sm font-medium mb-1">{day.getDate()}</div>
-        
+
         <div class="space-y-1 overflow-y-auto h-40">
           {#each eventsForDay(day) as event}
             <slot name="event" {event}></slot>
@@ -152,10 +158,10 @@
 {/if}
 
 <!-- DAY VIEW -->
-{#if view === "day"}
+{#if view === 'day'}
   <div class="border rounded p-3 bg-white">
     <h3 class="font-bold text-lg mb-3">
-      {currentDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+      {currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
     </h3>
 
     <div class="space-y-3">
