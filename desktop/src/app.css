@@ -22,4 +22,5 @@ body {
   --color-dark-grey: #949494;
   --color-white: #FFFFFF;
   --color-black: #000000;
+  --color-primary-hover: rgba(238,232,255,0.45)
 }

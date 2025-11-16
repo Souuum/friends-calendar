@@ -3,7 +3,7 @@
   import { api } from '$lib//api';
   import type { EventWithParticipants } from '$lib/types';
   import { user } from '$lib/stores';
-  import Calendar from '$lib/components/Calendar.svelte';
+  import Calendar from '$lib/components/templates/Calendar.svelte';
   import EventCard from '$lib/components/EventCard.svelte';
   import CreateEventModal from '$lib/components/CreateEventModal.svelte';
   import Header from '$lib/components/organisms/Header.svelte';
@@ -46,26 +46,7 @@
   onMount(loadEvents);
 </script>
 
-<div class="bg-white">
-  <!-- Header -->
-  {#if $user}
-    <Header {avatar_url} {user} on:logout={handleLogout} />
-  {/if}
-  <div class="flex h-screen">
-    <aside class="w-48 bg-white flex flex-col p-3 gap-2 h-full">
-      {#each navItems as item}
-        <a
-          href={item.href}
-          class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100
-               {$page.url.pathname === item.href ? 'bg-gray-100 font-semibold' : ''}"
-        >
-          <span>{item.icon}</span>
-          <span>{item.label}</span>
-        </a>
-      {/each}
-    </aside>
-    <!-- Content -->
-    <main class="w-14/16 py-8 sm:px-6 lg:px-8 rounded-t-xl bg-gray-300">
+    <main class=" py-8 sm:px-6 lg:px-8 rounded-xl">
       {#if loading}
         <div class="text-center py-12">
           <div
@@ -84,14 +65,12 @@
         </div>
       {:else}
         <Calendar {events}>
-          <svelte:fragment slot="event" let:event>
+          <!-- <svelte:fragment slot="event" let:eventt>
             <EventCard {event} on:refresh={loadEvents} />
-          </svelte:fragment>
+          </svelte:fragment> -->
         </Calendar>
       {/if}
     </main>
-  </div>
-</div>
 
 {#if showCreateModal}
   <CreateEventModal on:close={() => (showCreateModal = false)} on:created={handleEventCreated} />

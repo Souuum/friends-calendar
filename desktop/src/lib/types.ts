@@ -35,3 +35,5 @@ export interface EventWithParticipants extends CalendarEvent {
 }
 
 export type ButtonType = 'button' | 'submit' | 'reset';
+
+export type ViewType = 'month' | 'week' | 'day';

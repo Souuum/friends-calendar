@@ -7,6 +7,7 @@
   import { user } from '$lib/stores';
   import LoginScreen from '$lib/components/LoginScreen.svelte';
   import CalendarView from '$lib/components/CalendarView.svelte';
+  import Frame from '$lib/components/templates/Frame.svelte';
 
   onMount(async () => {
     // Check if token is in URL (from Discord callback)
@@ -66,7 +67,9 @@
       </div>
     </div>
   {:else if $isAuthenticated}
+  <Frame>
     <CalendarView />
+  </Frame>
   {:else}
     <LoginScreen />
   {/if}

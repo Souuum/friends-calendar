@@ -77,7 +77,6 @@
     {/if}
   </div>
 
-  <!-- Participants -->
   <div class="mb-4">
     <p class="text-xs font-semibold text-gray-500 mb-2">
       {event.participants.length} participant{event.participants.length !== 1 ? 's' : ''}
@@ -86,7 +85,6 @@
       {#each event.participants.slice(0, 5) as participant}
         <div class="flex items-center gap-1">
           {#if participant.avatar_url}
-            <!-- {console.log("participant avatar url :",participant.avatar_url)} -->
             <img
               src={participant.avatar_url}
               alt={participant.username}
@@ -106,7 +104,6 @@
     </div>
   </div>
 
-  <!-- Actions -->
   {#if !event.is_creator && event.my_status}
     <div class="flex gap-2">
       <button
