@@ -13,3 +13,13 @@ body {
 * {
   box-sizing: border-box;
 }
+
+@theme {
+  --color-primary: #5030E5;
+  --color-red: #FB2C2C;
+  --color-yellow: #FBB13C;
+  --color-grey: #EBEBEB;
+  --color-dark-grey: #949494;
+  --color-white: #FFFFFF;
+  --color-black: #000000;
+}
