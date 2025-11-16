@@ -26,7 +26,7 @@ class ApiClient {
     const token = this.getToken();
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
-      ...options.headers,
+      ...options.headers
     };
 
     if (token) {
@@ -35,7 +35,7 @@ class ApiClient {
 
     const response = await fetch(`${API_URL}${endpoint}`, {
       ...options,
-      headers,
+      headers
     });
 
     if (!response.ok) {
@@ -67,7 +67,7 @@ class ApiClient {
   }): Promise<CalendarEvent> {
     return this.fetch<CalendarEvent>('/api/events', {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(data)
     });
   }
 
@@ -82,7 +82,7 @@ class ApiClient {
     if (params?.include_declined !== undefined) {
       query.append('include_declined', String(params.include_declined));
     }
-    
+
     const queryString = query.toString();
     return this.fetch<EventWithParticipants[]>(
       `/api/events${queryString ? `?${queryString}` : ''}`
@@ -93,30 +93,36 @@ class ApiClient {
     return this.fetch<EventWithParticipants>(`/api/events/${id}`);
   }
 
-  async updateEvent(id: string, data: Partial<{
-    title: string;
-    description: string;
-    start_time: string;
-    end_time: string;
-    location: string;
-    visibility: 'private' | 'friends' | 'public';
-  }>): Promise<CalendarEvent> {
+  async updateEvent(
+    id: string,
+    data: Partial<{
+      title: string;
+      description: string;
+      start_time: string;
+      end_time: string;
+      location: string;
+      visibility: 'private' | 'friends' | 'public';
+    }>
+  ): Promise<CalendarEvent> {
     return this.fetch<CalendarEvent>(`/api/events/${id}`, {
       method: 'PUT',
-      body: JSON.stringify(data),
+      body: JSON.stringify(data)
     });
   }
 
   async deleteEvent(id: string): Promise<void> {
     return this.fetch<void>(`/api/events/${id}`, {
-      method: 'DELETE',
+      method: 'DELETE'
     });
   }
 
-  async updateParticipation(eventId: string, status: 'accepted' | 'declined' | 'maybe'): Promise<void> {
+  async updateParticipation(
+    eventId: string,
+    status: 'accepted' | 'declined' | 'maybe'
+  ): Promise<void> {
     return this.fetch<void>(`/api/events/${eventId}/participation`, {
       method: 'PUT',
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status })
     });
   }
 }

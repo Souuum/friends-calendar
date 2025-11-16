@@ -7,12 +7,15 @@ export default {
     extend: {
       colors: {
         discord: {
+          primary: "#5030E5",
           blurple: '#5865F2',
           green: '#57F287',
-          yellow: '#FEE75C',
+          yellow: '#FBB13C',
           fuchsia: '#EB459E',
-          red: '#ED4245',
+          red: '#FB2C2C',
           white: '#FFFFFF',
+          grey: "#EBEBEB",
+          "dark-grey": "#949494",
           black: '#23272A',
           dark: '#2C2F33',
           darker: '#1E2124',

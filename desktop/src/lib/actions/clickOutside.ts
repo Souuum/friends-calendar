@@ -5,11 +5,11 @@ export function clickOutside(node: HTMLElement, callback: () => void) {
     }
   }
 
-  document.addEventListener("click", handleClick);
+  document.addEventListener('click', handleClick);
 
   return {
     destroy() {
-      document.removeEventListener("click", handleClick, true);
+      document.removeEventListener('click', handleClick, true);
     }
   };
 }

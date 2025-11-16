@@ -1,0 +1,9 @@
+node_modules
+.svelte-kit
+build
+dist
+package
+.env
+*.config.js
+pnpm-lock.yaml
+package-lock.json
