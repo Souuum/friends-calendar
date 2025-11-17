@@ -18,8 +18,8 @@ pub async fn create_event(
     let event = sqlx::query_as::<_, CalendarEvent>(
         r#"
         INSERT INTO calendar_events 
-            (id, creator_id, title, description, start_time, end_time, location, visibility, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            (id, creator_id, title, description, start_time, end_time, location, visibility, price, link, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING *
         "#,
     )
@@ -31,6 +31,8 @@ pub async fn create_event(
     .bind(&req.end_time)
     .bind(&req.location)
     .bind(req.visibility.unwrap_or(Visibility::Private))
+    .bind(&req.price)
+    .bind(&req.link)
     .bind(Utc::now())
     .bind(Utc::now())
     .fetch_one(db)
