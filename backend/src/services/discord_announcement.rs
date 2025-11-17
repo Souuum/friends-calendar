@@ -65,7 +65,7 @@ fn format_event_message(&self, event: &CalendarEvent) -> String {
         message.push_str(&format!("**Lien :** [{}]({})\n", link_name, link));
     }
 
-    message.push_str("\n✅ **Réagissez avec ✅ pour participer !**");
+    message.push_str("\n**Réagissez avec ✅ pour participer !**");
 
     message
 }
