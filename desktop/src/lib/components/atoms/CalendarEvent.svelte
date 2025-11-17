@@ -1,16 +1,17 @@
 <script lang="ts">
   import type { EventWithParticipants } from '$lib/types';
+  import EventCard from '$lib/components/EventCard.svelte';
 
   export let event: EventWithParticipants;
-  export let variant: 'compact' | 'default' | 'detailed' = 'default';
+  export let variant: 'compact' | 'default' | 'detailed' | 'card' = 'default';
 </script>
 
 {#if variant === 'compact'}
-  <div class="text-xs px-2 py-1 bg-primary bg-opacity-10 text-primary rounded truncate">
+  <div class="text-xs px-2 py-1 bg-primary-hover bg-opacity-10 text-primary rounded truncate">
     {event.title || 'Untitled Event'}
   </div>
 {:else if variant === 'default'}
-  <div class="text-xs px-2 py-2 bg-primary bg-opacity-10 text-primary rounded">
+  <div class="text-xs px-2 py-2 bg-primary-hover bg-opacity-10 text-primary rounded">
     <div class="font-semibold">{event.title || 'Untitled Event'}</div>
     {#if event.start_time}
       <div class="text-gray-600 mt-1">
@@ -23,7 +24,7 @@
   </div>
 {:else if variant === 'detailed'}
   <div
-    class="p-4 bg-primary bg-opacity-10 border-l-4 border-primary rounded-lg hover:bg-opacity-20 transition-colors"
+    class="p-4 bg-primary-hover bg-opacity-10 border-l-4 border-primary rounded-lg hover:bg-opacity-20 transition-colors"
   >
     <h3 class="font-semibold text-lg mb-1">{event.title || 'Untitled Event'}</h3>
     {#if event.start_time}
@@ -44,4 +45,6 @@
       <p class="text-sm text-gray-700 mt-2">{event.description}</p>
     {/if}
   </div>
+{:else if variant === 'card'}
+  <EventCard {event} />
 {/if}

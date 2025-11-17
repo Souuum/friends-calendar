@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { ViewType } from '$lib/types';
-  import IconButton from '$lib/components/atoms/IconButton.svelte';
+  import IconButton from '$lib/components/atoms/ArrowButton.svelte';
   import ViewSwitcher from '$lib/components/atoms/ViewSwitcher.svelte';
+  import CreateEventModal from '../CreateEventModal.svelte';
 
   export let title: string;
   export let view: ViewType;
@@ -9,6 +10,12 @@
   export let onNext: () => void;
   export let onToday: () => void;
   export let onViewChange: (view: ViewType) => void;
+
+  let showCreateModal = false;
+
+  function handleEventCreated() {
+    showCreateModal = false;
+  }
 </script>
 
 <div class="flex items-center justify-between p-6 border-b">
@@ -20,11 +27,21 @@
 
   <div class="flex items-center gap-3">
     <button
+      on:click={() => (showCreateModal = true)}
+      class="bg-secondary text-white px-4 py-2 rounded-lg font-medium transition"
+    >
+      + New Event
+    </button>
+    <button
       on:click={onToday}
-      class="px-4 py-2 text-sm font-medium hover:bg-gray-100 rounded-lg transition-colors"
+      class="px-4 py-2 text-sm font-medium hover:bg-primary-hover rounded-lg transition-colors"
     >
       Today
     </button>
     <ViewSwitcher {view} onChange={onViewChange} />
   </div>
 </div>
+
+{#if showCreateModal}
+  <CreateEventModal on:close={() => (showCreateModal = false)} on:created={handleEventCreated} />
+{/if}

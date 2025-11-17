@@ -19,6 +19,7 @@
       class:bg-white={view === viewOption.value}
       class:shadow-sm={view === viewOption.value}
       class:font-semibold={view === viewOption.value}
+      class:text-primary={view === viewOption.value}
     >
       {viewOption.label}
     </button>

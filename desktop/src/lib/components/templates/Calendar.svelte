@@ -1,10 +1,11 @@
 <script lang="ts">
   import type { EventWithParticipants } from '$lib/types';
-  import CalendarHeader from '../molecules/CalendarHeader.svelte';
-  import MonthView from '../organisms/MonthView.svelte';
-  import WeekView from '../organisms/WeekView.svelte';
-  import DayView from '../organisms/DayView.svelte';
-  import EventTooltip from '../molecules/EventTooltip.svelte';
+  import CalendarHeader from '$lib/components/molecules/CalendarHeader.svelte';
+  import MonthView from '$lib/components/organisms/MonthView.svelte';
+  import WeekView from '$lib/components/organisms/WeekView.svelte';
+  import DayView from '$lib/components/organisms/DayView.svelte';
+  import EventTooltip from '$lib/components/molecules/EventTooltip.svelte';
+  import EventDetailsModal from '$lib/components/organisms/EventDetailsModal.svelte';
   import { dateUtils } from '$lib/utils/dateUtils';
   import { createEventDispatcher } from 'svelte';
 
@@ -16,11 +17,15 @@
   let view: ViewType = 'month';
   let currentDate = new Date();
 
-  // Tooltip state
+  // Tooltip state (for month view)
   let tooltipVisible = false;
   let tooltipEvents: EventWithParticipants[] = [];
   let tooltipPosition = { x: 0, y: 0 };
-  let tooltipElement: HTMLElement;
+  let monthViewRef: MonthView;
+
+  // Modal state (for week/day view)
+  let selectedEvent: EventWithParticipants | null = null;
+  let isModalOpen = false;
 
   function handleShowTooltip(event: CustomEvent) {
     tooltipEvents = event.detail.events;
@@ -30,6 +35,28 @@
 
   function handleHideTooltip() {
     tooltipVisible = false;
+  }
+
+  function handleTooltipMouseEnter() {
+    if (monthViewRef) {
+      monthViewRef.handleTooltipMouseEnter();
+    }
+  }
+
+  function handleTooltipMouseLeave() {
+    if (monthViewRef) {
+      monthViewRef.handleTooltipMouseLeave();
+    }
+  }
+
+  function openEventDetails(event: EventWithParticipants) {
+    selectedEvent = event;
+    isModalOpen = true;
+  }
+
+  function closeModal() {
+    isModalOpen = false;
+    selectedEvent = null;
   }
 
   function handleRefresh() {
@@ -114,35 +141,33 @@
 
 {#if view === 'month'}
   <MonthView
+    bind:this={monthViewRef}
     monthGrid={getMonthGrid()}
     currentMonth={currentDate}
     {eventsForDay}
     on:showTooltip={handleShowTooltip}
     on:hideTooltip={handleHideTooltip}
   />
-{:else if view === 'week'}
-  <WeekView
-    weekDays={getWeekDays()}
-    {eventsForDay}
-    on:showTooltip={handleShowTooltip}
-    on:hideTooltip={handleHideTooltip}
-  />
-{:else}
-  <DayView events={eventsForDay(currentDate)} />
-{/if}
 
-<!-- Tooltip with EventCards -->
-<div
-  bind:this={tooltipElement}
-  on:mouseenter={() => (tooltipVisible = true)}
-  on:mouseleave={handleHideTooltip}
-  role="tooltip"
-  tabindex="-1"
->
+  <!-- Tooltip for month view -->
   <EventTooltip
     events={tooltipEvents}
     isVisible={tooltipVisible}
     position={tooltipPosition}
+    on:mouseenter={handleTooltipMouseEnter}
+    on:mouseleave={handleTooltipMouseLeave}
     on:refresh={handleRefresh}
   />
-</div>
+{:else if view === 'week'}
+  <WeekView weekDays={getWeekDays()} {eventsForDay} onEventClick={openEventDetails} />
+{:else}
+  <DayView {currentDate} events={eventsForDay(currentDate)} onEventClick={openEventDetails} />
+{/if}
+
+<!-- Modal for week/day view -->
+<EventDetailsModal
+  event={selectedEvent}
+  isOpen={isModalOpen}
+  on:close={closeModal}
+  on:refresh={handleRefresh}
+/>

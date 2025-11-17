@@ -2,18 +2,13 @@
   import { onMount } from 'svelte';
   import { api } from '$lib//api';
   import type { EventWithParticipants } from '$lib/types';
-  import { user } from '$lib/stores';
   import Calendar from '$lib/components/templates/Calendar.svelte';
-  import EventCard from '$lib/components/EventCard.svelte';
   import CreateEventModal from '$lib/components/CreateEventModal.svelte';
-  import Header from '$lib/components/organisms/Header.svelte';
-  import { page } from '$app/stores';
 
   let events: EventWithParticipants[] = [];
   let loading = true;
   let error = '';
   let showCreateModal = false;
-  let avatar_url = `https://cdn.discordapp.com/avatars/${$user?.discord_id}/${$user?.avatar}.png`;
 
   async function loadEvents() {
     try {
@@ -31,17 +26,6 @@
     showCreateModal = false;
     loadEvents();
   }
-
-  function handleLogout() {
-    api.clearToken();
-    window.location.reload();
-  }
-
-  const navItems = [
-    { label: 'Calendars', icon: '📅', href: '/calendar' },
-    { label: 'Announcement', icon: '🔔', href: '/announcements' },
-    { label: 'Some feature', icon: '🪶', href: '/feature' }
-  ];
 
   onMount(loadEvents);
 </script>
@@ -65,11 +49,7 @@
     </div>
   {:else}
     <div class="bg-white rounded-lg shadow-sm relative">
-      <Calendar {events}>
-        <!-- <svelte:fragment slot="event" let:eventt>
-            <EventCard {event} on:refresh={loadEvents} />
-          </svelte:fragment> -->
-      </Calendar>
+      <Calendar {events} />
     </div>
   {/if}
 </main>

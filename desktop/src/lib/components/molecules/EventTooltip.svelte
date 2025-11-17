@@ -12,6 +12,14 @@
   function handleRefresh() {
     dispatch('refresh');
   }
+
+  function handleMouseEnter() {
+    dispatch('mouseenter');
+  }
+
+  function handleMouseLeave() {
+    dispatch('mouseleave');
+  }
 </script>
 
 {#if isVisible && events.length > 0}
@@ -20,9 +28,13 @@
     class:opacity-0={!isVisible}
     class:opacity-100={isVisible}
     style="left: {position.x}px; top: {position.y}px;"
+    on:mouseenter={handleMouseEnter}
+    on:mouseleave={handleMouseLeave}
+    role="tooltip"
+    tabindex="-1"
   >
     <div
-      class="bg-white rounded-lg shadow-xl border border-gray-200 p-4 w-96 max-h-[500px] overflow-y-auto transition animate-in fade-in slide-in-from-top-2 duration-200"
+      class="bg-white rounded-lg shadow-xl border border-gray-200 p-4 w-96 max-h-[500px] overflow-y-auto"
     >
       <div class="space-y-3">
         {#each events as event}

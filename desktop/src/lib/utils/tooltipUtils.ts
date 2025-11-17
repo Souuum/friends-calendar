@@ -11,8 +11,8 @@ export interface TooltipConfig {
 }
 
 const DEFAULT_CONFIG: Required<TooltipConfig> = {
-  tooltipWidth: 384, // w-96
-  tooltipHeight: 500,
+  tooltipWidth: 40, // w-96
+  tooltipHeight: 50,
   offset: 10,
   screenPadding: 20
 };

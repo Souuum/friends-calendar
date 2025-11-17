@@ -3,8 +3,8 @@
   import WeekdayHeader from '$lib/components/atoms/WeekdayHeader.svelte';
   import CalendarDay from '$lib/components/atoms/CalendarDay.svelte';
   import EventList from '$lib/components/molecules/EventList.svelte';
-  import { calculateTooltipPosition } from '$lib/utils/tooltipUtils';
   import { createEventDispatcher } from 'svelte';
+  import { calculateTooltipPosition } from '$lib/utils/tooltipUtils';
 
   export let monthGrid: Date[];
   export let currentMonth: Date;
@@ -13,8 +13,9 @@
   const dispatch = createEventDispatcher();
 
   let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+  let hideTimer: ReturnType<typeof setTimeout> | null = null;
   let hoveredDay: Date | null = null;
-  let tooltipPosition = { x: 0, y: 0 };
+  let isTooltipHovered = false;
 
   function isToday(date: Date): boolean {
     const today = new Date();
@@ -36,36 +37,56 @@
     const target = e.currentTarget as HTMLElement | null;
     if (!target) return;
 
-    // Clear any existing timer
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+
     if (hoverTimer) {
       clearTimeout(hoverTimer);
     }
 
-    // Set a 1-second delay before showing tooltip
     hoverTimer = setTimeout(() => {
       hoveredDay = day;
 
-      // Calculate position with smart positioning
       const rect = target.getBoundingClientRect();
-      tooltipPosition = calculateTooltipPosition(rect);
+      const tooltipPosition = calculateTooltipPosition(rect);
 
       dispatch('showTooltip', { day, events: dayEvents, position: tooltipPosition });
-    }, 1000); // 1 second delay
+    }, 1000);
   }
 
   function handleMouseLeave() {
-    // Clear the timer if user leaves before 1 second
     if (hoverTimer) {
       clearTimeout(hoverTimer);
       hoverTimer = null;
     }
 
-    // Small delay before hiding to allow moving to tooltip
-    setTimeout(() => {
+    hideTimer = setTimeout(() => {
+      if (!isTooltipHovered) {
+        hoveredDay = null;
+        dispatch('hideTooltip');
+      }
+    }, 150);
+  }
+
+  function handleTooltipMouseEnter() {
+    isTooltipHovered = true;
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+  }
+
+  function handleTooltipMouseLeave() {
+    isTooltipHovered = false;
+    hideTimer = setTimeout(() => {
       hoveredDay = null;
       dispatch('hideTooltip');
-    }, 100);
+    }, 150);
   }
+
+  export { handleTooltipMouseEnter, handleTooltipMouseLeave };
 </script>
 
 <div class="p-6">

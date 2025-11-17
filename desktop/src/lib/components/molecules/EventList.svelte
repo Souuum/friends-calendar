@@ -3,7 +3,7 @@
   import CalendarEvent from '$lib/components/atoms/CalendarEvent.svelte';
 
   export let events: EventWithParticipants[];
-  export let variant: 'compact' | 'default' | 'detailed' = 'default';
+  export let variant: 'compact' | 'default' | 'detailed' | 'card' = 'default';
   export let maxVisible = 3;
   export let showMore = false;
   export let onEventClick: ((event: EventWithParticipants) => void) | undefined = undefined;

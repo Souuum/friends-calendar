@@ -62,7 +62,7 @@ class ApiClient {
     start_time: string;
     end_time: string;
     location?: string;
-    visibility?: 'private' | 'friends' | 'public';
+    visibility?: 'Private' | 'Friends' | 'Public';
     participant_ids?: string[];
   }): Promise<CalendarEvent> {
     return this.fetch<CalendarEvent>('/api/events', {

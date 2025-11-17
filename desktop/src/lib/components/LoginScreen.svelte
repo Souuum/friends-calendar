@@ -79,7 +79,7 @@
     {#if !showTokenInput}
       <button
         on:click={handleLogin}
-        class="w-full bg-discord-blurple hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-lg transition duration-200 flex items-center justify-center gap-2"
+        class="w-full bg-primary hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-lg transition duration-200 flex items-center justify-center gap-2"
       >
         <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
           <path
@@ -111,7 +111,7 @@
           </button>
           <button
             on:click={handleTokenSubmit}
-            class="flex-1 px-4 py-2 bg-discord-blurple text-white rounded-lg hover:bg-blue-600"
+            class="flex-1 px-4 py-2 bg-primary text-white rounded-lg hover:bg-blue-600"
           >
             Submit
           </button>

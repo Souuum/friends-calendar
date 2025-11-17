@@ -1,16 +1,17 @@
 <script lang="ts">
   import type { EventWithParticipants } from '$lib/types';
   import CalendarDay from '$lib/components/atoms/CalendarDay.svelte';
-  import EventList from '$lib/components/molecules/EventList.svelte';
-  import { calculateTooltipPosition } from '$lib/utils/tooltipUtils';
+  import TimeLabel from '$lib/components/atoms/TimeLabel.svelte';
+  import TimeSlot from '$lib/components/atoms/TimeSlot.svelte';
+  import TimedEvent from '$lib/components/molecules/TimedEvent.svelte';
   import { createEventDispatcher } from 'svelte';
 
   export let weekDays: Date[];
   export let eventsForDay: (day: Date) => EventWithParticipants[];
+  export let onEventClick: ((event: EventWithParticipants) => void) | undefined = undefined;
 
   const dispatch = createEventDispatcher();
-
-  let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+  const hours = Array.from({ length: 24 }, (_, i) => i);
 
   function isToday(date: Date): boolean {
     const today = new Date();
@@ -21,42 +22,22 @@
     );
   }
 
-  function handleMouseEnter(day: Date, e: MouseEvent) {
+  function getEventsForHour(day: Date, hour: number): EventWithParticipants[] {
     const dayEvents = eventsForDay(day);
-    if (dayEvents.length === 0) return;
-
-    const target = e.currentTarget as HTMLElement | null;
-    if (!target) return;
-
-    if (hoverTimer) {
-      clearTimeout(hoverTimer);
-    }
-
-    hoverTimer = setTimeout(() => {
-      const rect = target.getBoundingClientRect();
-      const tooltipPosition = calculateTooltipPosition(rect);
-
-      dispatch('showTooltip', { day, events: dayEvents, position: tooltipPosition });
-    }, 1000);
-  }
-
-  function handleMouseLeave() {
-    if (hoverTimer) {
-      clearTimeout(hoverTimer);
-      hoverTimer = null;
-    }
-
-    setTimeout(() => {
-      dispatch('hideTooltip');
-    }, 100);
+    return dayEvents.filter((event) => {
+      const eventStart = new Date(event.start_time);
+      const eventHour = eventStart.getHours();
+      return eventHour === hour;
+    });
   }
 </script>
 
 <div class="p-6">
-  <!-- Weekday headers with dates -->
-  <div class="grid grid-cols-7 mb-2">
+  <div class="grid grid-cols-[80px_repeat(7,1fr)] gap-0 mb-2 sticky top-0 bg-white z-10">
+    <div></div>
+    <!-- Empty cell for time column -->
     {#each weekDays as day}
-      <div class="text-center py-3">
+      <div class="text-center py-3 border-b border-gray-200">
         <div
           class="inline-flex flex-col items-center"
           class:text-primary={isToday(day)}
@@ -71,21 +52,22 @@
     {/each}
   </div>
 
-  <!-- Week grid -->
-  <div class="grid grid-cols-7 gap-px bg-gray-200 rounded-lg overflow-hidden">
-    {#each weekDays as day}
-      {@const dayEvents = eventsForDay(day)}
-      <div
-        role="button"
-        tabindex="0"
-        class="bg-white min-h-[300px] p-3 hover:bg-gray-50 transition-colors"
-        on:mouseenter={(e) => handleMouseEnter(day, e)}
-        on:mouseleave={handleMouseLeave}
-      >
-        <div class="space-y-2 overflow-y-auto max-h-[280px]">
-          <EventList events={dayEvents} variant="default" />
+  <div class="overflow-y-auto max-h-[calc(100vh-300px)]">
+    <div class="grid grid-cols-[80px_repeat(7,1fr)] gap-0">
+      {#each hours as hour}
+        <!-- Time label -->
+        <div class="flex items-start pt-2">
+          <TimeLabel {hour} />
         </div>
-      </div>
-    {/each}
+        {#each weekDays as day}
+          {@const hourEvents = getEventsForHour(day, hour)}
+          <TimeSlot {hour} hasEvents={hourEvents.length > 0}>
+            {#each hourEvents as event}
+              <TimedEvent {event} onClick={() => onEventClick?.(event)} />
+            {/each}
+          </TimeSlot>
+        {/each}
+      {/each}
+    </div>
   </div>
 </div>
