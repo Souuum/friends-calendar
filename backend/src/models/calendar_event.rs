@@ -39,6 +39,10 @@ pub struct CalendarEvent {
     pub visibility: Visibility,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub discord_message_id: Option<String>,
+    pub discord_channel_id: Option<String>,
+    pub price: Option<String>,
+    pub link: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -80,6 +84,8 @@ pub struct CreateEventRequest {
     pub location: Option<String>,
     pub visibility: Option<Visibility>,
     pub participant_ids: Option<Vec<Uuid>>, // Invite users by ID
+    pub price: Option<String>,
+    pub link: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,6 +96,8 @@ pub struct UpdateEventRequest {
     pub end_time: Option<DateTime<Utc>>,
     pub location: Option<String>,
     pub visibility: Option<Visibility>,
+    pub price: Option<String>,
+    pub link: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

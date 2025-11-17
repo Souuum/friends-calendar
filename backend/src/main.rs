@@ -13,8 +13,10 @@ mod handlers;
 mod services;
 mod middleware;
 mod error;
+mod bot;
 
 use config::AppState;
+use std::env;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -27,6 +29,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize application state
     let state = AppState::new().await?;
 
+    // Start Discord bot in background
+    let bot_token = env::var("DISCORD_BOT_TOKEN").expect("DISCORD_BOT_TOKEN must be set");
+    let announcement_channel_id: u64 = env::var("DISCORD_ANNOUNCEMENT_CHANNEL_ID")
+        .expect("DISCORD_ANNOUNCEMENT_CHANNEL_ID must be set")
+        .parse()
+        .expect("Invalid channel ID");
+
     // Build CORS layer - specific origins and headers when using credentials
     let cors = CorsLayer::new()
         .allow_origin("http://localhost:1420".parse::<HeaderValue>().unwrap())
@@ -37,6 +46,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             axum::http::header::ACCEPT,
         ])
         .allow_credentials(true);
+
+    let db_clone = state.db.clone();
+    tokio::spawn(async move {
+        if let Err(e) = bot::DiscordBot::start(bot_token, db_clone, announcement_channel_id).await {
+            tracing::error!("❌ Discord bot error: {:?}", e);
+        }
+    });
 
     // Build application routes
     let app = Router::new()
@@ -56,6 +72,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/events/:id/participants", post(handlers::calendar::invite_participants))
         .route("/api/events/:id/participation", put(handlers::calendar::update_participation))
         .route("/api/events/:id/participants/:user_id", delete(handlers::calendar::remove_participant))
+        //bot routes
+        .route("/api/events/:id/link-discord", post(handlers::calendar::link_discord_message))
         .layer(cors)
         .with_state(state);
 

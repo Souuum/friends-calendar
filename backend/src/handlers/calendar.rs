@@ -6,13 +6,15 @@ use axum::{
 };
 use uuid::Uuid;
 
+use serde::Deserialize;
+
 use crate::{
     config::AppState,
     models::{
         CalendarEvent, CreateEventRequest, UpdateEventRequest, ListEventsQuery,
         EventWithParticipants, InviteParticipantsRequest, UpdateParticipationRequest
     },
-    services::calendar,
+    services::{calendar,discord_announcement::DiscordAnnouncer},
     middleware::auth::Claims,
     error::AppError,
 };
@@ -28,17 +30,51 @@ pub async fn create_event(
         return Err(AppError::ValidationError("End time must be after start time".to_string()));
     }
 
-    // Get user from database
     let user = crate::services::auth::get_user_by_discord_id(&state.db, &claims.sub)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?
         .ok_or(AppError::Unauthorized)?;
 
-    let event = calendar::create_event(&state.db, user.id, req)
+    let mut event = calendar::create_event(&state.db, user.id, req)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     tracing::info!("📅 Event created: {} by user {}", event.title, user.username);
+
+    // Auto-announce to Discord if configured
+    if let (Ok(bot_token), Ok(channel_id_str)) = (
+        std::env::var("DISCORD_BOT_TOKEN"),
+        std::env::var("DISCORD_ANNOUNCEMENT_CHANNEL_ID")
+    ) {
+        if let Ok(channel_id) = channel_id_str.parse::<u64>() {
+            let announcer = DiscordAnnouncer::new(bot_token, channel_id);
+            
+            match announcer.announce_event(&event).await {
+                Ok(message_id) => {
+                    // Update event with Discord message ID
+                    if let Ok(updated) = sqlx::query_as::<_, CalendarEvent>(
+                        r#"
+                        UPDATE calendar_events
+                        SET discord_message_id = $1, discord_channel_id = $2, updated_at = NOW()
+                        WHERE id = $3
+                        RETURNING *
+                        "#,
+                    )
+                    .bind(&message_id)
+                    .bind(channel_id_str)
+                    .bind(event.id)
+                    .fetch_one(&state.db)
+                    .await {
+                        event = updated;
+                        tracing::info!("✅ Event announced and linked to Discord message {}", message_id);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("⚠️  Failed to announce event to Discord: {:?}", e);
+                }
+            }
+        }
+    }
 
     Ok(Json(event))
 }
@@ -206,4 +242,44 @@ pub async fn remove_participant(
     tracing::info!("❌ User removed from event {} by creator {}", event_id, user.username);
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinkDiscordMessageRequest {
+    pub message_id: String,
+    pub channel_id: String,
+}
+
+pub async fn link_discord_message(
+    claims: Claims,
+    State(state): State<AppState>,
+    Path(event_id): Path<Uuid>,
+    Json(req): Json<LinkDiscordMessageRequest>,
+) -> Result<Json<CalendarEvent>, AppError> {
+    let user = crate::services::auth::get_user_by_discord_id(&state.db, &claims.sub)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+        .ok_or(AppError::Unauthorized)?;
+
+    // Verify user is the creator and update
+    let event = sqlx::query_as::<_, CalendarEvent>(
+        r#"
+        UPDATE calendar_events
+        SET discord_message_id = $1, discord_channel_id = $2, updated_at = NOW()
+        WHERE id = $3 AND creator_id = $4
+        RETURNING *
+        "#,
+    )
+    .bind(&req.message_id)
+    .bind(&req.channel_id)
+    .bind(event_id)
+    .bind(user.id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?
+    .ok_or(AppError::NotFound)?;
+
+    tracing::info!("🔗 Linked event {} to Discord message {}", event_id, req.message_id);
+
+    Ok(Json(event))
 }
