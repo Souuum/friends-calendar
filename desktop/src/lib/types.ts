@@ -18,6 +18,10 @@ export interface CalendarEvent {
   visibility: 'private' | 'friends' | 'public';
   created_at: string;
   updated_at: string;
+  discord_message_id?: string;
+  discord_channel_id?: string;
+  price?: string;
+  link?: string;
 }
 
 export interface ParticipantInfo {

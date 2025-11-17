@@ -111,7 +111,6 @@ impl Handler {
         let message_id = reaction.message_id.get().to_string();
         let user_id = reaction.user_id.ok_or_else(|| anyhow::anyhow!("No user ID"))?;
 
-        // Find event linked to this message
         let event_result = sqlx::query!(
             r#"
             SELECT id, creator_id 
@@ -128,20 +127,11 @@ impl Handler {
             return Ok(());
         };
 
-        // Get Discord user info
         let discord_user = user_id.to_user(&ctx.http).await?;
         let discord_id = discord_user.id.get().to_string();
 
-        // Find or create user in our database
         let user_db_id = self.get_or_create_user(&discord_id, &discord_user.name).await?;
 
-        // Don't add creator again (they're already in)
-        if user_db_id == event.creator_id {
-            tracing::info!("👤 User is event creator, already a participant");
-            return Ok(());
-        }
-
-        // Add user as participant with "accepted" status
         let result = sqlx::query!(
             r#"
             INSERT INTO event_participants (id, event_id, user_id, status, invited_at, responded_at)
@@ -157,7 +147,11 @@ impl Handler {
         .await?;
 
         if result.rows_affected() > 0 {
-            tracing::info!("✅ Added user {} as participant to event {}", discord_user.name, event.id);
+            if user_db_id == event.creator_id {
+                tracing::info!("✅ Creator {} rejoined event {}", discord_user.name, event.id);
+            } else {
+                tracing::info!("✅ Added user {} as participant to event {}", discord_user.name, event.id);
+            }
         }
 
         Ok(())
