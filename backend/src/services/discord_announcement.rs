@@ -1,6 +1,8 @@
 use serenity::http::Http;
 use serenity::model::id::ChannelId;
-use serenity::builder::CreateMessage;
+use serenity::builder::{CreateMessage, CreateThread};
+use serenity::model::channel::GuildChannel;
+use serenity::model::channel::AutoArchiveDuration;
 use anyhow::Result;
 use crate::models::CalendarEvent;
 use chrono::{DateTime, Utc};
@@ -19,22 +21,55 @@ impl DiscordAnnouncer {
     }
 
     pub async fn announce_event(&self, event: &CalendarEvent) -> Result<String> {
-        let message = self.format_event_message(event);
+    let message = self.format_event_message(event);
 
-        let sent_message = self
-            .channel_id
-            .send_message(&self.http, CreateMessage::new().content(message))
-            .await?;
+    // Send the announcement message
+    let sent_message = self
+        .channel_id
+        .send_message(&self.http, CreateMessage::new().content(message))
+        .await?;
 
-        // Add ✅ reaction automatically
-        sent_message
-            .react(&self.http, '✅')
-            .await?;
+    // Add ✅ reaction automatically
+    sent_message
+        .react(&self.http, '✅')
+        .await?;
 
-        tracing::info!("📢 Announced event {} to Discord", event.id);
+    // Create a thread from the message
+    let thread_name = if event.title.len() > 100 {
+        format!("{}...", &event.title[..97]) // Discord thread names max 100 chars
+    } else {
+        event.title.clone()
+    };
 
-        Ok(sent_message.id.get().to_string())
+    // Use the channel to create a thread from the message
+    match self.channel_id.create_thread_from_message(
+        &self.http,
+        sent_message.id,
+        CreateThread::new(thread_name.clone())
+            .auto_archive_duration(AutoArchiveDuration::OneDay)
+    ).await {
+        Ok(thread) => {
+            tracing::info!("🧵 Created thread '{}' (ID: {}) for event {}", 
+                thread_name, thread.id, event.id);
+            
+            // Send a welcome message in the thread
+            if let Err(e) = thread.id.send_message(&self.http, 
+                CreateMessage::new()
+                    .content("💬 Discutez ici de l'organisation de cette activité !")
+            ).await {
+                tracing::warn!("⚠️  Failed to send welcome message in thread: {:?}", e);
+            }
+        }
+        Err(e) => {
+            tracing::warn!("⚠️  Failed to create thread: {:?}", e);
+        }
     }
+
+    tracing::info!("📢 Announced event {} to Discord", event.id);
+
+    Ok(sent_message.id.get().to_string())
+}
+
 fn format_event_message(&self, event: &CalendarEvent) -> String {
     let start = Self::format_datetime(&event.start_time);
 
