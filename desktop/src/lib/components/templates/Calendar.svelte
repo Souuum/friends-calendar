@@ -108,21 +108,9 @@
     });
   }
 
-
   $: monthGrid = dateUtils.getMonthGrid(currentDate);
   $: weekDays = dateUtils.getWeekDays(currentDate);
-  $: headerDate = (() => {
-    if (view === 'day') {
-      return currentDate.toLocaleDateString('en-US', {
-        weekday: 'long',
-        month: 'long',
-        day: 'numeric',
-        year: 'numeric'
-      });
-    } else {
-      return currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-    }
-  })();
+  $: headerDate = currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 </script>
 
 <CalendarHeader
