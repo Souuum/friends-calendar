@@ -61,7 +61,7 @@
   }
 </script>
 
-<BlurModal {isOpen} size="lg" onClose={close} blurAmount="sm" overlayOpacity="dark">
+<BlurModal {isOpen} size="lg" on:click={close} blurAmount="sm" overlayOpacity="dark">
   {#if event}
     <div class="flex justify-between items-start p-6 border-b bg-white">
       <div class="flex-1">

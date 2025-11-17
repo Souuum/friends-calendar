@@ -1,6 +1,5 @@
 <script lang="ts">
   export let isVisible = false;
-  export let onClick: (() => void) | undefined = undefined;
   export let blurAmount: 'sm' | 'md' | 'lg' = 'sm';
   export let opacity: 'light' | 'medium' | 'dark' = 'medium';
 
@@ -16,11 +15,6 @@
     dark: 'bg-primary-hover/70'
   };
 
-  function handleClick(e: MouseEvent) {
-    if (onClick) {
-      onClick();
-    }
-  }
 </script>
 
 {#if isVisible}
@@ -31,7 +25,7 @@
     ]}"
     class:animate-in={isVisible}
     class:fade-in={isVisible}
-    on:click={handleClick}
+    on:click
     role="button"
     tabindex="-1"
     aria-label="Close overlay"

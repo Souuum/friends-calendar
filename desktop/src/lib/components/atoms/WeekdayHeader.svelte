@@ -9,13 +9,15 @@
     'Sunday'
   ];
   export let short = false;
+
+  $: printableWeekdays = short ? weekdays.map(day => day.slice(0, 3)) : weekdays;
 </script>
 
 <div class="grid grid-cols-7 mb-2">
-  {#each weekdays as day}
+  {#each printableWeekdays as day}
     <div class="text-center py-3">
       <span class="text-sm font-medium text-gray-600">
-        {short ? day.slice(0, 3) : day}
+        {day}
       </span>
     </div>
   {/each}

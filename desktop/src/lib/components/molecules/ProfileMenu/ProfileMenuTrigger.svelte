@@ -4,7 +4,6 @@
   import ChevronUp from '$lib/components/icons/ChevronUp.svelte';
   export let username = '';
   export let avatar = '';
-  export let onClick = () => {};
   export let show = false;
 </script>
 
@@ -12,7 +11,7 @@
   <Avatar src={avatar} size={32} />
   <span class="p-1 text-black font-semibold text-xl">{username}</span>
 
-  <button class="p-1 hover:bg-gray-100 rounded-lg transition" on:click|stopPropagation={onClick}>
+  <button class="p-1 hover:bg-gray-100 rounded-lg transition" on:click|stopPropagation>
     {#if !show}
       <ChevronDown />
     {:else}
