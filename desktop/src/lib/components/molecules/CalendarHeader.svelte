@@ -18,10 +18,10 @@
   }
 </script>
 
-<div class="flex items-center justify-between p-6 border-b">
-  <div class="flex items-center gap-3">
+<div class="flex items-center justify-between p-6">
+  <div class="flex justify-between w-[290px]">
     <IconButton onClick={onPrev} label="Previous" direction="left" />
-    <h2 class="text-2xl font-bold">{title}</h2>
+    <h2 class="text-2xl font-bold text-center">{title}</h2>
     <IconButton onClick={onNext} label="Next" direction="right" />
   </div>
 

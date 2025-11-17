@@ -63,29 +63,34 @@
     dispatch('refresh');
   }
 
-  // Navigation
   function prev(): void {
-    const newDate = new Date(currentDate);
     if (view === 'month') {
-      newDate.setMonth(newDate.getMonth() - 1);
+      currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
     } else if (view === 'week') {
+      const newDate = new Date(currentDate);
       newDate.setDate(newDate.getDate() - 7);
+      currentDate = newDate;
     } else {
+      const newDate = new Date(currentDate);
       newDate.setDate(newDate.getDate() - 1);
+      currentDate = newDate;
     }
-    currentDate = newDate;
+    console.log('Previous date:', currentDate);
   }
 
   function next(): void {
-    const newDate = new Date(currentDate);
     if (view === 'month') {
-      newDate.setMonth(newDate.getMonth() + 1);
+      currentDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1);
     } else if (view === 'week') {
+      const newDate = new Date(currentDate);
       newDate.setDate(newDate.getDate() + 7);
+      currentDate = newDate;
     } else {
+      const newDate = new Date(currentDate);
       newDate.setDate(newDate.getDate() + 1);
+      currentDate = newDate;
     }
-    currentDate = newDate;
+    console.log('Next date:', currentDate);
   }
 
   function goToToday(): void {
@@ -103,19 +108,10 @@
     });
   }
 
-  function getMonthGrid(): Date[] {
-    return dateUtils.getMonthGrid(currentDate);
-  }
-
-  function getWeekDays(): Date[] {
-    return dateUtils.getWeekDays(currentDate);
-  }
-
   function formatHeaderDate(): string {
     if (view === 'month') {
       return currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
     } else if (view === 'week') {
-      const weekDays = getWeekDays();
       const start = weekDays[0];
       const end = weekDays[6];
       return `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
@@ -128,10 +124,25 @@
       });
     }
   }
+
+  $: monthGrid = dateUtils.getMonthGrid(currentDate);
+  $: weekDays = dateUtils.getWeekDays(currentDate);
+  $: headerDate = (() => {
+    if (view === 'day') {
+      return currentDate.toLocaleDateString('en-US', {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric'
+      });
+    } else {
+      return currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    }
+  })();
 </script>
 
 <CalendarHeader
-  title={formatHeaderDate()}
+  title={headerDate}
   {view}
   onPrev={prev}
   onNext={next}
@@ -142,14 +153,13 @@
 {#if view === 'month'}
   <MonthView
     bind:this={monthViewRef}
-    monthGrid={getMonthGrid()}
+    {monthGrid}
     currentMonth={currentDate}
     {eventsForDay}
     on:showTooltip={handleShowTooltip}
     on:hideTooltip={handleHideTooltip}
   />
 
-  <!-- Tooltip for month view -->
   <EventTooltip
     events={tooltipEvents}
     isVisible={tooltipVisible}
@@ -159,12 +169,11 @@
     on:refresh={handleRefresh}
   />
 {:else if view === 'week'}
-  <WeekView weekDays={getWeekDays()} {eventsForDay} onEventClick={openEventDetails} />
+  <WeekView {weekDays} {eventsForDay} onEventClick={openEventDetails} />
 {:else}
   <DayView {currentDate} events={eventsForDay(currentDate)} onEventClick={openEventDetails} />
 {/if}
 
-<!-- Modal for week/day view -->
 <EventDetailsModal
   event={selectedEvent}
   isOpen={isModalOpen}

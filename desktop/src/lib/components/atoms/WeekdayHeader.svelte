@@ -1,12 +1,12 @@
 <script lang="ts">
   export let weekdays: string[] = [
-    'Sunday',
     'Monday',
     'Tuesday',
     'Wednesday',
     'Thursday',
     'Friday',
-    'Saturday'
+    'Saturday',
+    'Sunday'
   ];
   export let short = false;
 </script>

@@ -10,7 +10,9 @@ export const dateUtils = {
   startOfWeek(date: Date): Date {
     const d = new Date(date);
     const day = d.getDay();
-    d.setDate(d.getDate() - day);
+    // By default start at Sunday
+    const diff = day === 0 ? 6 : day - 1;
+    d.setDate(d.getDate() - diff);
     d.setHours(0, 0, 0, 0);
     return d;
   },
@@ -24,8 +26,10 @@ export const dateUtils = {
   getMonthGrid(date: Date): Date[] {
     const start = this.startOfMonth(date);
     const firstDayIndex = start.getDay();
+    // By default start at Sunday
+    const adjustedIndex = firstDayIndex === 0 ? 6 : firstDayIndex - 1;
     const gridStart = new Date(start);
-    gridStart.setDate(start.getDate() - firstDayIndex);
+    gridStart.setDate(start.getDate() - adjustedIndex);
 
     return Array.from({ length: 42 }, (_, i) => {
       const d = new Date(gridStart);
