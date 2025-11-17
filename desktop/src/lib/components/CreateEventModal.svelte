@@ -9,7 +9,7 @@
   let startTime = '';
   let endTime = '';
   let location = '';
-  let visibility: 'private' | 'friends' | 'public' = 'friends';
+  let visibility: 'Private' | 'Friends' | 'Public' = 'Friends';
   let loading = false;
   let error = '';
 
@@ -19,19 +19,23 @@
       return;
     }
 
+    const payload = {
+      title,
+      description: description || undefined,
+      start_time: new Date(startTime).toISOString(),
+      end_time: new Date(endTime).toISOString(),
+      location: location || undefined,
+      visibility
+    };
+    console.log('📤 Sending payload:', payload);
+
     try {
       loading = true;
       error = '';
-      await api.createEvent({
-        title,
-        description: description || undefined,
-        start_time: new Date(startTime).toISOString(),
-        end_time: new Date(endTime).toISOString(),
-        location: location || undefined,
-        visibility,
-      });
+      await api.createEvent(payload);
       dispatch('created');
     } catch (err) {
+      console.error('❌ Error:', err);
       error = err instanceof Error ? err.message : 'Failed to create event';
     } finally {
       loading = false;
@@ -48,10 +52,7 @@
     <div class="p-6">
       <div class="flex justify-between items-center mb-6">
         <h2 class="text-2xl font-bold text-gray-900">Create New Event</h2>
-        <button
-          on:click={handleClose}
-          class="text-gray-400 hover:text-gray-600 text-2xl"
-        >
+        <button on:click={handleClose} class="text-gray-400 hover:text-gray-600 text-2xl">
           ×
         </button>
       </div>
@@ -81,12 +82,14 @@
           <label for="description" class="block text-sm font-medium text-gray-700 mb-1">
             Description
           </label>
-          <textarea>
+          <textarea
             id="description"
             bind:value={description}
             rows="3"
-            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple
+            focus:border-transparent"
             placeholder="What's this event about?"
+          >
           </textarea>
         </div>
 
@@ -140,9 +143,9 @@
             bind:value={visibility}
             class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
           >
-            <option value="private">Private (only you)</option>
-            <option value="friends">Friends</option>
-            <option value="public">Public</option>
+            <option value="Private">Private (only you)</option>
+            <option value="Friends">Friends</option>
+            <option value="Public">Public</option>
           </select>
         </div>
 
@@ -157,7 +160,7 @@
           <button
             type="submit"
             disabled={loading}
-            class="flex-1 px-4 py-2 bg-discord-blurple text-white rounded-lg hover:bg-blue-600 font-medium transition disabled:opacity-50"
+            class="flex-1 px-4 py-2 border-2 border-primary text-primary rounded-lg hover:bg-primary hover:text-white font-medium transition disabled:opacity-50"
           >
             {loading ? 'Creating...' : 'Create Event'}
           </button>

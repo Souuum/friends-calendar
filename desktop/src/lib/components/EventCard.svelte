@@ -9,9 +9,9 @@
 
   function formatDate(dateString: string) {
     const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { 
-      weekday: 'short', 
-      month: 'short', 
+    return date.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit'
@@ -20,10 +20,14 @@
 
   function getStatusColor(status: string) {
     switch (status) {
-      case 'accepted': return 'bg-green-100 text-green-800';
-      case 'declined': return 'bg-red-100 text-red-800';
-      case 'maybe': return 'bg-yellow-100 text-yellow-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case 'accepted':
+        return 'bg-green-100 text-green-800';
+      case 'declined':
+        return 'bg-red-100 text-red-800';
+      case 'maybe':
+        return 'bg-yellow-100 text-yellow-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
     }
   }
 
@@ -73,7 +77,6 @@
     {/if}
   </div>
 
-  <!-- Participants -->
   <div class="mb-4">
     <p class="text-xs font-semibold text-gray-500 mb-2">
       {event.participants.length} participant{event.participants.length !== 1 ? 's' : ''}
@@ -82,8 +85,11 @@
       {#each event.participants.slice(0, 5) as participant}
         <div class="flex items-center gap-1">
           {#if participant.avatar_url}
-          <!-- {console.log("participant avatar url :",participant.avatar_url)} -->
-            <img src={participant.avatar_url} alt={participant.username} class="w-6 h-6 rounded-full" />
+            <img
+              src={participant.avatar_url}
+              alt={participant.username}
+              class="w-6 h-6 rounded-full"
+            />
           {:else}
             <div class="w-6 h-6 rounded-full bg-gray-300"></div>
           {/if}
@@ -98,24 +104,29 @@
     </div>
   </div>
 
-  <!-- Actions -->
   {#if !event.is_creator && event.my_status}
     <div class="flex gap-2">
       <button
         on:click={() => handleStatusChange('accepted')}
-        class="flex-1 text-xs py-2 rounded {event.my_status === 'accepted' ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-700'}"
+        class="flex-1 text-xs py-2 rounded {event.my_status === 'accepted'
+          ? 'bg-green-500 text-white'
+          : 'bg-gray-200 text-gray-700'}"
       >
         ✓ Accept
       </button>
       <button
         on:click={() => handleStatusChange('maybe')}
-        class="flex-1 text-xs py-2 rounded {event.my_status === 'maybe' ? 'bg-yellow-500 text-white' : 'bg-gray-200 text-gray-700'}"
+        class="flex-1 text-xs py-2 rounded {event.my_status === 'maybe'
+          ? 'bg-yellow-500 text-white'
+          : 'bg-gray-200 text-gray-700'}"
       >
         ? Maybe
       </button>
       <button
         on:click={() => handleStatusChange('declined')}
-        class="flex-1 text-xs py-2 rounded {event.my_status === 'declined' ? 'bg-red-500 text-white' : 'bg-gray-200 text-gray-700'}"
+        class="flex-1 text-xs py-2 rounded {event.my_status === 'declined'
+          ? 'bg-red-500 text-white'
+          : 'bg-gray-200 text-gray-700'}"
       >
         ✗ Decline
       </button>
