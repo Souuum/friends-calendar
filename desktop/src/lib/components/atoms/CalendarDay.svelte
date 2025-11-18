@@ -4,7 +4,7 @@
   export let isCurrentMonth = true;
   export let size: 'small' | 'large' = 'large';
 
-  $: isLarge = size === 'small';
+  $: isLarge = size === 'large';
   $: isSmall = !isLarge;
 </script>
 

@@ -1,4 +1,6 @@
 <script lang="ts">
+    import type { EventWithParticipants } from "$lib/types";
+
     export let event: EventWithParticipants;
 </script>
 

@@ -8,14 +8,21 @@
 
   let avatarUrl = `https://cdn.discordapp.com/avatars/${$user?.discord_id}/${$user?.avatar}.png`;
 
+  let currentView = 'calendar';
+
+  const navItems = [
+      { label: 'Calendars', icon: '📅', view: 'calendar' },
+      { label: 'Announcement', icon: '🔔', view: 'announcements' }
+  ];
+
   function handleLogout() {
     api.clearToken();
     window.location.reload();
   }
 
-  const currentView = 'calendar';
-
- 
+  function setView(view: string) {
+    currentView = view;
+  }
 </script>
 
 <div>

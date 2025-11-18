@@ -7,7 +7,7 @@
   const dispatch = createEventDispatcher();
 
   function onChange(view: ViewType) {
-    dispatch('change', view);
+    dispatch('view-change', view);
   }
 
   const views: { value: ViewType; label: string }[] = [

@@ -6,10 +6,6 @@
 
     const dispatch = createEventDispatcher();
 
-    const navItems = [
-        { label: 'Calendars', icon: '📅', view: 'calendar' },
-        { label: 'Announcement', icon: '🔔', view: 'announcements' }
-    ];
 
 </script>
 

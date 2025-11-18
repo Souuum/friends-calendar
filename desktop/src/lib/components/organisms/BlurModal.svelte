@@ -20,7 +20,7 @@
 
 {#if isOpen}
   <BlurOverlay
-    isVisible={isOpen}
+    visible={isOpen}
     {blurAmount}
     opacity={overlayOpacity}
     on:click={handleBlurClick}

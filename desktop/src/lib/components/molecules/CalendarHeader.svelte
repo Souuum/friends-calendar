@@ -9,7 +9,6 @@
   export let onPrev: () => void;
   export let onNext: () => void;
   export let onToday: () => void;
-  export let onViewChange: (view: ViewType) => void;
 
   let showCreateModal = false;
 
@@ -38,7 +37,7 @@
     >
       Today
     </button>
-    <ViewSwitcher {view} on:change={onViewChange} />
+    <ViewSwitcher {view} on:view-change />
   </div>
 </div>
 
