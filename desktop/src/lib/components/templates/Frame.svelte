@@ -4,15 +4,15 @@
   import { user } from '$lib/stores';
 
   import Header from '$lib/components/organisms/Header.svelte';
-  import ViewButton from '$lib/components/templates/ViewButton.svelte'
+  import ViewButton from '$lib/components/templates/ViewButton.svelte';
 
   let avatarUrl = `https://cdn.discordapp.com/avatars/${$user?.discord_id}/${$user?.avatar}.png`;
 
   let currentView = 'calendar';
 
   const navItems = [
-      { label: 'Calendars', icon: '📅', view: 'calendar' },
-      { label: 'Announcement', icon: '🔔', view: 'announcements' }
+    { label: 'Calendars', icon: '📅', view: 'calendar' },
+    { label: 'Announcement', icon: '🔔', view: 'announcements' }
   ];
 
   function handleLogout() {

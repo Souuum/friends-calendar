@@ -30,12 +30,7 @@
 <header class="bg-white">
   <div class="mx-auto px-4 pt-2 sm:px-6 lg:px-8 flex justify-end">
     {#if user}
-      <ProfileMenuTrigger
-        {username}
-        {show}
-        avatar={avatarUrl}
-        on:click={toggleMenu}
-      />
+      <ProfileMenuTrigger {username} {show} avatar={avatarUrl} on:click={toggleMenu} />
     {/if}
 
     {#if show}

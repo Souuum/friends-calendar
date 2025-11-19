@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { EventWithParticipants } from '$lib/types';
-  import EventCard from '$lib/components/EventCard.svelte';
+  import EventCard from '$lib/components/EventCardImpl.svelte';
   import { createEventDispatcher } from 'svelte';
 
   export let events: EventWithParticipants[];

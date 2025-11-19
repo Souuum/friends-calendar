@@ -10,7 +10,6 @@
   function handleLogout() {
     dispatch('logout');
   }
-
 </script>
 
 <div>

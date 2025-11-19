@@ -3,22 +3,12 @@
   import { api } from '$lib/api';
   import type { EventWithParticipants } from '$lib/types';
   import BlurModal from './BlurModal.svelte';
+  import { formatDate } from '$lib/utils/dateUtils';
 
   export let event: EventWithParticipants | null;
   export let isOpen = false;
 
   const dispatch = createEventDispatcher();
-
-  function formatDate(dateString: string) {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  }
 
   function getStatusColor(status: string) {
     switch (status) {

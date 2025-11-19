@@ -14,7 +14,6 @@
     medium: 'bg-primary-hover/50',
     dark: 'bg-primary-hover/70'
   };
-
 </script>
 
 {#if visible}

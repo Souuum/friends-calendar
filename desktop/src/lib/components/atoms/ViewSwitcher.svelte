@@ -1,13 +1,14 @@
 <script lang="ts">
   import type { ViewType } from '$lib/types';
   import { createEventDispatcher } from 'svelte';
-  
+
   export let view: ViewType;
 
   const dispatch = createEventDispatcher();
 
-  function onChange(view: ViewType) {
-    dispatch('view-change', view);
+  function onChange(viewType: ViewType) {
+    view = viewType;
+    dispatch('view-change', viewType);
   }
 
   const views: { value: ViewType; label: string }[] = [
@@ -22,7 +23,7 @@
     {@const isActive = view === viewOption.value}
     <button
       on:click={() => onChange(viewOption.value)}
-      class="px-3 py-1 text-sm rounded transition-colors"
+      class="px-3 py-1 text-sm rounded transition-colors cursor-pointer"
       class:bg-white={isActive}
       class:shadow-sm={isActive}
       class:font-semibold={isActive}

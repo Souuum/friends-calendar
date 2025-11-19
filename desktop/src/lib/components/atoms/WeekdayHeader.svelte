@@ -10,7 +10,7 @@
   ];
   export let short = false;
 
-  $: printableWeekdays = short ? weekdays.map(day => day.slice(0, 3)) : weekdays;
+  $: printableWeekdays = short ? weekdays.map((day) => day.slice(0, 3)) : weekdays;
 </script>
 
 <div class="grid grid-cols-7 mb-2">

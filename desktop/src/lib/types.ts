@@ -20,7 +20,7 @@ export interface CalendarEvent {
   updated_at: string;
 }
 
-type Status = 'pending' | 'accepted' | 'declined' | 'maybe';
+export type Status = 'pending' | 'accepted' | 'declined' | 'maybe';
 
 export interface ParticipantInfo {
   user_id: string;

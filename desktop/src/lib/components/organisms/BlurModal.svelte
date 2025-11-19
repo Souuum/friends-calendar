@@ -19,12 +19,7 @@
 </script>
 
 {#if isOpen}
-  <BlurOverlay
-    visible={isOpen}
-    {blurAmount}
-    opacity={overlayOpacity}
-    on:click={handleBlurClick}
-  >
+  <BlurOverlay visible={isOpen} {blurAmount} opacity={overlayOpacity} on:click={handleBlurClick}>
     <ModalContainer {isOpen} {size} {position} {onClose} {closeOnBackdrop} {closeOnEscape}>
       <slot />
     </ModalContainer>
