@@ -10,15 +10,16 @@
   export let closeOnEscape = true;
   export let blurAmount: 'sm' | 'md' | 'lg' = 'sm';
   export let overlayOpacity: 'light' | 'medium' | 'dark' = 'medium';
+
+  function handleBlurClick() {
+    if (closeOnBackdrop && onClose) {
+      onClose();
+    }
+  }
 </script>
 
 {#if isOpen}
-  <BlurOverlay
-    isVisible={isOpen}
-    {blurAmount}
-    opacity={overlayOpacity}
-    onClick={closeOnBackdrop ? onClose : undefined}
-  >
+  <BlurOverlay visible={isOpen} {blurAmount} opacity={overlayOpacity} on:click={handleBlurClick}>
     <ModalContainer {isOpen} {size} {position} {onClose} {closeOnBackdrop} {closeOnEscape}>
       <slot />
     </ModalContainer>

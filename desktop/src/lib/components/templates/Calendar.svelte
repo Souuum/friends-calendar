@@ -97,8 +97,8 @@
     currentDate = new Date();
   }
 
-  function handleViewChange(newView: ViewType): void {
-    view = newView;
+  function handleViewChange(e: CustomEvent<ViewType>): void {
+    view = e.detail;
   }
 
   function eventsForDay(day: Date): EventWithParticipants[] {
@@ -147,7 +147,7 @@
   onPrev={prev}
   onNext={next}
   onToday={goToToday}
-  onViewChange={handleViewChange}
+  on:view-change={handleViewChange}
 />
 
 {#if view === 'month'}

@@ -1,5 +1,6 @@
 <script lang="ts">
   export let hour: number;
+  export let align: 'left' | 'right' = 'right';
 
   function formatHour(h: number): string {
     if (h === 0) return '12:00 AM';
@@ -10,6 +11,6 @@
   }
 </script>
 
-<div class="text-xs text-gray-500 pr-2 text-right">
+<div class="text-xs text-gray-500 pr-2 text-{align}">
   {formatHour(hour)}
 </div>

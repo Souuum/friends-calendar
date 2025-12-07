@@ -6,13 +6,13 @@
   import { api } from '$lib/api';
 
   export let user;
-  export let avatar_url;
+  export let avatarUrl: string;
 
-  let showMenu = false;
+  let show = false;
   let showCreateModal = false;
 
   function toggleMenu() {
-    showMenu = !showMenu;
+    show = !show;
   }
 
   function goToSettings() {
@@ -23,26 +23,23 @@
     api.clearToken();
     window.location.reload();
   }
+
+  $: username = $user?.username;
 </script>
 
 <header class="bg-white">
   <div class="mx-auto px-4 pt-2 sm:px-6 lg:px-8 flex justify-end">
     {#if user}
-      <ProfileMenuTrigger
-        username={$user.username}
-        avatar={avatar_url}
-        onClick={toggleMenu}
-        show={showMenu}
-      />
+      <ProfileMenuTrigger {username} {show} avatar={avatarUrl} on:click={toggleMenu} />
     {/if}
 
-    {#if showMenu}
+    {#if show}
       {console.log('showing profile menu')}
       <div
         class="absolute w-48 bg-white shadow-lg rounded-lg p-2 top-16 z-50"
-        use:clickOutside={() => (showMenu = false)}
+        use:clickOutside={() => (show = false)}
       >
-        <ProfileMenu onSettings={goToSettings} onLogout={handleLogout} />
+        <ProfileMenu on:settings={goToSettings} on:logout={handleLogout} />
       </div>
     {/if}
   </div>

@@ -9,7 +9,6 @@
   export let onPrev: () => void;
   export let onNext: () => void;
   export let onToday: () => void;
-  export let onViewChange: (view: ViewType) => void;
 
   let showCreateModal = false;
 
@@ -20,9 +19,9 @@
 
 <div class="flex items-center justify-between p-6">
   <div class="flex justify-between w-[290px]">
-    <IconButton onClick={onPrev} label="Previous" direction="left" />
+    <IconButton on:click={onPrev} label="Previous" direction="left" />
     <h2 class="text-2xl font-bold text-center">{title}</h2>
-    <IconButton onClick={onNext} label="Next" direction="right" />
+    <IconButton on:click={onNext} label="Next" direction="right" />
   </div>
 
   <div class="flex items-center gap-3">
@@ -38,7 +37,7 @@
     >
       Today
     </button>
-    <ViewSwitcher {view} onChange={onViewChange} />
+    <ViewSwitcher {view} on:view-change />
   </div>
 </div>
 

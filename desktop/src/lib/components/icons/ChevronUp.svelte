@@ -1,4 +1,10 @@
-<svg viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+<svg
+  viewBox="0 0 24 24"
+  width="24"
+  height="24"
+  xmlns="http://www.w3.org/2000/svg"
+  aria-hidden={true}
+>
   <path
     d="M6 15 L12 9 L18 15"
     fill="none"

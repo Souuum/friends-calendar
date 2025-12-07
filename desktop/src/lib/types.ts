@@ -20,18 +20,20 @@ export interface CalendarEvent {
   updated_at: string;
 }
 
+export type Status = 'pending' | 'accepted' | 'declined' | 'maybe';
+
 export interface ParticipantInfo {
   user_id: string;
   username: string;
   avatar_url?: string;
-  status: 'pending' | 'accepted' | 'declined' | 'maybe';
+  status: Status;
   responded_at?: string;
 }
 
 export interface EventWithParticipants extends CalendarEvent {
   participants: ParticipantInfo[];
   is_creator: boolean;
-  my_status?: 'pending' | 'accepted' | 'declined' | 'maybe';
+  my_status?: Status;
 }
 
 export type ButtonType = 'button' | 'submit' | 'reset';
