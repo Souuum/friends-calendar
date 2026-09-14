@@ -1,0 +1,106 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+
+env:
+  TF_VAR_environment: production
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+
+      - name: Configure Terraform variables
+        run: |
+          cd terraform
+          cat > terraform.tfvars << EOF
+          proxmox_api_url      = "${{ secrets.PROXMOX_API_URL }}"
+          proxmox_user         = "${{ secrets.PROXMOX_USER }}"
+          proxmox_password     = "${{ secrets.PROXMOX_PASSWORD }}"
+          proxmox_node         = "${{ secrets.PROXMOX_NODE }}"
+          
+          ct_hostname          = "friends-calendar-prod"
+          ct_password          = "${{ secrets.CT_PASSWORD }}"
+          ct_ip_address        = "${{ secrets.PROD_IP }}"
+          ct_gateway           = "${{ secrets.CT_GATEWAY }}"
+          
+          domain               = "${{ secrets.PROD_DOMAIN }}"
+          
+          cloudflare_api_token = "${{ secrets.CLOUDFLARE_API_TOKEN }}"
+          cloudflare_zone_id   = "${{ secrets.CLOUDFLARE_ZONE_ID }}"
+          
+          discord_client_id     = "${{ secrets.DISCORD_CLIENT_ID }}"
+          discord_client_secret = "${{ secrets.DISCORD_CLIENT_SECRET }}"
+          discord_bot_token     = "${{ secrets.DISCORD_BOT_TOKEN }}"
+          discord_channel_id    = "${{ secrets.DISCORD_CHANNEL_ID }}"
+          jwt_secret            = "${{ secrets.JWT_SECRET }}"
+          database_url          = "${{ secrets.PROD_DATABASE_URL }}"
+          frontend_url          = "${{ secrets.PROD_FRONTEND_URL }}"
+          EOF
+
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init
+
+      - name: Terraform Plan
+        run: |
+          cd terraform
+          terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        run: |
+          cd terraform
+          terraform apply -auto-approve tfplan
+
+      - name: Get outputs
+        id: tf-outputs
+        run: |
+          cd terraform
+          echo "container_ip=$(terraform output -raw container_ip)" >> $GITHUB_OUTPUT
+          echo "api_url=$(terraform output -raw api_url)" >> $GITHUB_OUTPUT
+
+      - name: Health check
+        run: |
+          sleep 30
+          for i in {1..5}; do
+            if curl -f ${{ steps.tf-outputs.outputs.api_url }}; then
+              echo "✅ Health check passed"
+              exit 0
+            fi
+            echo "⏳ Waiting for service... ($i/5)"
+            sleep 10
+          done
+          echo "❌ Health check failed"
+          exit 1
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+      - name: Notify success
+        if: success()
+        run: |
+          echo "✅ Production deployment successful!"
+          echo "API URL: ${{ steps.tf-outputs.outputs.api_url }}"

@@ -1,0 +1,15 @@
+[Unit]
+Description=Friends Calendar API
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/friends-calendar
+Environment="RUST_LOG=info"
+ExecStart=/opt/friends-calendar/target/release/friends-calendar
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

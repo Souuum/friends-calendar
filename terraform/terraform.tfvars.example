@@ -1,0 +1,27 @@
+# Proxmox
+proxmox_api_url      = "https://192.168.1.10:8006/api2/json"
+proxmox_user         = "root@pam"
+proxmox_password     = "your-proxmox-password"
+proxmox_node         = "pve"
+
+# Container
+ct_hostname          = "friends-calendar-api"
+ct_password          = "secure-container-password"
+ct_ip_address        = "192.168.1.100/24"
+ct_gateway           = "192.168.1.1"
+
+# Domain
+domain               = "api.yourdomain.com"
+
+# Cloudflare
+cloudflare_api_token = "your-cloudflare-api-token"
+cloudflare_zone_id   = "your-zone-id"
+
+# Application secrets
+discord_client_id     = "your-discord-client-id"
+discord_client_secret = "your-discord-client-secret"
+discord_bot_token     = "your-discord-bot-token"
+discord_channel_id    = "1234567890"
+jwt_secret            = "your-jwt-secret"
+database_url          = "postgresql://user:pass@host:5432/friends_calendar"
+frontend_url          = "https://yourdomain.com"
