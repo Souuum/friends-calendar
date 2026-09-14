@@ -151,12 +151,30 @@ default (`VITE_API_URL` override), which matches the backend's bind address.
 003_create_friendships.sql    friendships table (see Friend-list sync below)
 ```
 
-⚠️ **Migration numbering collision risk:** `feat(DiscordBot)` independently
-adds its own `003_add_discord_message_events.sql` and
-`004_add_prince_and_link.sql` (not yet in `master`). Whichever of
-`feat(DiscordBot)` or this friend-sync work merges second will need its
-migration(s) renumbered to `004`/`005` to avoid a filename collision in
-`sqlx`'s migrations table.
+⚠️ **Migration numbering collision risk — this already bit someone locally,
+not just theoretical:** `feat(DiscordBot)` independently adds its own
+`003_add_discord_message_events.sql` and `004_add_prince_and_link.sql` (not
+yet in `master`). Whichever of `feat(DiscordBot)` or this friend-sync work
+merges second will need its migration(s) renumbered to `004`/`005` to avoid
+a filename collision in `sqlx`'s migrations table.
+
+If you locally ran `feat(DiscordBot)` at some point (even just to try it),
+your dev database's `_sqlx_migrations` table already has rows for versions
+3/4 from *that* branch's migrations — which conflict with `master`'s own
+(different) version-3 migration. `sqlx::migrate!` fails hard on boot with
+`Error: VersionMissing(4)` (or a checksum mismatch on version 3) because it
+requires every version the DB thinks is applied to exist as a local file
+matching by checksum, and `master`'s `migrations/` directory doesn't have
+`feat(DiscordBot)`'s files. Fix by clearing just those two rows —
+`DELETE FROM _sqlx_migrations WHERE version IN (3, 4);` — not by dropping
+the columns those migrations added (`discord_message_id`,
+`discord_channel_id`, `price`, `link` on `calendar_events`): if you've been
+testing `feat(DiscordBot)` locally there may be real data sitting in them,
+and current `master` code ignores unknown extra columns harmlessly, so
+there's no need to touch them. Whoever eventually merges
+`feat(DiscordBot)` with renumbered migrations should use
+`ADD COLUMN IF NOT EXISTS` there, since a dev DB with this history will
+already have the columns without a matching applied-migration row.
 
 ### Friend-list sync (`GET /api/friends`, `POST /api/friends/sync`)
 
