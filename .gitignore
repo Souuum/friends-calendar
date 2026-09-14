@@ -27,3 +27,6 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Claude Code local session/permission state (machine-specific, not shared)
+.claude/settings.local.json
