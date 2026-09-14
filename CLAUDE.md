@@ -13,6 +13,9 @@ Svelte/SvelteKit + Tauri desktop client, and a Discord bot that announces
 events into a Discord channel and tracks RSVPs via reactions. Infra is
 Proxmox LXC via Terraform, deployed through GitHub Actions.
 
+Testing is a standing requirement here, not optional polish — see
+"Testing" below and `.claude/skills/add-tests/SKILL.md`.
+
 ## Branches
 
 ```
@@ -77,14 +80,15 @@ backend/
 │   ├── 004_add_discord_message_events.sql  # discord_message_id/discord_channel_id on calendar_events
 │   └── 005_add_price_and_link.sql          # price/link on calendar_events
 └── src/
-    ├── main.rs                # entrypoint, router, CORS, server bootstrap, spawns the Discord bot
-    ├── config.rs               # AppState: db pool, oauth2 client, jwt secret, pkce store, discord bot token/guild id/announcement channel, http client
+    ├── main.rs                # entrypoint, build_router() (pub(crate), reused by functional tests), CORS, server bootstrap, spawns the Discord bot
+    ├── config.rs               # AppState: db pool, oauth2 client, jwt secret, pkce store, discord bot token/guild id/announcement channel/api base, http client. #[cfg(test)] AppState::for_test(..)
     ├── bot.rs                  # Discord gateway bot (serenity) — reaction-based RSVP tracking
     ├── error.rs                 # AppError -> HTTP response mapping
     ├── handlers/
     │   ├── mod.rs
-    │   ├── auth.rs              # Discord OAuth2 login/callback/me/logout, verify_jwt()
+    │   ├── auth.rs              # Discord OAuth2 login/callback/me/logout, verify_jwt(), generate_jwt() (pub(crate), reused by functional tests)
     │   ├── calendar.rs          # CRUD for events + participants + link_discord_message
+    │   ├── discord.rs           # get_linked_server — which Discord server this app is linked to
     │   └── friends.rs           # list/sync friends
     ├── middleware/
     │   ├── mod.rs
@@ -93,18 +97,20 @@ backend/
     │   ├── mod.rs
     │   ├── user.rs               # User, DiscordUser
     │   ├── calendar_event.rs     # CalendarEvent, CreateEventRequest, UpdateEventRequest, Visibility, ParticipationStatus, etc.
-    │   └── friendship.rs         # FriendInfo, SyncFriendsResult
+    │   ├── friendship.rs         # FriendInfo, SyncFriendsResult
+    │   └── discord_guild.rs      # LinkedServerInfo
     └── services/
         ├── mod.rs
         ├── auth.rs
         ├── calendar.rs
-        ├── friends.rs                # Discord guild member fetch + friendship sync
+        ├── friends.rs                # Discord guild member fetch + friendship sync + get_linked_server_info
         └── discord_announcement.rs   # posts event announcements + creates discussion threads
 ```
 
 Runs on `axum = "0.7"`, `sqlx` (Postgres, runtime-tokio-native-tls),
 `oauth2`, `jsonwebtoken`, `serenity = "0.12"` (Discord gateway bot, rustls
-backend).
+backend), `tower` with the `util` feature enabled specifically for
+`ServiceExt::oneshot` in functional tests.
 
 Server binds `127.0.0.1:8080`. CORS is hard-coded to allow only
 `http://localhost:1420` (the Tauri dev origin) with credentials.
@@ -144,6 +150,9 @@ POST   /api/friends/sync                         handlers::friends::sync_friends
 
 # Discord bot
 POST   /api/events/:id/link-discord             handlers::calendar::link_discord_message
+
+# Discord server info
+GET    /api/discord/server                       handlers::discord::get_linked_server
 ```
 
 Frontend (`desktop/src/lib/api.ts`) targets `http://localhost:8080` by
@@ -216,35 +225,85 @@ never had an implementation for.
 - This feature only needs `reqwest` (already a dependency) — it talks to
   Discord's REST API directly rather than depending on `serenity` or
   `feat(DiscordBot)`'s gateway bot, so it works standalone on `master`.
-- Not yet done: no automatic re-sync (e.g. on login, or on a schedule) —
-  it's purely on-demand via the sync endpoint; no *page* consumes
-  `api.getFriends()`/`api.syncFriends()` yet — see the frontend component
-  note below.
+- No automatic re-sync (e.g. on login, or on a schedule) — it's purely
+  on-demand, triggered from the settings page (below) via the "Sync
+  friends" button.
 
-**Tests** (first ones in the repo — neither `backend/` nor `desktop/` had any
-test tooling before this feature):
+Tests: `backend/src/services/friends.rs`'s `#[cfg(test)] mod tests` — see
+"Testing" further down for the general policy and where the patterns are
+documented.
 
-- `backend/src/services/friends.rs` has a `#[cfg(test)] mod tests` covering
-  the Discord-facing pagination/bot-filtering/error-handling logic (via
-  `wiremock`, a new dev-dependency — no real network calls) and the DB-facing
-  sync/get logic (via `#[sqlx::test]`, which spins up a scratch database per
-  test against `DATABASE_URL` and runs the real migrations — needs a
-  reachable Postgres server to run, same as the app itself). Run with
-  `DATABASE_URL=... cargo test` from `backend/` (`.env` isn't auto-loaded by
-  `cargo test`, only by `main()`).
-- `desktop/src/lib/components/molecules/FriendsList.svelte` — a new,
-  presentational molecule (same "data comes in via props" pattern as
-  `EventList.svelte`; not wired into any route yet, so it doesn't appear in
-  the app tree today) with a co-located `FriendsList.test.ts`, using
-  `vitest` + `@testing-library/svelte` + `@testing-library/jest-dom` +
-  `happy-dom` (all new devDependencies — this repo had zero frontend test
-  tooling before). Run with `yarn test` from `desktop/`. `vite.config.js`
-  gained a `test` block and `resolve.conditions` (Vitest needs the
-  `"browser"` condition forced or it resolves Svelte's SSR build instead of
-  the client one); `tsconfig.json` gained
-  `"types": ["@testing-library/jest-dom/vitest"]` so `svelte-check`
-  recognizes the jest-dom matchers (the plain `"@testing-library/jest-dom"`
-  types entry augments Jest's `expect`, not Vitest's — easy to get wrong).
+### Settings page (`/settings`) — linked Discord server + friends
+
+The "user page" from the task that added this: what Discord server this app
+is linked to, and who else from that server also uses the app (friends,
+above). Single-server only — `DISCORD_GUILD_ID` is one guild, not a list;
+multi-server support would need a real data model change, not just this UI.
+
+- `GET /api/discord/server` (`handlers::discord::get_linked_server`,
+  `services::friends::get_linked_server_info`) — `GET /guilds/{id}` on the
+  bot token, returns `{ id, name, icon_url, approximate_member_count }`.
+  Same "400 if Discord isn't configured" treatment as friend sync, same
+  `AppState.discord_bot_token`/`discord_guild_id` fields.
+- `desktop/src/routes/settings/+page.svelte` — a route (not a modal/panel),
+  reachable from the profile menu's "Settings" item in `Header.svelte`
+  (previously a dead `console.log` stub — now `goto('/settings')`). Fetches
+  the linked server and friends independently on mount; owns loading/error
+  state for both, same container/presentational split as
+  `CalendarView.svelte`. Renders `LinkedServerCard.svelte` (new,
+  presentational) for the server and the already-existing `FriendsList.svelte`
+  for friends — the latter is now actually wired into the app for the first
+  time.
+- `AppState` gained `discord_api_base: String` (defaults to the real
+  Discord API, overridable via `DISCORD_API_BASE` — mainly for tests) so
+  this endpoint and `services::friends` share one source of truth for
+  "where is Discord" instead of each hardcoding it separately.
+
+## Testing
+
+**Standing policy for this repo, not just this feature: every backend or
+frontend change that adds or changes behavior gets tests at whichever tiers
+apply (unit / integration / functional for backend, component tests for
+frontend) — it's part of finishing the feature, not optional follow-up.**
+
+Full conventions, worked examples, and a pre-flight checklist live in
+`.claude/skills/add-tests/SKILL.md` — read that before writing tests here
+rather than re-deriving the patterns. Summary:
+
+- Backend tests live in `#[cfg(test)] mod tests` at the bottom of the file
+  under test (no separate `tests/` directory). Run:
+  `DATABASE_URL=$(grep DATABASE_URL backend/.env | cut -d= -f2-) cargo test`
+  from `backend/` — `.env` is only loaded by `main()`, not by `cargo test`.
+  - Unit: pure functions, plain `#[test]`. Example:
+    `models::discord_guild::LinkedServerInfo::build_icon_url`.
+  - Integration: DB logic via `#[sqlx::test]` (real schema, scratch
+    database per test); Discord/external-HTTP calls via `wiremock`
+    (never the real API) — needs the function under test to take the
+    Discord API base URL as a parameter (`&state.discord_api_base` in
+    production) rather than hardcoding it. Example:
+    `services::friends`'s whole test module.
+  - Functional: a real request through the actual `axum::Router` via
+    `tower::ServiceExt::oneshot` (`tower`'s `util` feature, enabled for
+    this), against a test-only `AppState::for_test(db, discord_api_base)`
+    (`#[cfg(test)]`-gated in `config.rs`) and a JWT from
+    `handlers::auth::generate_jwt` (`pub(crate)`, for this reason).
+    `main.rs`'s router-building was pulled out into `pub(crate) fn
+    build_router(state) -> Router` specifically so tests exercise the
+    exact same routing/CORS setup as the real server. Example:
+    `handlers::discord`'s test module.
+- Frontend: `vitest` + `@testing-library/svelte` + `@testing-library/jest-dom`
+  + `happy-dom`, co-located `<Component>.test.ts`. Run `yarn test` from
+  `desktop/`. Prefer presentational/props-driven components (see
+  `FriendsList.svelte`, `LinkedServerCard.svelte`) — trivially testable
+  without mocking anything. Page-level components that own their own
+  `onMount` fetch (see `routes/settings/+page.svelte`) need `$lib/api` (and
+  often `$app/navigation`) mocked via `vi.mock(...)` — see
+  `routes/settings/page.test.ts`.
+- `cargo clippy --all-targets --all-features -- -D warnings` and
+  `yarn run check` (not `yarn check`, which is yarn's own unrelated
+  built-in command) both have pre-existing failures unrelated to any given
+  change — don't chase those, but make sure new code doesn't add to the
+  pile.
 
 ## `desktop/` (SvelteKit + Tauri)
 
@@ -256,7 +315,9 @@ desktop/
 │   ├── capabilities/, gen/, icons/
 │   └── tauri.conf.json
 ├── src/
-│   ├── routes/                # SvelteKit routes: +layout.svelte, +page.svelte
+│   ├── routes/
+│   │   ├── +layout.svelte, +page.svelte    # root: login screen or CalendarView
+│   │   └── settings/+page.svelte           # linked Discord server + friends, see above
 │   ├── lib/
 │   │   ├── api.ts             # fetch wrapper, JWT storage in localStorage
 │   │   ├── stores.ts, types.ts
@@ -269,24 +330,20 @@ desktop/
 │   │       │                   # TimeSlot, ViewSwitcher, event/ subfolder (Event,
 │   │       │                   # EventCard, CompactEvent, DetailedEvent, ...)
 │   │       ├── molecules/      # CalendarHeader, EventList, EventTooltip,
-│   │       │                   # ModalContainer, ProfileMenu/, TimedEvent
+│   │       │                   # ModalContainer, ProfileMenu/, TimedEvent,
+│   │       │                   # FriendsList, LinkedServerCard
 │   │       ├── organisms/      # DayView, WeekView, MonthView, Header,
 │   │       │                   # EventDetailsModal, BlurModal
 │   │       └── templates/      # Calendar, Frame, ViewButton
 │   └── test/stories/           # Storybook stories (atoms + ProfileMenu)
 ├── .storybook/                 # Storybook + SvelteKit config
-├── build/                      # committed SvelteKit build output — see flag below
+├── build/                      # yarn build output, gitignored (`/build` in desktop/.gitignore) — not committed
 └── static/
 ```
 
 Atomic-design component layout (atoms → molecules → organisms → templates).
 Storybook is wired up for the atoms and the ProfileMenu molecule only; most
 molecules/organisms/templates have no stories yet.
-
-⚠️ `desktop/build/` (compiled SvelteKit/Tauri output, including hashed JS
-chunks) is committed to the repo. This is generated output and should
-normally be gitignored, not checked in — it will drift from source and bloat
-the repo on every rebuild.
 
 ## Terraform / GitHub Actions / Discord bot — real vs. discussed-only
 
@@ -396,10 +453,9 @@ its contents.
    `yarn`, and reconcile the `main`/`develop` branch names in `ci.yml`,
    `cd-staging.yml`, `cd-production.yml` against the real `master` branch (or
    rename branches to match).
-5. Decide whether `desktop/build/` should be committed; if not, gitignore it.
-6. Delete the now-fully-stale branches: `feat(Event)`, `feat(Storybook)`,
+5. Delete the now-fully-stale branches: `feat(Event)`, `feat(Storybook)`,
    `feat(terraform)` (local-only), `origin/dev/refacto`, `feat(Calendar)`,
    `feat(DiscordBot)` — all 0 ahead of `master` as of 2026-09-14, nothing
    left to merge from any of them.
-7. `bot.rs`/`discord_announcement.rs` have no automated tests (see Discord
+6. `bot.rs`/`discord_announcement.rs` have no automated tests (see Discord
    bot section above for why and what a first pass could look like).
