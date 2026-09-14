@@ -53,7 +53,7 @@
       const tooltipPosition = calculateTooltipPosition(rect);
 
       dispatch('showTooltip', { day, events: dayEvents, position: tooltipPosition });
-    }, 1000);
+    }, 500);
   }
 
   function handleMouseLeave() {
