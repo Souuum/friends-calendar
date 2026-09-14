@@ -21,6 +21,11 @@ pub struct AppState {
     pub discord_bot_token: Option<String>,
     pub discord_guild_id: Option<String>,
     pub http_client: reqwest::Client,
+    // Used by the Discord gateway bot (bot.rs / services::discord_announcement)
+    // to know which channel to post event announcements in and watch for
+    // ✅-reaction RSVPs. Same "optional, degrade gracefully" treatment as
+    // the friend-sync fields above — see main.rs.
+    pub discord_announcement_channel_id: Option<u64>,
 }
 
 impl AppState {
@@ -86,6 +91,17 @@ impl AppState {
             );
         }
 
+        let discord_announcement_channel_id = env::var("DISCORD_ANNOUNCEMENT_CHANNEL_ID")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .and_then(|s| match s.parse() {
+                Ok(id) => Some(id),
+                Err(_) => {
+                    tracing::warn!("⚠️  DISCORD_ANNOUNCEMENT_CHANNEL_ID isn't a valid channel ID, ignoring it");
+                    None
+                }
+            });
+
         Ok(Self {
             db,
             oauth_client,
@@ -95,6 +111,7 @@ impl AppState {
             discord_bot_token,
             discord_guild_id,
             http_client: reqwest::Client::new(),
+            discord_announcement_channel_id,
         })
     }
 }

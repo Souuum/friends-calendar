@@ -31,5 +31,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 bcrypt = "0.15"
 
+# Discord bot (gateway) for reaction-based RSVP tracking
+serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"] }
+
 [dev-dependencies]
 wiremock = "0.6"

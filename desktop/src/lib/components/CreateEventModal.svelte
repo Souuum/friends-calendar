@@ -12,6 +12,8 @@
   let visibility: 'Private' | 'Friends' | 'Public' = 'Friends';
   let loading = false;
   let error = '';
+  let price = '';
+  let link = '';
 
   async function handleSubmit() {
     if (!title || !startTime || !endTime) {
@@ -25,7 +27,9 @@
       start_time: new Date(startTime).toISOString(),
       end_time: new Date(endTime).toISOString(),
       location: location || undefined,
-      visibility
+      visibility,
+      price: price || undefined,
+      link: link || undefined
     };
     console.log('📤 Sending payload:', payload);
 
@@ -131,6 +135,27 @@
             bind:value={location}
             class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
             placeholder="Conference Room A"
+          />
+        </div>
+        <div>
+          <label for="price" class="block text-sm font-medium text-gray-700 mb-1"> Prix </label>
+          <input
+            id="price"
+            type="text"
+            bind:value={price}
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
+            placeholder="20€ ou Gratuit"
+          />
+        </div>
+
+        <div>
+          <label for="link" class="block text-sm font-medium text-gray-700 mb-1"> Lien </label>
+          <input
+            id="link"
+            type="url"
+            bind:value={link}
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
+            placeholder="https://example.com"
           />
         </div>
 

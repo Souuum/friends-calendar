@@ -18,8 +18,8 @@ pub async fn create_event(
     let event = sqlx::query_as::<_, CalendarEvent>(
         r#"
         INSERT INTO calendar_events 
-            (id, creator_id, title, description, start_time, end_time, location, visibility, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            (id, creator_id, title, description, start_time, end_time, location, visibility, price, link, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING *
         "#,
     )
@@ -31,6 +31,8 @@ pub async fn create_event(
     .bind(&req.end_time)
     .bind(&req.location)
     .bind(req.visibility.unwrap_or(Visibility::Private))
+    .bind(&req.price)
+    .bind(&req.link)
     .bind(Utc::now())
     .bind(Utc::now())
     .fetch_one(db)
@@ -241,14 +243,20 @@ pub async fn update_event(
     if let Some(visibility) = req.visibility {
         event.visibility = visibility;
     }
+    if let Some(price) = req.price {
+        event.price = Some(price);
+    }
+    if let Some(link) = req.link {
+        event.link = Some(link);
+    }
 
     // Save updated event
     let updated = sqlx::query_as::<_, CalendarEvent>(
         r#"
-        UPDATE calendar_events 
-        SET title = $1, description = $2, start_time = $3, end_time = $4, 
-            location = $5, visibility = $6, updated_at = $7
-        WHERE id = $8 AND creator_id = $9
+        UPDATE calendar_events
+        SET title = $1, description = $2, start_time = $3, end_time = $4,
+            location = $5, visibility = $6, price = $7, link = $8, updated_at = $9
+        WHERE id = $10 AND creator_id = $11
         RETURNING *
         "#,
     )
@@ -258,6 +266,8 @@ pub async fn update_event(
     .bind(&event.end_time)
     .bind(&event.location)
     .bind(&event.visibility)
+    .bind(&event.price)
+    .bind(&event.link)
     .bind(Utc::now())
     .bind(event_id)
     .bind(creator_id)
