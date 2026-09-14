@@ -1,4 +1,4 @@
-use crate::models::{FriendInfo, SyncFriendsResult, User};
+use crate::models::{FriendInfo, LinkedServerInfo, SyncFriendsResult, User};
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use reqwest::Client;
@@ -6,7 +6,6 @@ use serde::Deserialize;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-const DISCORD_API_BASE: &str = "https://discord.com/api/v10";
 const MEMBERS_PAGE_SIZE: usize = 1000;
 
 // Discord does not expose a user's real Friends/relationships list to bots
@@ -17,6 +16,11 @@ const MEMBERS_PAGE_SIZE: usize = 1000;
 // friend-group app like this one is: two app users are "friends" if they
 // both belong to the Discord server (guild) this bot lives in. That's what
 // this module syncs.
+//
+// Every function here takes `base_url` as a required parameter rather than
+// hardcoding Discord's real API — production callers pass
+// `&state.discord_api_base` (which defaults to the real API), tests point
+// it at a `wiremock::MockServer`. See .claude/skills/add-tests/SKILL.md.
 
 #[derive(Debug, Deserialize)]
 struct DiscordGuildMemberUser {
@@ -34,13 +38,20 @@ struct DiscordGuildMember {
 /// and return the discord_id of every non-bot member. Requires the bot's
 /// application to have the privileged "Server Members Intent" enabled in
 /// the Discord developer portal, same as the gateway bot does.
-///
-/// `base_url`/`page_size` are only ever overridden in tests: `base_url` to
-/// point at a local mock server instead of the real Discord API, `page_size`
-/// to make the "keep paging with `after`" branch reachable without a
-/// fixture of 1000+ fake members. Production always calls this via
-/// `sync_friends`, which passes `DISCORD_API_BASE`/`MEMBERS_PAGE_SIZE`.
-async fn fetch_guild_member_discord_ids_from(
+pub async fn fetch_guild_member_discord_ids(
+    base_url: &str,
+    http: &Client,
+    bot_token: &str,
+    guild_id: &str,
+) -> Result<Vec<String>> {
+    fetch_guild_member_discord_ids_paged(base_url, MEMBERS_PAGE_SIZE, http, bot_token, guild_id).await
+}
+
+// `page_size` only exists as a separate parameter so the pagination/"keep
+// following `after`" branch is reachable in a test without a fixture of
+// 1000+ fake members. Production always goes through
+// `fetch_guild_member_discord_ids` above.
+async fn fetch_guild_member_discord_ids_paged(
     base_url: &str,
     page_size: usize,
     http: &Client,
@@ -97,30 +108,7 @@ async fn fetch_guild_member_discord_ids_from(
 /// stored in both directions and stamped with `synced_at` so a friend who
 /// leaves the server (and is absent from the next sync) gets dropped.
 pub async fn sync_friends(
-    db: &PgPool,
-    http: &Client,
-    bot_token: &str,
-    guild_id: &str,
-    user_id: Uuid,
-    own_discord_id: &str,
-) -> Result<SyncFriendsResult> {
-    sync_friends_from(
-        DISCORD_API_BASE,
-        MEMBERS_PAGE_SIZE,
-        db,
-        http,
-        bot_token,
-        guild_id,
-        user_id,
-        own_discord_id,
-    )
-    .await
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn sync_friends_from(
     base_url: &str,
-    page_size: usize,
     db: &PgPool,
     http: &Client,
     bot_token: &str,
@@ -128,8 +116,7 @@ async fn sync_friends_from(
     user_id: Uuid,
     own_discord_id: &str,
 ) -> Result<SyncFriendsResult> {
-    let member_discord_ids =
-        fetch_guild_member_discord_ids_from(base_url, page_size, http, bot_token, guild_id).await?;
+    let member_discord_ids = fetch_guild_member_discord_ids(base_url, http, bot_token, guild_id).await?;
 
     let candidate_ids: Vec<String> = member_discord_ids
         .into_iter()
@@ -235,6 +222,47 @@ pub async fn get_friends(db: &PgPool, user_id: Uuid) -> Result<Vec<FriendInfo>> 
     Ok(friends)
 }
 
+#[derive(Debug, Deserialize)]
+struct DiscordGuildResponse {
+    id: String,
+    name: String,
+    icon: Option<String>,
+    approximate_member_count: Option<u64>,
+}
+
+/// Basic public info (name, icon, approximate member count) for the Discord
+/// server this app is linked to, via `GET /guilds/{id}`. Any bot member of
+/// a guild can read this — no elevated permissions needed.
+pub async fn get_linked_server_info(
+    base_url: &str,
+    http: &Client,
+    bot_token: &str,
+    guild_id: &str,
+) -> Result<LinkedServerInfo> {
+    let url = format!("{base_url}/guilds/{guild_id}?with_counts=true");
+
+    let response = http
+        .get(&url)
+        .header("Authorization", format!("Bot {bot_token}"))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(anyhow!("Discord API error ({status}): {body}"));
+    }
+
+    let guild: DiscordGuildResponse = response.json().await?;
+
+    Ok(LinkedServerInfo {
+        icon_url: LinkedServerInfo::build_icon_url(&guild.id, guild.icon.as_deref()),
+        id: guild.id,
+        name: guild.name,
+        approximate_member_count: guild.approximate_member_count,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,6 +291,8 @@ mod tests {
         }
     }
 
+    // --- unit: fetch_guild_member_discord_ids_paged / pagination -------
+
     #[tokio::test]
     async fn fetches_and_filters_bots_across_pages() {
         let server = MockServer::start().await;
@@ -280,7 +310,7 @@ mod tests {
             .await;
 
         let http = Client::new();
-        let ids = fetch_guild_member_discord_ids_from(&server.uri(), 2, &http, "test-token", "g1")
+        let ids = fetch_guild_member_discord_ids_paged(&server.uri(), 2, &http, "test-token", "g1")
             .await
             .unwrap();
 
@@ -298,12 +328,70 @@ mod tests {
             .await;
 
         let http = Client::new();
-        let err = fetch_guild_member_discord_ids_from(&server.uri(), 100, &http, "test-token", "g1")
+        let err = fetch_guild_member_discord_ids(&server.uri(), &http, "test-token", "g1")
             .await
             .unwrap_err();
 
         assert!(err.to_string().contains("403"));
     }
+
+    // --- integration: get_linked_server_info ----------------------------
+
+    #[tokio::test]
+    async fn get_linked_server_info_parses_guild_response() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/guilds/g1"))
+            .and(header("Authorization", "Bot test-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "g1",
+                "name": "Test Friends",
+                "icon": "abc123",
+                "approximate_member_count": 12
+            })))
+            .mount(&server)
+            .await;
+
+        let http = Client::new();
+        let info = get_linked_server_info(&server.uri(), &http, "test-token", "g1")
+            .await
+            .unwrap();
+
+        assert_eq!(info.id, "g1");
+        assert_eq!(info.name, "Test Friends");
+        assert_eq!(
+            info.icon_url.as_deref(),
+            Some("https://cdn.discordapp.com/icons/g1/abc123.png")
+        );
+        assert_eq!(info.approximate_member_count, Some(12));
+    }
+
+    #[tokio::test]
+    async fn get_linked_server_info_handles_missing_icon() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/guilds/g1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "g1",
+                "name": "No Icon Server",
+                "icon": null,
+                "approximate_member_count": null
+            })))
+            .mount(&server)
+            .await;
+
+        let http = Client::new();
+        let info = get_linked_server_info(&server.uri(), &http, "test-token", "g1")
+            .await
+            .unwrap();
+
+        assert!(info.icon_url.is_none());
+        assert!(info.approximate_member_count.is_none());
+    }
+
+    // --- integration (DB): sync_friends / get_friends -------------------
 
     async fn seed_user(db: &PgPool, discord_id: &str, username: &str) -> Uuid {
         let id = Uuid::new_v4();
@@ -358,18 +446,9 @@ mod tests {
             .await;
 
         let http = Client::new();
-        let result = sync_friends_from(
-            &server.uri(),
-            100,
-            &db,
-            &http,
-            "test-token",
-            "g1",
-            me,
-            "me-discord",
-        )
-        .await
-        .unwrap();
+        let result = sync_friends(&server.uri(), &db, &http, "test-token", "g1", me, "me-discord")
+            .await
+            .unwrap();
 
         assert_eq!(result.synced, 1);
         assert_eq!(result.removed, 0);
@@ -404,18 +483,9 @@ mod tests {
             .await;
 
         let http = Client::new();
-        let result = sync_friends_from(
-            &server.uri(),
-            100,
-            &db,
-            &http,
-            "test-token",
-            "g1",
-            me,
-            "me-discord",
-        )
-        .await
-        .unwrap();
+        let result = sync_friends(&server.uri(), &db, &http, "test-token", "g1", me, "me-discord")
+            .await
+            .unwrap();
 
         assert_eq!(result.synced, 0);
         assert_eq!(result.removed, 1);

@@ -175,7 +175,7 @@ pub async fn logout() -> impl IntoResponse {
 }
 
 // JWT helper functions
-fn generate_jwt(discord_id: &str, secret: &str) -> Result<String, jsonwebtoken::errors::Error> {
+pub(crate) fn generate_jwt(discord_id: &str, secret: &str) -> Result<String, jsonwebtoken::errors::Error> {
     let expiration = Utc::now()
         .checked_add_signed(Duration::hours(24))
         .expect("valid timestamp")

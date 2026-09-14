@@ -50,6 +50,7 @@ pub async fn sync_friends(
     };
 
     let result = friends::sync_friends(
+        &state.discord_api_base,
         &state.db,
         &state.http_client,
         bot_token,
