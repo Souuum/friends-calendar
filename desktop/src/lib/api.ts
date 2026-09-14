@@ -4,7 +4,8 @@ import type {
   EventWithParticipants,
   ParticipantInfo,
   FriendInfo,
-  SyncFriendsResult
+  SyncFriendsResult,
+  LinkedServerInfo
 } from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
@@ -148,6 +149,11 @@ class ApiClient {
     return this.fetch<SyncFriendsResult>('/api/friends/sync', {
       method: 'POST'
     });
+  }
+
+  // Discord server this app is linked to (single server for now)
+  async getLinkedServer(): Promise<LinkedServerInfo> {
+    return this.fetch<LinkedServerInfo>('/api/discord/server');
   }
 }
 

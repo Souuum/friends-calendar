@@ -4,6 +4,7 @@
   import ProfileMenu from '$lib/components/molecules/ProfileMenu/ProfileMenu.svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { api } from '$lib/api';
+  import { goto } from '$app/navigation';
 
   export let user;
   export let avatarUrl: string;
@@ -16,7 +17,8 @@
   }
 
   function goToSettings() {
-    console.log('settings clicked');
+    show = false;
+    goto('/settings');
   }
 
   function handleLogout() {

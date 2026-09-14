@@ -53,6 +53,13 @@ export interface SyncFriendsResult {
   friends: FriendInfo[];
 }
 
+export interface LinkedServerInfo {
+  id: string;
+  name: string;
+  icon_url?: string;
+  approximate_member_count?: number;
+}
+
 export type ButtonType = 'button' | 'submit' | 'reset';
 
 export type ViewType = 'month' | 'week' | 'day';
