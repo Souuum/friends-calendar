@@ -36,6 +36,19 @@ export interface EventWithParticipants extends CalendarEvent {
   my_status?: Status;
 }
 
+export interface FriendInfo {
+  user_id: string;
+  username: string;
+  avatar_url?: string;
+  synced_at: string;
+}
+
+export interface SyncFriendsResult {
+  synced: number;
+  removed: number;
+  friends: FriendInfo[];
+}
+
 export type ButtonType = 'button' | 'submit' | 'reset';
 
 export type ViewType = 'month' | 'week' | 'day';

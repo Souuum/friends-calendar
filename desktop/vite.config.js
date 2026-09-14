@@ -29,4 +29,15 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+  // Svelte ships separate SSR/browser builds; without forcing the browser
+  // condition under Vitest, component tests would run against the SSR
+  // build (no DOM lifecycle) instead of the client one.
+  resolve: {
+    conditions: process.env.VITEST ? ["browser"] : undefined,
+  },
+  test: {
+    environment: "happy-dom",
+    globals: true,
+    setupFiles: ["./vitest-setup.js"],
+  },
 }));

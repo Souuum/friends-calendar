@@ -1,4 +1,11 @@
-import type { User, CalendarEvent, EventWithParticipants, ParticipantInfo } from './types';
+import type {
+  User,
+  CalendarEvent,
+  EventWithParticipants,
+  ParticipantInfo,
+  FriendInfo,
+  SyncFriendsResult
+} from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
@@ -121,6 +128,21 @@ class ApiClient {
     return this.fetch<void>(`/api/events/${eventId}/participation`, {
       method: 'PUT',
       body: JSON.stringify({ status })
+    });
+  }
+
+  // Friends
+  // Currently-synced friends: other app users sharing the Discord server
+  // this app's bot is in. Discord doesn't expose real Friends/relationships
+  // to bots or OAuth2 apps, so this is a shared-server proxy — see
+  // backend/src/services/friends.rs.
+  async getFriends(): Promise<FriendInfo[]> {
+    return this.fetch<FriendInfo[]>('/api/friends');
+  }
+
+  async syncFriends(): Promise<SyncFriendsResult> {
+    return this.fetch<SyncFriendsResult>('/api/friends/sync', {
+      method: 'POST'
     });
   }
 }
