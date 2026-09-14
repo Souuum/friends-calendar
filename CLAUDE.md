@@ -3,46 +3,47 @@
 This file gives Claude Code (and other agents) grounding in how this repo is
 actually structured today, as opposed to how it might look from commit
 messages or branch names alone. Everything below was verified against the
-working tree and git history on 2026-09-14.
+working tree and git history, most recently on 2026-09-14 (feature-branch
+merge pass).
 
 ## What this is
 
 A Discord-OAuth "friends calendar" app: a Rust/Axum backend, a
-Svelte/SvelteKit + Tauri desktop client, and (mostly unmerged) a Discord bot
-that announces events into a Discord channel. Infra is Proxmox LXC via
-Terraform, deployed through GitHub Actions.
+Svelte/SvelteKit + Tauri desktop client, and a Discord bot that announces
+events into a Discord channel and tracks RSVPs via reactions. Infra is
+Proxmox LXC via Terraform, deployed through GitHub Actions.
 
 ## Branches
 
 ```
 * master                    <- default branch, active
   remotes/origin/master
-  remotes/origin/dev/refacto        0 ahead / 1 behind master  -> fully merged, stale
-  feat(Calendar)                    3 ahead / 5 behind master  -> diverged, needs rebase
-  feat(DiscordBot)                  7 ahead / 0 behind master  -> real, unmerged feature
-  feat(Event)                       0 ahead / 28 behind master -> fully merged, stale
-  feat(Storybook)                   0 ahead / 19 behind master -> fully merged, stale
-  feat(terraform)                   identical to master        -> fully merged, stale
+  remotes/origin/dev/refacto        0 ahead / 18 behind master -> fully merged, stale
+  feat(Calendar)                    0 ahead / 19 behind master -> fully merged, stale
+  feat(DiscordBot)                  0 ahead / 10 behind master -> fully merged, stale
+  feat(Event)                       0 ahead / 45 behind master -> fully merged, stale
+  feat(Storybook)                   0 ahead / 36 behind master -> fully merged, stale
+  feat(terraform)                   0 ahead / 17 behind master -> fully merged, stale (local-only, no remote counterpart)
 ```
 
 `master` is both the current and default branch (`origin/HEAD -> origin/master`).
+As of the merges on 2026-09-14, **every branch is fully absorbed into
+`master`** — all 0 ahead. None of them have unique work left, so all are
+safe to delete (`git push origin --delete <branch>` for the remote ones,
+`git branch -d <branch>` locally) whenever someone gets around to it; that
+cleanup hasn't been done yet, the branches are just stale pointers now.
 
-**Branches that are safe to delete** (their work is already in `master`,
-diffing them against `master` only shows master having moved on):
-`feat(Event)`, `feat(Storybook)`, `feat(terraform)`, `origin/dev/refacto`.
-
-**Branches with real unmerged work:**
-
-- **`feat(DiscordBot)`** — the only branch with substantial, non-trivial
-  unmerged code. See [Discord bot branch](#discord-bot-branch-featdiscordbot)
-  below for what's there and what's left.
-- **`feat(Calendar)`** — small frontend cleanups only: shortens a popup delay
-  to 0.5s, removes an unused `Status` type alias and an unused `formatDate`
-  helper in `dateUtils.ts`, one formatting commit. It's *behind* master by 5
-  commits (predates the Storybook merge), so it needs a rebase before it can
-  land — the diff currently shows large spurious "deletions" of Storybook
-  story files that actually already exist in `master`, that's just branch
-  staleness, not real removal.
+`feat(DiscordBot)` and `feat(Calendar)` were merged via explicit merge
+commits (`6047c67`, `d9e7c42`) rather than fast-forwarded, since both needed
+real conflict resolution / fixes along the way — see
+[Discord bot](#discord-bot-bot-rs-services-discord_announcement-rs) below
+for what `feat(DiscordBot)`'s merge involved. `feat(Calendar)`'s merge kept
+two genuine changes (tooltip popup delay 1000ms → 500ms, and deleting a
+dead `formatHeaderDate()` function already superseded by a reactive block)
+but reverted one part of its "fixed format" commit that silently collapsed
+the day-view-aware header date logic — that looked like unintentional
+collateral damage from the formatting pass, not a deliberate change, since
+nothing else in the branch or its commit messages explains it.
 
 ## Package managers / workspace setup
 
@@ -72,15 +73,18 @@ backend/
 ├── migrations/
 │   ├── 001_create_users_table.sql
 │   ├── 002_create_events_table.sql
-│   └── 003_create_friendships.sql   # friend-list sync, see below
+│   ├── 003_create_friendships.sql          # friend-list sync, see below
+│   ├── 004_add_discord_message_events.sql  # discord_message_id/discord_channel_id on calendar_events
+│   └── 005_add_price_and_link.sql          # price/link on calendar_events
 └── src/
-    ├── main.rs                # entrypoint, router, CORS, server bootstrap
-    ├── config.rs               # AppState: db pool, oauth2 client, jwt secret, pkce store, discord bot token/guild id, http client
+    ├── main.rs                # entrypoint, router, CORS, server bootstrap, spawns the Discord bot
+    ├── config.rs               # AppState: db pool, oauth2 client, jwt secret, pkce store, discord bot token/guild id/announcement channel, http client
+    ├── bot.rs                  # Discord gateway bot (serenity) — reaction-based RSVP tracking
     ├── error.rs                 # AppError -> HTTP response mapping
     ├── handlers/
     │   ├── mod.rs
     │   ├── auth.rs              # Discord OAuth2 login/callback/me/logout, verify_jwt()
-    │   ├── calendar.rs          # CRUD for events + participants
+    │   ├── calendar.rs          # CRUD for events + participants + link_discord_message
     │   └── friends.rs           # list/sync friends
     ├── middleware/
     │   ├── mod.rs
@@ -94,12 +98,13 @@ backend/
         ├── mod.rs
         ├── auth.rs
         ├── calendar.rs
-        └── friends.rs            # Discord guild member fetch + friendship sync
+        ├── friends.rs                # Discord guild member fetch + friendship sync
+        └── discord_announcement.rs   # posts event announcements + creates discussion threads
 ```
 
 Runs on `axum = "0.7"`, `sqlx` (Postgres, runtime-tokio-native-tls),
-`oauth2`, `jsonwebtoken`, `serenity` is **not** a dependency on `master`
-(only on `feat(DiscordBot)`, see below).
+`oauth2`, `jsonwebtoken`, `serenity = "0.12"` (Discord gateway bot, rustls
+backend).
 
 Server binds `127.0.0.1:8080`. CORS is hard-coded to allow only
 `http://localhost:1420` (the Tauri dev origin) with credentials.
@@ -136,6 +141,9 @@ DELETE /api/events/:id/participants/:user_id    handlers::calendar::remove_parti
 # Friends
 GET    /api/friends                              handlers::friends::list_friends
 POST   /api/friends/sync                         handlers::friends::sync_friends
+
+# Discord bot
+POST   /api/events/:id/link-discord             handlers::calendar::link_discord_message
 ```
 
 Frontend (`desktop/src/lib/api.ts`) targets `http://localhost:8080` by
@@ -144,37 +152,30 @@ default (`VITE_API_URL` override), which matches the backend's bind address.
 ### DB migrations (on `master`)
 
 ```
-001_create_users_table.sql    users table, unique discord_id index
-002_create_events_table.sql   calendar_events + event_participants,
-                               visibility & participation_status enums,
-                               time-range CHECK constraint, several indexes
-003_create_friendships.sql    friendships table (see Friend-list sync below)
+001_create_users_table.sql            users table, unique discord_id index
+002_create_events_table.sql           calendar_events + event_participants,
+                                       visibility & participation_status enums,
+                                       time-range CHECK constraint, several indexes
+003_create_friendships.sql            friendships table (see Friend-list sync below)
+004_add_discord_message_events.sql    discord_message_id/discord_channel_id on calendar_events
+005_add_price_and_link.sql            price/link on calendar_events
 ```
 
-⚠️ **Migration numbering collision risk — this already bit someone locally,
-not just theoretical:** `feat(DiscordBot)` independently adds its own
-`003_add_discord_message_events.sql` and `004_add_prince_and_link.sql` (not
-yet in `master`). Whichever of `feat(DiscordBot)` or this friend-sync work
-merges second will need its migration(s) renumbered to `004`/`005` to avoid
-a filename collision in `sqlx`'s migrations table.
+`004`/`005` originated on `feat(DiscordBot)` as its own `003`/`004` (see
+that branch's history) — renumbered during the merge to avoid colliding
+with `master`'s own, different `003`, and rewritten with
+`ADD COLUMN IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` so they're safe
+to apply against a dev database that already has these columns from
+testing that branch locally pre-merge (this happened for real on one
+machine — `sqlx::migrate!` failed with `Error: VersionMissing(4)` on boot
+until the stale `_sqlx_migrations` rows from the old numbering were
+cleared: `DELETE FROM _sqlx_migrations WHERE version IN (3, 4);`, without
+touching the columns themselves since they can hold real local data).
+`005`'s filename also fixes a typo from the original branch ("prince" →
+"price") before it became permanent migration history.
 
-If you locally ran `feat(DiscordBot)` at some point (even just to try it),
-your dev database's `_sqlx_migrations` table already has rows for versions
-3/4 from *that* branch's migrations — which conflict with `master`'s own
-(different) version-3 migration. `sqlx::migrate!` fails hard on boot with
-`Error: VersionMissing(4)` (or a checksum mismatch on version 3) because it
-requires every version the DB thinks is applied to exist as a local file
-matching by checksum, and `master`'s `migrations/` directory doesn't have
-`feat(DiscordBot)`'s files. Fix by clearing just those two rows —
-`DELETE FROM _sqlx_migrations WHERE version IN (3, 4);` — not by dropping
-the columns those migrations added (`discord_message_id`,
-`discord_channel_id`, `price`, `link` on `calendar_events`): if you've been
-testing `feat(DiscordBot)` locally there may be real data sitting in them,
-and current `master` code ignores unknown extra columns harmlessly, so
-there's no need to touch them. Whoever eventually merges
-`feat(DiscordBot)` with renumbered migrations should use
-`ADD COLUMN IF NOT EXISTS` there, since a dev DB with this history will
-already have the columns without a matching applied-migration row.
+If you're setting up fresh (no local history with the old numbering),
+none of this matters — migrations just apply 001 through 005 in order.
 
 ### Friend-list sync (`GET /api/friends`, `POST /api/friends/sync`)
 
@@ -318,53 +319,62 @@ All three exist in the repo, at different levels of completeness:
   reconciling one way or the other — either rename the branches/dir, or fix
   the workflow branch filters and paths.
 
-- **Discord bot**: code exists, but **only on the unmerged `feat(DiscordBot)`
-  branch**, not on `master`. See below.
+- **Discord bot**: real, and merged into `master` since 2026-09-14
+  (`backend/src/bot.rs` + `services/discord_announcement.rs`). See below.
 
-### Discord bot branch (`feat(DiscordBot)`)
+### Discord bot (`bot.rs`, `services/discord_announcement.rs`)
 
-7 commits ahead of `master`, 0 behind — clean to merge/rebase. Adds:
+Originated on `feat(DiscordBot)`, merged into `master` via `6047c67`.
 
 - `backend/src/bot.rs` — a `serenity`-based Discord gateway bot
   (`DiscordBot::start`), listens for `reaction_add`/`reaction_remove` in the
-  announcement channel, reacts to a ✅ check-mark emoji to track RSVPs.
+  announcement channel, reacts to a ✅ check-mark emoji to track RSVPs
+  (creates/finds the reacting user, marks them `accepted`/`declined` on the
+  matching `calendar_events` row via `discord_message_id`).
 - `backend/src/services/discord_announcement.rs` — `DiscordAnnouncer`,
   posts a formatted event announcement message via the bot HTTP token, adds
   a ✅ reaction, and spins up a Discord thread under the message for
   discussion.
-- Wires into `main.rs`: spawns the bot as a background tokio task at
-  startup, reading `DISCORD_BOT_TOKEN` / `DISCORD_ANNOUNCEMENT_CHANNEL_ID`
-  from env (both already present in `backend/.env` and in `ci.yml`'s env
-  block, and in the Terraform `tfvars` templates — so the rest of the repo
-  was already prepared for this branch to land).
-  Adds `POST /api/events/:id/link-discord` route
-  (`handlers::calendar::link_discord_message`).
-- New migrations (not on `master` yet):
-  - `003_add_discord_message_events.sql` — adds `discord_message_id`,
-    `discord_channel_id` columns + index on `calendar_events`.
-  - `004_add_prince_and_link.sql` — adds `price`, `link` columns. ⚠️ The
-    filename says "prince" — looks like a typo for "price" (that's what the
-    migration actually adds); worth renaming/fixing before merge, migration
-    filenames become part of `sqlx`'s applied-migrations history so this is
-    easiest to fix now, before it ships.
-- `Cargo.toml` gains `serenity = "0.12"` (rustls backend, client/gateway/model
-  features).
+- `main.rs` spawns the bot as a background tokio task at startup if
+  configured; `handlers::calendar::create_event` auto-announces new events
+  to Discord if configured (both read `AppState.discord_bot_token` /
+  `discord_announcement_channel_id`, not raw env vars — see below).
+  `POST /api/events/:id/link-discord` (`handlers::calendar::link_discord_message`)
+  exists for manually linking an event to an existing Discord message
+  instead.
 
-**To finish this feature for a merge to `master`:**
-1. Fix the `004_add_prince_and_link.sql` filename/typo before it's applied
-   anywhere.
-2. Rebase onto current `master` (it's 0 behind currently, but re-check before
-   merging since `master` may move).
-3. `handlers::calendar::create_event` doesn't appear to call
-   `DiscordAnnouncer::announce_event` automatically on this branch — check
-   whether posting the announcement is meant to be automatic on event
-   creation or manual via `/link-discord`; currently the only wiring is the
-   explicit `link-discord` endpoint, so an event created via the API won't
-   auto-announce unless the frontend/another path calls it.
-4. No tests were added for `bot.rs` / `discord_announcement.rs`.
-5. Bot token/channel ID are `expect()`-ed at startup (`main.rs`), so if
-   Discord bot env vars are unset the *entire backend* fails to boot, not
-   just the bot — worth deciding if the bot should be optional.
+**What changed from the original branch during the merge** (see `6047c67`'s
+full commit message for the complete list):
+- Bot startup no longer `.expect()`s `DISCORD_BOT_TOKEN`/
+  `DISCORD_ANNOUNCEMENT_CHANNEL_ID` and crashing the whole backend if
+  unset — same "degrade gracefully" treatment as friend sync. Both are now
+  read once into `AppState` (`config.rs`: `discord_bot_token: Option<String>`,
+  `discord_announcement_channel_id: Option<u64>`) instead of each call site
+  (`main.rs`'s bot spawn, `create_event`'s auto-announce) re-reading env
+  vars independently — they can no longer disagree about whether Discord is
+  configured.
+- `bot.rs` was converted from the compile-time-checked `sqlx::query!` macro
+  to the runtime `sqlx::query`/`query_as` style used everywhere else in
+  this codebase. `query!` needs a live, schema-matching `DATABASE_URL` at
+  **compile** time (not just runtime) — on a fresh clone/CI without a
+  pre-seeded DB, `cargo build` would simply fail. Also dropped an unused
+  `DiscordBot::new()` constructor and fields that nothing called (`Handler`
+  is constructed directly in `start()`).
+- `update_event` was missing `price`/`link` wiring that `create_event`
+  already had — `UpdateEventRequest` declared the fields but nothing read
+  them (dead-code warning caught this). Fixed on both backend
+  (`services::calendar::update_event`) and the matching
+  `desktop/src/lib/api.ts` `updateEvent()` params.
+- Migration renumbering + `IF NOT EXISTS` — see the migrations section above.
+
+**Still true / not done:**
+- No automated tests for `bot.rs` / `discord_announcement.rs` (they need a
+  live Discord gateway connection to exercise meaningfully; the friend-sync
+  tests show the pattern for mocking Discord's REST API with `wiremock` if
+  someone wants to test `discord_announcement.rs`'s HTTP calls that way).
+- Requires the bot application's "Server Members Intent" enabled in the
+  Discord developer portal (same requirement friend sync has, for the
+  `GUILD_MEMBERS` gateway intent `bot.rs` requests).
 
 ## Secrets note
 
@@ -387,9 +397,9 @@ its contents.
    `cd-staging.yml`, `cd-production.yml` against the real `master` branch (or
    rename branches to match).
 5. Decide whether `desktop/build/` should be committed; if not, gitignore it.
-6. Merge or delete stale branches: `feat(Event)`, `feat(Storybook)`,
-   `feat(terraform)`, `origin/dev/refacto` are fully absorbed into `master`
-   already.
-7. Rebase `feat(Calendar)` onto `master` (small, easy cleanups).
-8. Land `feat(DiscordBot)` — see checklist above; it's the one branch with
-   real, unmerged, non-trivial functionality.
+6. Delete the now-fully-stale branches: `feat(Event)`, `feat(Storybook)`,
+   `feat(terraform)` (local-only), `origin/dev/refacto`, `feat(Calendar)`,
+   `feat(DiscordBot)` — all 0 ahead of `master` as of 2026-09-14, nothing
+   left to merge from any of them.
+7. `bot.rs`/`discord_announcement.rs` have no automated tests (see Discord
+   bot section above for why and what a first pass could look like).
