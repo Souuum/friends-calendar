@@ -259,6 +259,57 @@ multi-server support would need a real data model change, not just this UI.
   this endpoint and `services::friends` share one source of truth for
   "where is Discord" instead of each hardcoding it separately.
 
+### Announcements page (`/announcements`) — events posted to Discord + RSVPs
+
+Second sidebar item, previously dead: `Frame.svelte`'s `navItems` (Calendars
+/ Announcement) has existed since early on, but `currentView` was local
+component state nothing outside `Frame` could read or change — clicking
+"Announcement" did nothing observable. Fixed by switching the sidebar to
+real routing (`$app/stores`'s `page.url.pathname` for highlighting,
+`$app/navigation`'s `goto` for clicking) instead of local state, and adding
+the second route to navigate to.
+
+- No backend change needed — `GET /api/events` (already
+  `EventWithParticipants[]`, includes `discord_message_id`, `my_status`,
+  and full `participants[]`) has everything this page shows. It filters to
+  `discord_message_id != null` client-side in
+  `desktop/src/routes/announcements/+page.svelte` (fetched with
+  `include_declined: true`, since a declined event should still show up in
+  "what got announced", just not in the calendar view's default list).
+- `AnnouncementCard.svelte` (new, presentational, in `molecules/`) renders
+  each one: title/description/date/location/price/link, a read-only "you
+  accepted/declined/said maybe/haven't responded" badge, and everyone
+  else's response via the already-existing `EventCardParticipant.svelte`
+  atom. Deliberately **read-only** — changing your own RSVP already exists
+  via `EventDetailsModal.svelte` (opened from the calendar view, calls
+  `api.updateParticipation`); didn't duplicate that flow here since nothing
+  asked for it and a second code path for the same mutation is how they
+  drift out of sync.
+- Found but did **not** reuse: `atoms/event/EventCard.svelte` (+
+  `EventCardStatusBar.svelte`) is a more fully-featured card that already
+  exists in the repo and looks built for exactly this — but it was (and
+  still is) completely unused anywhere in the app, and its status bar
+  dispatches `accepted`/`maybe`/`declined` events that nothing listens for,
+  so clicking those buttons changes local UI state without ever calling
+  the API. Wiring that up properly (mirroring `EventDetailsModal`'s
+  `handleStatusChange`) would make interactive RSVP-from-the-announcements-
+  page a small follow-up, but it's a separate decision from what was asked
+  here (viewing, not editing) — flagging it rather than fixing it blind.
+
+⚠️ **Real limitation surfaced while building this, not fixed:**
+`GET /api/events` (`services::calendar::list_user_events`) only returns
+events where you're already a row in `event_participants` — it does not
+consult `visibility` at all for listing (unlike the single-event `GET
+/api/events/:id`, which does check `OR e.visibility = 'public'`).
+`CreateEventModal.svelte` never sends `participant_ids` either — there's no
+UI for inviting anyone at creation time. Net effect: in this app's current
+state, "your events" (and so "your announcements") is really just "events
+you personally created" for everyone except the creator. The `visibility:
+'friends' | 'public'` field on events doesn't actually do the "let my
+friends/everyone see this" thing its name implies yet. Fixing that
+properly is a real feature (backend listing query + an invite-picker UI),
+not something to bolt on silently while building an unrelated page.
+
 ## Testing
 
 **Standing policy for this repo, not just this feature: every backend or
@@ -317,7 +368,8 @@ desktop/
 ├── src/
 │   ├── routes/
 │   │   ├── +layout.svelte, +page.svelte    # root: login screen or CalendarView
-│   │   └── settings/+page.svelte           # linked Discord server + friends, see above
+│   │   ├── settings/+page.svelte           # linked Discord server + friends, see above
+│   │   └── announcements/+page.svelte      # events posted to Discord + RSVPs, see above
 │   ├── lib/
 │   │   ├── api.ts             # fetch wrapper, JWT storage in localStorage
 │   │   ├── stores.ts, types.ts
@@ -331,7 +383,7 @@ desktop/
 │   │       │                   # EventCard, CompactEvent, DetailedEvent, ...)
 │   │       ├── molecules/      # CalendarHeader, EventList, EventTooltip,
 │   │       │                   # ModalContainer, ProfileMenu/, TimedEvent,
-│   │       │                   # FriendsList, LinkedServerCard
+│   │       │                   # FriendsList, LinkedServerCard, AnnouncementCard
 │   │       ├── organisms/      # DayView, WeekView, MonthView, Header,
 │   │       │                   # EventDetailsModal, BlurModal
 │   │       └── templates/      # Calendar, Frame, ViewButton
