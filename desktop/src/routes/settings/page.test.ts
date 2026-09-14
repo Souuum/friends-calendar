@@ -16,6 +16,18 @@ vi.mock('$app/navigation', () => ({
   goto: vi.fn()
 }));
 
+// Frame.svelte (rendered inside this page) reads $page.url.pathname to
+// highlight the active sidebar item - $app/stores isn't available outside
+// a real SvelteKit runtime, so it needs a minimal store stand-in here.
+vi.mock('$app/stores', () => ({
+  page: {
+    subscribe: (run: (value: { url: URL }) => void) => {
+      run({ url: new URL('http://localhost/settings') });
+      return () => {};
+    }
+  }
+}));
+
 // Loaded after the mocks above so the page picks up the mocked $lib/api.
 const { default: SettingsPage } = await import('./+page.svelte');
 
