@@ -14,6 +14,13 @@ pub struct AppState {
     pub jwt_secret: String,
     pub frontend_url: String,
     pub pkce_verifiers: Arc<Mutex<HashMap<String, PkceCodeVerifier>>>,
+    // Used by services::friends to sync friend lists via the Discord bot's
+    // REST API. Optional: unlike the OAuth vars above, the server still
+    // boots without these — /api/friends/sync just returns a clear 400
+    // until they're configured, instead of failing the whole process.
+    pub discord_bot_token: Option<String>,
+    pub discord_guild_id: Option<String>,
+    pub http_client: reqwest::Client,
 }
 
 impl AppState {
@@ -64,12 +71,30 @@ impl AppState {
         let frontend_url = env::var("FRONTEND_URL")
             .unwrap_or_else(|_| "http://localhost:1420".to_string());
 
+        // .filter(...) treats a present-but-blank var (e.g. `DISCORD_GUILD_ID=`
+        // left unfilled in .env) the same as an unset one, rather than
+        // silently trying to hit Discord with an empty guild id in the URL.
+        let discord_bot_token = env::var("DISCORD_BOT_TOKEN")
+            .ok()
+            .filter(|s| !s.is_empty());
+        let discord_guild_id = env::var("DISCORD_GUILD_ID")
+            .ok()
+            .filter(|s| !s.is_empty());
+        if discord_bot_token.is_none() || discord_guild_id.is_none() {
+            tracing::warn!(
+                "⚠️  DISCORD_BOT_TOKEN / DISCORD_GUILD_ID not set — /api/friends/sync will be unavailable"
+            );
+        }
+
         Ok(Self {
             db,
             oauth_client,
             jwt_secret,
             frontend_url,
             pkce_verifiers: Arc::new(Mutex::new(HashMap::new())),
+            discord_bot_token,
+            discord_guild_id,
+            http_client: reqwest::Client::new(),
         })
     }
 }

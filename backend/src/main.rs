@@ -56,6 +56,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/events/:id/participants", post(handlers::calendar::invite_participants))
         .route("/api/events/:id/participation", put(handlers::calendar::update_participation))
         .route("/api/events/:id/participants/:user_id", delete(handlers::calendar::remove_participant))
+        // Friends routes
+        .route("/api/friends", get(handlers::friends::list_friends))
+        .route("/api/friends/sync", post(handlers::friends::sync_friends))
         .layer(cors)
         .with_state(state);
 

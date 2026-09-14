@@ -71,26 +71,30 @@ backend/
 ├── Cargo.toml / Cargo.lock
 ├── migrations/
 │   ├── 001_create_users_table.sql
-│   └── 002_create_events_table.sql
+│   ├── 002_create_events_table.sql
+│   └── 003_create_friendships.sql   # friend-list sync, see below
 └── src/
     ├── main.rs                # entrypoint, router, CORS, server bootstrap
-    ├── config.rs               # AppState: db pool, oauth2 client, jwt secret, pkce store
+    ├── config.rs               # AppState: db pool, oauth2 client, jwt secret, pkce store, discord bot token/guild id, http client
     ├── error.rs                 # AppError -> HTTP response mapping
     ├── handlers/
     │   ├── mod.rs
     │   ├── auth.rs              # Discord OAuth2 login/callback/me/logout, verify_jwt()
-    │   └── calendar.rs          # CRUD for events + participants
+    │   ├── calendar.rs          # CRUD for events + participants
+    │   └── friends.rs           # list/sync friends
     ├── middleware/
     │   ├── mod.rs
     │   └── auth.rs              # Claims extractor (FromRequestParts) backing JWT auth
     ├── models/
     │   ├── mod.rs
     │   ├── user.rs               # User, DiscordUser
-    │   └── calendar_event.rs     # CalendarEvent, CreateEventRequest, UpdateEventRequest, Visibility, ParticipationStatus, etc.
+    │   ├── calendar_event.rs     # CalendarEvent, CreateEventRequest, UpdateEventRequest, Visibility, ParticipationStatus, etc.
+    │   └── friendship.rs         # FriendInfo, SyncFriendsResult
     └── services/
         ├── mod.rs
         ├── auth.rs
-        └── calendar.rs
+        ├── calendar.rs
+        └── friends.rs            # Discord guild member fetch + friendship sync
 ```
 
 Runs on `axum = "0.7"`, `sqlx` (Postgres, runtime-tokio-native-tls),
@@ -128,6 +132,10 @@ DELETE /api/events/:id                          handlers::calendar::delete_event
 POST   /api/events/:id/participants             handlers::calendar::invite_participants
 PUT    /api/events/:id/participation             handlers::calendar::update_participation
 DELETE /api/events/:id/participants/:user_id    handlers::calendar::remove_participant
+
+# Friends
+GET    /api/friends                              handlers::friends::list_friends
+POST   /api/friends/sync                         handlers::friends::sync_friends
 ```
 
 Frontend (`desktop/src/lib/api.ts`) targets `http://localhost:8080` by
@@ -140,10 +148,84 @@ default (`VITE_API_URL` override), which matches the backend's bind address.
 002_create_events_table.sql   calendar_events + event_participants,
                                visibility & participation_status enums,
                                time-range CHECK constraint, several indexes
+003_create_friendships.sql    friendships table (see Friend-list sync below)
 ```
 
-Two more migrations exist **only on `feat(DiscordBot)`** (not yet in
-`master`) — see below.
+⚠️ **Migration numbering collision risk:** `feat(DiscordBot)` independently
+adds its own `003_add_discord_message_events.sql` and
+`004_add_prince_and_link.sql` (not yet in `master`). Whichever of
+`feat(DiscordBot)` or this friend-sync work merges second will need its
+migration(s) renumbered to `004`/`005` to avoid a filename collision in
+`sqlx`'s migrations table.
+
+### Friend-list sync (`GET /api/friends`, `POST /api/friends/sync`)
+
+Implemented in `backend/src/services/friends.rs` /
+`backend/src/handlers/friends.rs`, backed by `003_create_friendships.sql`
+(a `friendships` table storing directed edges in both directions, tagged
+with a `source` and `synced_at`).
+
+⚠️ **Important constraint that shaped this design:** Discord does not expose
+a user's real Friends/relationships list to bots or OAuth2 apps — that's the
+private, undocumented `/users/@me/relationships` endpoint, gated behind a
+full user token, and calling it from anything but the official client
+violates Discord's Developer Terms of Service. So "friend-list sync" here
+means something narrower and ToS-compliant: **two app users are synced as
+friends if they both belong to the Discord guild the bot lives in**,
+checked via the bot's REST API (`GET /guilds/{id}/members`, paginated).
+This also happens to be exactly what the `visibility: 'friends'` field on
+`calendar_events` (present since `002_create_events_table.sql`) needed but
+never had an implementation for.
+
+- `POST /api/friends/sync` — fetches the configured guild's member list via
+  the bot token, matches non-bot members against existing `users` rows by
+  `discord_id`, upserts `friendships` rows both directions with a fresh
+  `synced_at`, and deletes any previously-synced `discord_guild` edge that
+  this pass no longer confirms (e.g. someone left the server).
+- `GET /api/friends` — plain read of the current user's synced friends, no
+  Discord call.
+- Requires two new env vars beyond what `feat(DiscordBot)` already needed:
+  `DISCORD_BOT_TOKEN` (already present in `backend/.env`) and
+  `DISCORD_GUILD_ID` (newly added, currently blank — fill in the target
+  server's ID). Also requires the "Server Members Intent" enabled for the
+  bot application in the Discord developer portal, same requirement
+  `feat(DiscordBot)`'s gateway bot already has.
+- Both are read as `Option<String>` in `AppState` (`config.rs`), not
+  `.expect()`-ed at startup — deliberately, to avoid the failure mode
+  flagged elsewhere in this doc where a missing Discord env var takes down
+  the entire backend. If unset, `/api/friends/sync` returns a 400 instead.
+- This feature only needs `reqwest` (already a dependency) — it talks to
+  Discord's REST API directly rather than depending on `serenity` or
+  `feat(DiscordBot)`'s gateway bot, so it works standalone on `master`.
+- Not yet done: no automatic re-sync (e.g. on login, or on a schedule) —
+  it's purely on-demand via the sync endpoint; no *page* consumes
+  `api.getFriends()`/`api.syncFriends()` yet — see the frontend component
+  note below.
+
+**Tests** (first ones in the repo — neither `backend/` nor `desktop/` had any
+test tooling before this feature):
+
+- `backend/src/services/friends.rs` has a `#[cfg(test)] mod tests` covering
+  the Discord-facing pagination/bot-filtering/error-handling logic (via
+  `wiremock`, a new dev-dependency — no real network calls) and the DB-facing
+  sync/get logic (via `#[sqlx::test]`, which spins up a scratch database per
+  test against `DATABASE_URL` and runs the real migrations — needs a
+  reachable Postgres server to run, same as the app itself). Run with
+  `DATABASE_URL=... cargo test` from `backend/` (`.env` isn't auto-loaded by
+  `cargo test`, only by `main()`).
+- `desktop/src/lib/components/molecules/FriendsList.svelte` — a new,
+  presentational molecule (same "data comes in via props" pattern as
+  `EventList.svelte`; not wired into any route yet, so it doesn't appear in
+  the app tree today) with a co-located `FriendsList.test.ts`, using
+  `vitest` + `@testing-library/svelte` + `@testing-library/jest-dom` +
+  `happy-dom` (all new devDependencies — this repo had zero frontend test
+  tooling before). Run with `yarn test` from `desktop/`. `vite.config.js`
+  gained a `test` block and `resolve.conditions` (Vitest needs the
+  `"browser"` condition forced or it resolves Svelte's SSR build instead of
+  the client one); `tsconfig.json` gained
+  `"types": ["@testing-library/jest-dom/vitest"]` so `svelte-check`
+  recognizes the jest-dom matchers (the plain `"@testing-library/jest-dom"`
+  types entry augments Jest's `expect`, not Vitest's — easy to get wrong).
 
 ## `desktop/` (SvelteKit + Tauri)
 
