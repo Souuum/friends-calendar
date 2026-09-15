@@ -7,6 +7,15 @@ import { __setPathname } from '$app/stores';
 const { goto } = vi.hoisted(() => ({ goto: vi.fn() }));
 vi.mock('$app/navigation', () => ({ goto }));
 
+// Frame always renders Header (its `{#if user}` checks the stores.ts store
+// reference, which is truthy regardless of auth state - a pre-existing
+// quirk, not something introduced here), and Header now fetches the
+// unread notification count on mount - mock $lib/api so that stays a
+// no-op instead of a real network call.
+vi.mock('$lib/api', () => ({
+  api: { getUnreadNotificationCount: vi.fn().mockResolvedValue(0), clearToken: vi.fn() }
+}));
+
 // A settable $page.url.pathname so each test can pick the "current route"
 // without needing a real SvelteKit runtime. __setPathname is test-only,
 // not a real $app/stores export.

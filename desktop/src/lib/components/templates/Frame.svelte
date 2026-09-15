@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api } from '$lib/api';
-  import { user } from '$lib/stores';
+  import { user, unreadNotificationCount } from '$lib/stores';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
 
@@ -14,10 +14,13 @@
   // so clicking a sidebar item did nothing outside Frame itself - routing
   // through $app/navigation instead makes the sidebar actually switch pages
   // (and highlight correctly on direct navigation/refresh, via $page).
-  const navItems = [
+  // Reactive (not `const`) so the Notifications badge updates once
+  // Header.svelte's onMount populates $unreadNotificationCount.
+  $: navItems = [
     { label: 'Calendars', icon: '📅', view: '/' },
     { label: 'Friends', icon: '👥', view: '/friends' },
-    { label: 'Announcement', icon: '🔔', view: '/announcements' }
+    { label: 'Announcement', icon: '🔔', view: '/announcements' },
+    { label: 'Notifications', icon: '🔔', view: '/notifications', badge: $unreadNotificationCount }
   ];
 
   function handleLogout() {

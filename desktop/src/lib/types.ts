@@ -60,6 +60,17 @@ export interface LinkedServerInfo {
   approximate_member_count?: number;
 }
 
+export interface NotificationInfo {
+  id: string;
+  kind: string;
+  actor_username?: string;
+  actor_avatar_url?: string;
+  event_id?: string;
+  message: string;
+  read: boolean;
+  created_at: string;
+}
+
 export type ButtonType = 'button' | 'submit' | 'reset';
 
 export type ViewType = 'month' | 'week' | 'day';
