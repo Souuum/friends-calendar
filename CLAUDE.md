@@ -79,7 +79,8 @@ backend/
 │   ├── 003_create_friendships.sql          # friend-list sync, see below
 │   ├── 004_add_discord_message_events.sql  # discord_message_id/discord_channel_id on calendar_events
 │   ├── 005_add_price_and_link.sql          # price/link on calendar_events
-│   └── 006_create_notifications.sql        # notifications table, see below
+│   ├── 006_create_notifications.sql        # notifications table, see below
+│   └── 007_create_friend_requests.sql      # friend_requests table, see mockup roadmap below
 └── src/
     ├── main.rs                # entrypoint, build_router() (pub(crate), reused by functional tests), CORS, server bootstrap, spawns the Discord bot
     ├── config.rs               # AppState: db pool, oauth2 client, jwt secret, pkce store, discord bot token/guild id/announcement channel/api base, http client. #[cfg(test)] AppState::for_test(..)
@@ -90,6 +91,7 @@ backend/
     │   ├── auth.rs              # Discord OAuth2 login/callback/me/logout, verify_jwt(), generate_jwt() (pub(crate), reused by functional tests)
     │   ├── calendar.rs          # CRUD for events + participants + link_discord_message
     │   ├── discord.rs           # get_linked_server — which Discord server this app is linked to
+    │   ├── friend_requests.rs   # send/list/accept/decline + missing-members/post-invite
     │   ├── friends.rs           # list/sync friends
     │   └── notifications.rs     # list/mark-read/mark-all-read/unread-count
     ├── middleware/
@@ -101,12 +103,14 @@ backend/
     │   ├── calendar_event.rs     # CalendarEvent, CreateEventRequest, UpdateEventRequest, Visibility, ParticipationStatus, etc.
     │   ├── friendship.rs         # FriendInfo, SyncFriendsResult
     │   ├── discord_guild.rs      # LinkedServerInfo
-    │   └── notification.rs       # NotificationInfo
+    │   ├── notification.rs       # NotificationInfo
+    │   └── friend_request.rs     # FriendRequestInfo
     └── services/
         ├── mod.rs
         ├── auth.rs
         ├── calendar.rs               # also owns the event_invite/rsvp_change notification triggers, see below
         ├── friends.rs                # Discord guild member fetch + friendship sync + get_linked_server_info
+        ├── friend_requests.rs        # send/list/respond + friend_request/friend_accepted notification triggers + missing-members/post-invite
         ├── discord_announcement.rs   # posts event announcements + creates discussion threads
         └── notifications.rs          # create/list/mark-read/mark-all-read/unread-count
 ```
@@ -163,6 +167,14 @@ GET    /api/notifications                        handlers::notifications::list_n
 GET    /api/notifications/unread-count           handlers::notifications::unread_count
 POST   /api/notifications/read-all               handlers::notifications::mark_all_read
 POST   /api/notifications/:id/read               handlers::notifications::mark_read
+
+# Friend requests
+POST   /api/friend-requests                       handlers::friend_requests::send_request
+GET    /api/friend-requests                       handlers::friend_requests::list_incoming
+POST   /api/friend-requests/:id/accept            handlers::friend_requests::accept_request
+POST   /api/friend-requests/:id/decline           handlers::friend_requests::decline_request
+GET    /api/friend-requests/missing-members       handlers::friend_requests::missing_members
+POST   /api/friend-requests/post-invite           handlers::friend_requests::post_invite
 ```
 
 Frontend (`desktop/src/lib/api.ts`) targets `http://localhost:8080` by
@@ -179,6 +191,7 @@ default (`VITE_API_URL` override), which matches the backend's bind address.
 004_add_discord_message_events.sql    discord_message_id/discord_channel_id on calendar_events
 005_add_price_and_link.sql            price/link on calendar_events
 006_create_notifications.sql          notifications table (see Notifications below)
+007_create_friend_requests.sql        friend_requests table (see mockup roadmap below)
 ```
 
 `004`/`005` originated on `feat(DiscordBot)` as its own `003`/`004` (see
@@ -386,11 +399,26 @@ rather than attempted as one change. Status:
 - `.claude/skills/mockup-friends-directory/SKILL.md` — **done.** Friends
   directory (`/friends`), friend detail (`/friends/[id]`), and the
   invite-picker in `CreateEventModal.svelte`. No new backend needed.
-- `.claude/skills/mockup-friend-requests/SKILL.md` — not started. Manual
-  Discord-tag friend requests (send/accept/decline) — new `friend_requests`
-  table, today friends only come from guild sync. Can now wire its
-  accept/send notification triggers straight in, since notifications
-  (below) landed first.
+- `.claude/skills/mockup-friend-requests/SKILL.md` — **done.**
+  `friend_requests` table (`007_create_friend_requests.sql`) alongside
+  guild-sync friendships, not replacing them —
+  `services::friend_requests`/`handlers::friend_requests`
+  (`POST`/`GET /api/friend-requests`, `POST .../:id/accept`,
+  `POST .../:id/decline`, `GET .../missing-members`,
+  `POST .../post-invite`). Sending, accepting, and declining all go
+  through `services::friend_requests`, which also wires the
+  `friend_request`/`friend_accepted` notification triggers. A mutual
+  pending request auto-accepts instead of creating a duplicate row; a
+  declined request can be re-sent later rather than being permanently
+  blocked by the table's `UNIQUE(from_user_id, to_user_id)`. Accepting
+  writes symmetric `friendships` rows with `source = 'friend_request'`
+  (a new source value alongside `services::friends`'s `'discord_guild'`,
+  so the sync's stale-cleanup query — scoped to `source = 'discord_guild'`
+  — never touches manually-added friends). `/friends/add` page: send by
+  username (not the mockup's "Discord tag" — there's no tag-based lookup,
+  only app usernames, so the copy was adapted rather than cloned),
+  incoming-requests list with accept/decline, and the "N members aren't on
+  Friends Calendar yet" bot-invite prompt.
 - `.claude/skills/mockup-notifications/SKILL.md` — **done.** `notifications`
   table (`006_create_notifications.sql`), `services::notifications`,
   `handlers::notifications` (`GET /api/notifications`, `GET
@@ -441,7 +469,7 @@ desktop/
 │   │   ├── +layout.svelte, +page.svelte    # root: login screen or CalendarView
 │   │   ├── settings/+page.svelte           # linked Discord server + friends, see above
 │   │   ├── announcements/+page.svelte      # events posted to Discord + RSVPs, see above
-│   │   ├── friends/                        # directory (+page.svelte) + detail ([id]/+page.svelte), see mockup roadmap below
+│   │   ├── friends/                        # directory (+page.svelte) + detail ([id]/+page.svelte) + add/+page.svelte (requests), see mockup roadmap below
 │   │   └── notifications/+page.svelte      # see mockup roadmap below
 │   ├── lib/
 │   │   ├── api.ts             # fetch wrapper, JWT storage in localStorage

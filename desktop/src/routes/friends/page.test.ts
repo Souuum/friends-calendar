@@ -2,16 +2,17 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import type { EventWithParticipants, FriendInfo } from '$lib/types';
 
-const { getFriends, getEvents } = vi.hoisted(() => ({
+const { getFriends, getEvents, goto } = vi.hoisted(() => ({
   getFriends: vi.fn(),
-  getEvents: vi.fn()
+  getEvents: vi.fn(),
+  goto: vi.fn()
 }));
 
 vi.mock('$lib/api', () => ({
   api: { getFriends, getEvents, clearToken: vi.fn(), getToken: vi.fn() }
 }));
 
-vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+vi.mock('$app/navigation', () => ({ goto }));
 
 vi.mock('$app/stores', () => ({
   page: {
@@ -60,6 +61,19 @@ describe('friends directory page', () => {
   beforeEach(() => {
     getFriends.mockReset();
     getEvents.mockReset();
+    goto.mockReset();
+  });
+
+  it('navigates to /friends/add when "+ Add friend" is clicked', async () => {
+    getFriends.mockResolvedValue([]);
+    getEvents.mockResolvedValue([]);
+
+    render(FriendsPage);
+    await waitFor(() => expect(screen.getByText('No friends synced yet.')).toBeInTheDocument());
+
+    await fireEvent.click(screen.getByRole('button', { name: '+ Add friend' }));
+
+    expect(goto).toHaveBeenCalledWith('/friends/add');
   });
 
   it('lists synced friends with a shared-event note', async () => {

@@ -62,6 +62,13 @@ pub(crate) fn build_router(state: AppState) -> Router {
         .route("/api/notifications/unread-count", get(handlers::notifications::unread_count))
         .route("/api/notifications/read-all", post(handlers::notifications::mark_all_read))
         .route("/api/notifications/:id/read", post(handlers::notifications::mark_read))
+        // Friend requests
+        .route("/api/friend-requests", post(handlers::friend_requests::send_request))
+        .route("/api/friend-requests", get(handlers::friend_requests::list_incoming))
+        .route("/api/friend-requests/:id/accept", post(handlers::friend_requests::accept_request))
+        .route("/api/friend-requests/:id/decline", post(handlers::friend_requests::decline_request))
+        .route("/api/friend-requests/missing-members", get(handlers::friend_requests::missing_members))
+        .route("/api/friend-requests/post-invite", post(handlers::friend_requests::post_invite))
         .layer(cors)
         .with_state(state)
 }

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import { api } from '$lib/api';
   import Frame from '$lib/components/templates/Frame.svelte';
   import type { FriendInfo, EventWithParticipants } from '$lib/types';
@@ -59,6 +60,12 @@
         <h1 class="text-2xl font-semibold m-0">Friends</h1>
         <p class="text-sm text-gray-500 m-0 mt-1">{friends.length} synced from Discord</p>
       </div>
+      <button
+        on:click={() => goto('/friends/add')}
+        class="ml-auto px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold"
+      >
+        + Add friend
+      </button>
     </div>
 
     <div class="mb-4">
