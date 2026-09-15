@@ -89,6 +89,7 @@ backend/
     ├── handlers/
     │   ├── mod.rs
     │   ├── auth.rs              # Discord OAuth2 login/callback/me/logout, verify_jwt(), generate_jwt() (pub(crate), reused by functional tests)
+    │   ├── availability.rs      # friends-now, week
     │   ├── calendar.rs          # CRUD for events + participants + link_discord_message
     │   ├── discord.rs           # get_linked_server — which Discord server this app is linked to
     │   ├── friend_requests.rs   # send/list/accept/decline + missing-members/post-invite
@@ -108,6 +109,7 @@ backend/
     └── services/
         ├── mod.rs
         ├── auth.rs
+        ├── availability.rs           # pure interval free/busy logic + free_users_now/week_availability
         ├── calendar.rs               # also owns the event_invite/rsvp_change notification triggers, see below
         ├── friends.rs                # Discord guild member fetch + friendship sync + get_linked_server_info
         ├── friend_requests.rs        # send/list/respond + friend_request/friend_accepted notification triggers + missing-members/post-invite
@@ -175,6 +177,10 @@ POST   /api/friend-requests/:id/accept            handlers::friend_requests::acc
 POST   /api/friend-requests/:id/decline           handlers::friend_requests::decline_request
 GET    /api/friend-requests/missing-members       handlers::friend_requests::missing_members
 POST   /api/friend-requests/post-invite           handlers::friend_requests::post_invite
+
+# Availability
+GET    /api/availability/friends-now              handlers::availability::friends_now
+GET    /api/availability/week                      handlers::availability::week
 ```
 
 Frontend (`desktop/src/lib/api.ts`) targets `http://localhost:8080` by
@@ -394,7 +400,16 @@ A Claude Design project (`Friends Calendar Mockups.dc.html`, project id
 was imported 2026-09-15 as the design for this app's next stage. It's
 close to a full redesign — 9 screens, several needing backend subsystems
 that don't exist yet — so it was split into one skill per feature area
-rather than attempted as one change. Status:
+rather than attempted as one change. 4 of 6 executed as of 2026-09-15
+(friends-directory, notifications, friend-requests, availability), run
+autonomously back-to-back while the user was away, each on its own branch,
+merged and pushed once its own tests/build were green. The remaining two
+were deliberately **not** run in that unattended pass, not skipped by
+oversight: `mockup-announcements-feed` has an explicit product-scope
+question only the user can answer (replace vs. keep the existing
+`/announcements`), and `mockup-settings-and-server` includes a live
+account-deletion endpoint — both felt wrong to push through without anyone
+around to review. Status per skill:
 
 - `.claude/skills/mockup-friends-directory/SKILL.md` — **done.** Friends
   directory (`/friends`), friend detail (`/friends/[id]`), and the
@@ -444,12 +459,25 @@ rather than attempted as one change. Status:
   profile/preferences page and a separate `/server` page with DB-backed,
   user-editable multi-channel bot config (replacing today's single
   `DISCORD_ANNOUNCEMENT_CHANNEL_ID` env var).
-- `.claude/skills/mockup-availability/SKILL.md` — not started. Cross-user
-  free/busy computation, consumed by the other skills' "Free tonight" /
-  weekly-overlap / "Propose a time" UI — several of those were built
-  without this and explicitly note where they simplified as a result (e.g.
-  the friends directory's per-friend "note" uses shared-events instead of
-  the mockup's richer availability-based status pills).
+- `.claude/skills/mockup-availability/SKILL.md` — **done**, partially:
+  `services::availability` (pure interval logic, heavily unit-tested, plus
+  `free_users_now`/`week_availability` on top of it) and
+  `handlers::availability` (`GET /api/availability/friends-now`,
+  `GET /api/availability/week?with=<friend_id>&week_start=<ISO date>` -
+  both scoped to the caller's actual friends, `week` 400s otherwise so you
+  can't probe a stranger's calendar by guessing a user id). "Free" is
+  day-granularity (matches the mockup's weekly strip - one cell per day,
+  not an hourly grid), not "any event at all" - `pending`/`declined`
+  participation doesn't count as busy. Wired into the friends directory
+  (a live "Free now" pill next to `noteFor`'s existing shared-event text)
+  and friend detail (`/friends/[id]`'s "Free this week" strip, finally
+  filled in - it was explicitly left out when that page was built).
+  **Not done**: the Calendar screen's "Free tonight" bar and
+  `CreateEventModal`'s "Propose a time" - deliberately left alone rather
+  than touching the larger, longer-established `Calendar.svelte`/
+  `CalendarView.svelte` without the user around to review a visual
+  regression on the main screen. The backend endpoints already support
+  both; only the calendar-side UI wiring is left.
 
 Each skill file is a concrete, runnable playbook (schema sketches, file
 paths, endpoint shapes, test plan) — treat "run `.claude/skills/mockup-*`"
