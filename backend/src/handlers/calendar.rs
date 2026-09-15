@@ -41,12 +41,23 @@ pub async fn create_event(
 
     tracing::info!("📅 Event created: {} by user {}", event.title, user.username);
 
-    // Auto-announce to Discord if configured (reads from AppState, not env
-    // directly, so this and the bot's own startup check in main.rs always
-    // agree on whether Discord is configured).
-    if let (Some(bot_token), Some(channel_id)) =
-        (&state.discord_bot_token, state.discord_announcement_channel_id)
-    {
+    // Auto-announce to Discord if configured. The channel comes from
+    // services::discord_config first (live-editable from /server), falling
+    // back to AppState.discord_announcement_channel_id (env var) if no DB
+    // config has been set yet - see discord_config's own docs for why this
+    // fallback exists and what it doesn't cover.
+    let resolved_channel_id = match &state.discord_guild_id {
+        Some(guild_id) => crate::services::discord_config::resolve_announcement_channel_id(
+            &state.db,
+            guild_id,
+            state.discord_announcement_channel_id,
+        )
+        .await
+        .unwrap_or(state.discord_announcement_channel_id),
+        None => state.discord_announcement_channel_id,
+    };
+
+    if let (Some(bot_token), Some(channel_id)) = (&state.discord_bot_token, resolved_channel_id) {
         let announcer = DiscordAnnouncer::new(bot_token.clone(), channel_id);
 
         match announcer.announce_event(&event).await {

@@ -11,6 +11,7 @@
   let loading = true;
   let error = '';
   let search = '';
+  let syncing = false;
 
   // For each friend, the note is derived from what we actually know
   // (shared upcoming events) rather than the mockup's richer status pills
@@ -51,6 +52,19 @@
     }
   }
 
+  async function handleSync() {
+    try {
+      syncing = true;
+      error = '';
+      const result = await api.syncFriends();
+      friends = result.friends;
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Failed to sync friends';
+    } finally {
+      syncing = false;
+    }
+  }
+
   onMount(load);
 
   $: visibleFriends = friends.filter((f) =>
@@ -69,12 +83,21 @@
         <h1 class="text-2xl font-semibold m-0">Friends</h1>
         <p class="text-sm text-gray-500 m-0 mt-1">{friends.length} synced from Discord</p>
       </div>
-      <button
-        on:click={() => goto('/friends/add')}
-        class="ml-auto px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold"
-      >
-        + Add friend
-      </button>
+      <div class="ml-auto flex gap-2">
+        <button
+          on:click={handleSync}
+          disabled={syncing}
+          class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-semibold disabled:opacity-50"
+        >
+          {syncing ? 'Syncing…' : 'Sync friends'}
+        </button>
+        <button
+          on:click={() => goto('/friends/add')}
+          class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold"
+        >
+          + Add friend
+        </button>
+      </div>
     </div>
 
     <div class="mb-4">

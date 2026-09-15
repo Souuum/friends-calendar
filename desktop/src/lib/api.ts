@@ -8,7 +8,10 @@ import type {
   LinkedServerInfo,
   NotificationInfo,
   FriendRequestInfo,
-  DayAvailability
+  DayAvailability,
+  UpdateProfileRequest,
+  BotChannelConfig,
+  UpdateBotChannelConfigRequest
 } from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
@@ -62,6 +65,20 @@ class ApiClient {
   // Auth
   async getCurrentUser(): Promise<User> {
     return this.fetch<User>('/api/auth/me');
+  }
+
+  async updateProfile(data: UpdateProfileRequest): Promise<User> {
+    return this.fetch<User>('/api/auth/me', {
+      method: 'PATCH',
+      body: JSON.stringify(data)
+    });
+  }
+
+  async deleteAccount(confirmUsername: string): Promise<void> {
+    return this.fetch<void>('/api/auth/me', {
+      method: 'DELETE',
+      body: JSON.stringify({ confirm_username: confirmUsername })
+    });
   }
 
   // Events
@@ -157,6 +174,17 @@ class ApiClient {
   // Discord server this app is linked to (single server for now)
   async getLinkedServer(): Promise<LinkedServerInfo> {
     return this.fetch<LinkedServerInfo>('/api/discord/server');
+  }
+
+  async getDiscordConfig(): Promise<BotChannelConfig> {
+    return this.fetch<BotChannelConfig>('/api/discord/config');
+  }
+
+  async updateDiscordConfig(data: UpdateBotChannelConfigRequest): Promise<BotChannelConfig> {
+    return this.fetch<BotChannelConfig>('/api/discord/config', {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    });
   }
 
   // Notifications
