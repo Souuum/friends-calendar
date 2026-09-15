@@ -6,7 +6,8 @@ import type {
   FriendInfo,
   SyncFriendsResult,
   LinkedServerInfo,
-  NotificationInfo
+  NotificationInfo,
+  FriendRequestInfo
 } from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
@@ -177,6 +178,35 @@ class ApiClient {
     return this.fetch<void>('/api/notifications/read-all', {
       method: 'POST'
     });
+  }
+
+  // Friend requests
+  async sendFriendRequest(username: string): Promise<{ status: 'sent' | 'auto_accepted' }> {
+    return this.fetch('/api/friend-requests', {
+      method: 'POST',
+      body: JSON.stringify({ username })
+    });
+  }
+
+  async listFriendRequests(): Promise<FriendRequestInfo[]> {
+    return this.fetch<FriendRequestInfo[]>('/api/friend-requests');
+  }
+
+  async acceptFriendRequest(id: string): Promise<void> {
+    return this.fetch<void>(`/api/friend-requests/${id}/accept`, { method: 'POST' });
+  }
+
+  async declineFriendRequest(id: string): Promise<void> {
+    return this.fetch<void>(`/api/friend-requests/${id}/decline`, { method: 'POST' });
+  }
+
+  async getMissingMembersCount(): Promise<number> {
+    const { count } = await this.fetch<{ count: number }>('/api/friend-requests/missing-members');
+    return count;
+  }
+
+  async postGuildInvite(): Promise<void> {
+    return this.fetch<void>('/api/friend-requests/post-invite', { method: 'POST' });
   }
 }
 

@@ -71,6 +71,14 @@ export interface NotificationInfo {
   created_at: string;
 }
 
+export interface FriendRequestInfo {
+  id: string;
+  from_user_id: string;
+  from_username: string;
+  from_avatar_url?: string;
+  created_at: string;
+}
+
 export type ButtonType = 'button' | 'submit' | 'reset';
 
 export type ViewType = 'month' | 'week' | 'day';
