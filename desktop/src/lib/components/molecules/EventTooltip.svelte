@@ -24,9 +24,7 @@
 
 {#if isVisible && events.length > 0}
   <div
-    class="fixed z-50 pointer-events-auto transition-opacity duration-200"
-    class:opacity-0={!isVisible}
-    class:opacity-100={isVisible}
+    class="fixed z-50 pointer-events-auto"
     style="left: {position.x}px; top: {position.y}px;"
     on:mouseenter={handleMouseEnter}
     on:mouseleave={handleMouseLeave}
@@ -34,7 +32,7 @@
     tabindex="-1"
   >
     <div
-      class="bg-white rounded-lg shadow-xl border border-gray-200 p-4 w-96 max-h-[500px] overflow-y-auto"
+      class="bg-white rounded-lg shadow-xl border border-gray-200 p-4 w-96 max-h-[500px] overflow-y-auto anim-pop"
     >
       <div class="space-y-3">
         {#each events as event}

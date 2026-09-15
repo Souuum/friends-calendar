@@ -183,6 +183,7 @@
   })();
 </script>
 
+<div class="anim-fade-up">
 <CalendarHeader
   title={headerDate}
   {view}
@@ -273,6 +274,7 @@
   </div>
 
   <EventPeekPanel event={selectedEvent} on:refresh={handleRefresh} />
+</div>
 </div>
 
 {#if showCreateModal}

@@ -33,3 +33,146 @@ body {
   --color-body: #5c5c61;
   --font-mono: 'JetBrains Mono', monospace;
 }
+
+/* Motion system, lifted verbatim from the mockup's own <style> block
+   (both Friends Calendar Mockups.dc.html and Friends Calendar Mobile.dc.html
+   define the identical set - same keyframe names, same durations/easings).
+   Nothing here is guessed: every duration/easing below is copied from a
+   real `animation:` declaration in the mockup source, not approximated. */
+@keyframes om-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes om-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes om-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes om-slide-left {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes om-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes om-grow {
+  from {
+    transform: scaleY(0.2);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes om-scrim {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes om-sheet {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+/* Every interactive element gets the mockup's exact hover/press transition -
+   this is what makes buttons feel responsive instead of just snapping
+   between states. Deliberately a plain type selector (not a Tailwind
+   utility class) so it applies everywhere for free; a component that
+   already carries its own `transition`/`transition-colors` utility class
+   keeps that instead (class selectors win the cascade over this), which is
+   fine - those already animate, just via Tailwind's own shorthand. */
+button,
+a,
+[role='button'] {
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.14s ease,
+    opacity 0.18s ease;
+}
+button:active {
+  transform: scale(0.985);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Reusable entrance/emphasis animation classes - name and timing match the
+   mockup's own `animation:` declarations for the equivalent element, so a
+   change over there can be traced back to the matching class here. */
+.anim-fade-up {
+  animation: om-fade-up 0.34s cubic-bezier(0.22, 0.7, 0.3, 1) both;
+}
+.anim-fade-up-stagger {
+  animation: om-fade-up 0.38s cubic-bezier(0.22, 0.7, 0.3, 1) both;
+}
+.anim-fade {
+  animation: om-fade 0.3s ease both;
+}
+.anim-pop {
+  animation: om-pop 0.2s cubic-bezier(0.22, 0.7, 0.3, 1) both;
+}
+.anim-slide-left {
+  animation: om-slide-left 0.34s cubic-bezier(0.22, 0.7, 0.3, 1) both;
+}
+.anim-grow {
+  transform-origin: left;
+  animation: om-grow 0.4s cubic-bezier(0.22, 0.7, 0.3, 1) both;
+}
+.anim-pulse-dot {
+  animation: om-pulse 2.4s ease-in-out infinite;
+}
+.anim-scrim {
+  animation: om-scrim 0.3s ease both;
+}
+.anim-sheet {
+  animation: om-sheet 0.42s cubic-bezier(0.22, 0.9, 0.28, 1) both 0.1s;
+}

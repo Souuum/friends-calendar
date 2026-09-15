@@ -92,7 +92,7 @@
 </svelte:head>
 
 <Frame>
-  <div class="max-w-2xl mx-auto py-6 px-4 space-y-8">
+  <div class="max-w-2xl mx-auto py-6 px-4 space-y-8 anim-fade-up">
     <button class="text-sm text-discord-blurple hover:underline" on:click={() => goto('/')}>
       ← Back to calendar
     </button>

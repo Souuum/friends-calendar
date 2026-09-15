@@ -71,7 +71,7 @@
 </svelte:head>
 
 <Frame>
-  <div class="max-w-2xl mx-auto py-6 px-4">
+  <div class="max-w-2xl mx-auto py-6 px-4 anim-fade-up">
     <button
       class="text-sm text-discord-blurple hover:underline mb-4 bg-transparent border-none cursor-pointer p-0"
       on:click={() => goto('/friends')}
