@@ -79,6 +79,11 @@ export interface FriendRequestInfo {
   created_at: string;
 }
 
+export interface DayAvailability {
+  date: string;
+  free_user_ids: string[];
+}
+
 export type ButtonType = 'button' | 'submit' | 'reset';
 
 export type ViewType = 'month' | 'week' | 'day';

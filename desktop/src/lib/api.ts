@@ -7,7 +7,8 @@ import type {
   SyncFriendsResult,
   LinkedServerInfo,
   NotificationInfo,
-  FriendRequestInfo
+  FriendRequestInfo,
+  DayAvailability
 } from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
@@ -207,6 +208,17 @@ class ApiClient {
 
   async postGuildInvite(): Promise<void> {
     return this.fetch<void>('/api/friend-requests/post-invite', { method: 'POST' });
+  }
+
+  // Availability
+  async getFreeFriendsNow(): Promise<string[]> {
+    const { free_friend_ids } = await this.fetch<{ free_friend_ids: string[] }>('/api/availability/friends-now');
+    return free_friend_ids;
+  }
+
+  async getWeekAvailability(withFriendId: string, weekStart: string): Promise<DayAvailability[]> {
+    const query = new URLSearchParams({ with: withFriendId, week_start: weekStart });
+    return this.fetch<DayAvailability[]>(`/api/availability/week?${query.toString()}`);
   }
 }
 

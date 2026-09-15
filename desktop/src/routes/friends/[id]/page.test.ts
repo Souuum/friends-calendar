@@ -1,15 +1,16 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/svelte';
-import type { EventWithParticipants, FriendInfo } from '$lib/types';
+import type { DayAvailability, EventWithParticipants, FriendInfo } from '$lib/types';
 
-const { getFriends, getEvents, goto } = vi.hoisted(() => ({
+const { getFriends, getEvents, getWeekAvailability, goto } = vi.hoisted(() => ({
   getFriends: vi.fn(),
   getEvents: vi.fn(),
+  getWeekAvailability: vi.fn(),
   goto: vi.fn()
 }));
 
 vi.mock('$lib/api', () => ({
-  api: { getFriends, getEvents, clearToken: vi.fn(), getToken: vi.fn() }
+  api: { getFriends, getEvents, getWeekAvailability, clearToken: vi.fn(), getToken: vi.fn() }
 }));
 
 vi.mock('$app/navigation', () => ({ goto }));
@@ -51,10 +52,41 @@ function eventWith(id: string, title: string, participantIds: string[]): EventWi
   };
 }
 
+function sevenDays(freeCounts: number[]): DayAvailability[] {
+  return freeCounts.map((count, i) => ({
+    date: `2026-03-0${i + 1}T00:00:00Z`,
+    free_user_ids: Array.from({ length: count }, (_, j) => `user-${j}`)
+  }));
+}
+
 describe('friend detail page', () => {
   beforeEach(() => {
     getFriends.mockReset();
     getEvents.mockReset();
+    getWeekAvailability.mockReset();
+    getWeekAvailability.mockResolvedValue(sevenDays([2, 2, 2, 2, 2, 2, 2]));
+  });
+
+  it('shows the weekly availability strip', async () => {
+    getFriends.mockResolvedValue([alice]);
+    getEvents.mockResolvedValue([]);
+    getWeekAvailability.mockResolvedValue(sevenDays([2, 1, 0, 2, 1, 0, 2]));
+
+    render(FriendDetailPage);
+
+    await waitFor(() => expect(screen.getByText('Free this week')).toBeInTheDocument());
+    expect(getWeekAvailability).toHaveBeenCalledWith('alice-id', expect.any(String));
+  });
+
+  it('does not show the strip if the availability call fails', async () => {
+    getFriends.mockResolvedValue([alice]);
+    getEvents.mockResolvedValue([]);
+    getWeekAvailability.mockRejectedValue(new Error('not friends'));
+
+    render(FriendDetailPage);
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'alice' })).toBeInTheDocument());
+    expect(screen.queryByText('Free this week')).not.toBeInTheDocument();
   });
 
   it('shows the friend and only events shared with them', async () => {

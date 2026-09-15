@@ -2,14 +2,15 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import type { EventWithParticipants, FriendInfo } from '$lib/types';
 
-const { getFriends, getEvents, goto } = vi.hoisted(() => ({
+const { getFriends, getEvents, getFreeFriendsNow, goto } = vi.hoisted(() => ({
   getFriends: vi.fn(),
   getEvents: vi.fn(),
+  getFreeFriendsNow: vi.fn(),
   goto: vi.fn()
 }));
 
 vi.mock('$lib/api', () => ({
-  api: { getFriends, getEvents, clearToken: vi.fn(), getToken: vi.fn() }
+  api: { getFriends, getEvents, getFreeFriendsNow, clearToken: vi.fn(), getToken: vi.fn() }
 }));
 
 vi.mock('$app/navigation', () => ({ goto }));
@@ -61,7 +62,34 @@ describe('friends directory page', () => {
   beforeEach(() => {
     getFriends.mockReset();
     getEvents.mockReset();
+    getFreeFriendsNow.mockReset();
     goto.mockReset();
+    getFreeFriendsNow.mockResolvedValue([]);
+  });
+
+  it('shows a "Free now" pill only for friends the availability endpoint reports free', async () => {
+    getFriends.mockResolvedValue([alice, bob]);
+    getEvents.mockResolvedValue([]);
+    getFreeFriendsNow.mockResolvedValue(['alice-id']);
+
+    render(FriendsPage);
+    await waitFor(() => expect(screen.getByText('alice')).toBeInTheDocument());
+
+    const aliceCard = screen.getByText('alice').closest('a');
+    const bobCard = screen.getByText('bob').closest('a');
+    await waitFor(() => expect(aliceCard).toHaveTextContent('Free now'));
+    expect(bobCard).not.toHaveTextContent('Free now');
+  });
+
+  it('does not break the page if the availability call fails', async () => {
+    getFriends.mockResolvedValue([alice]);
+    getEvents.mockResolvedValue([]);
+    getFreeFriendsNow.mockRejectedValue(new Error('unavailable'));
+
+    render(FriendsPage);
+
+    await waitFor(() => expect(screen.getByText('alice')).toBeInTheDocument());
+    expect(screen.queryByText('Free now')).not.toBeInTheDocument();
   });
 
   it('navigates to /friends/add when "+ Add friend" is clicked', async () => {

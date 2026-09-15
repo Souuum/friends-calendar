@@ -7,6 +7,7 @@
 
   let friends: FriendInfo[] = [];
   let events: EventWithParticipants[] = [];
+  let freeNowIds = new Set<string>();
   let loading = true;
   let error = '';
   let search = '';
@@ -39,6 +40,14 @@
       error = err instanceof Error ? err.message : 'Failed to load friends';
     } finally {
       loading = false;
+    }
+
+    // Best-effort, separate from the main load - a failure here (e.g. no
+    // events at all yet) shouldn't block showing the friend list itself.
+    try {
+      freeNowIds = new Set(await api.getFreeFriendsNow());
+    } catch {
+      // leave freeNowIds empty - just means no "Free now" pills show up.
     }
   }
 
@@ -98,7 +107,12 @@
               {:else}
                 <div class="w-10 h-10 rounded-full bg-gray-300"></div>
               {/if}
-              <span class="font-semibold text-gray-900 truncate">{friend.username}</span>
+              <span class="font-semibold text-gray-900 truncate flex-1">{friend.username}</span>
+              {#if freeNowIds.has(friend.user_id)}
+                <span class="text-xs font-semibold text-green-700 bg-green-100 rounded-full px-2 py-0.5 whitespace-nowrap">
+                  Free now
+                </span>
+              {/if}
             </div>
             <div class="text-xs text-gray-500 border-t border-gray-100 pt-2 truncate">
               {noteFor(friend.user_id)}
