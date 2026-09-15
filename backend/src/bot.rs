@@ -10,11 +10,15 @@ use uuid::Uuid;
 pub struct DiscordBot;
 
 impl DiscordBot {
+    // Boxed error: serenity::Error is ~136 bytes, which clippy's
+    // result_large_err rejects for a Result returned by value. Boxing costs
+    // an allocation only on the failure path, and the sole caller (main.rs's
+    // spawned task) just logs it.
     pub async fn start(
         bot_token: String,
         db: PgPool,
         announcement_channel_id: u64,
-    ) -> Result<(), serenity::Error> {
+    ) -> Result<(), Box<serenity::Error>> {
         let intents = GatewayIntents::GUILD_MESSAGE_REACTIONS
             | GatewayIntents::GUILDS
             | GatewayIntents::GUILD_MEMBERS;
@@ -26,10 +30,11 @@ impl DiscordBot {
 
         let mut client = Client::builder(&bot_token, intents)
             .event_handler(handler)
-            .await?;
+            .await
+            .map_err(Box::new)?;
 
         tracing::info!("🤖 Discord bot starting...");
-        client.start().await?;
+        client.start().await.map_err(Box::new)?;
 
         Ok(())
     }
