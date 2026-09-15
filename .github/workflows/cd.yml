@@ -31,19 +31,19 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: backend
 
+      # -p, rather than `cd backend`: backend is a member of the root cargo
+      # workspace, so the build output lands in the workspace's shared
+      # target/ directory, not backend/target/. Building the one package we
+      # actually ship keeps the Tauri desktop member out of the build.
       - name: Build release binary
-        run: |
-          cd backend
-          cargo build --release
+        run: cargo build --release -p rust-friends-calendar
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: rust-friends-calendar
-          path: backend/target/release/rust-friends-calendar
+          path: target/release/rust-friends-calendar
           retention-days: 7
 
   deploy:

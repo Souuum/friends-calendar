@@ -1,12 +1,6 @@
 use axum::async_trait;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use axum::{
-    extract::{Request, State},
-    http::StatusCode,
-    middleware::Next,
-    response::Response,
-};
 use serde::{Deserialize, Serialize};
 
 use crate::config::AppState;

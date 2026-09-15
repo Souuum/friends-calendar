@@ -38,10 +38,11 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      # No `workspaces: backend` - backend is a member of the root cargo
+      # workspace, so build output goes to the shared root target/, which is
+      # what this action needs to cache.
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: backend
 
       - name: Check formatting
         run: |
@@ -78,10 +79,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Node 22, not 20: vitest declares engines.node "^22.12.0 || ^24.0.0 ||
+      # >=26.0.0" and @testing-library/jest-dom declares ">=22". Yarn v1
+      # treats an incompatible engines field as a hard error (npm only warns),
+      # so `yarn install --frozen-lockfile` fails outright on Node 20 - which
+      # is exactly what this job was doing.
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "yarn"
           cache-dependency-path: desktop/yarn.lock
 
@@ -119,7 +125,9 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit
 
+      # Run from the repo root, not `cd backend`: the workspace has a single
+      # authoritative Cargo.lock at the root, and cargo-audit does not walk
+      # up to find one. The exception list lives in .cargo/audit.toml, which
+      # is also only picked up from the working directory.
       - name: Run security audit
-        run: |
-          cd backend
-          cargo audit
+        run: cargo audit

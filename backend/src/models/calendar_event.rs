@@ -4,18 +4,13 @@ use sqlx::FromRow;
 use sqlx::Type;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Type, PartialEq)]
 #[sqlx(type_name = "visibility", rename_all = "lowercase")]
 pub enum Visibility {
+    #[default]
     Private,
     Friends,
     Public,
-}
-
-impl Default for Visibility {
-    fn default() -> Self {
-        Visibility::Private
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq)]

@@ -8,7 +8,7 @@ use oauth2::{AuthorizationCode, CsrfToken, PkceCodeChallenge, Scope, TokenRespon
 
 use chrono::{Duration, Utc};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::{
     config::AppState,
@@ -22,12 +22,6 @@ use crate::{
 pub struct AuthCallback {
     code: String,
     state: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct AuthResponse {
-    pub token: String,
-    pub user: User,
 }
 
 // Discord login - generates authorization URL
@@ -99,7 +93,7 @@ pub async fn discord_callback(
         .oauth_client
         .exchange_code(AuthorizationCode::new(params.code))
         .set_pkce_verifier(pkce_verifier)
-        .request_async(oauth2::reqwest::async_http_client)
+        .request_async(&state.oauth_http_client)
         .await
         .map_err(|e| {
             tracing::error!("❌ OAuth2 token exchange failed: {:?}", e);
