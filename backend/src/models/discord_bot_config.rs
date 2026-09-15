@@ -16,6 +16,11 @@ pub struct BotChannelConfig {
     pub events_channel_id: Option<String>,
     pub announcements_channel_id: Option<String>,
     pub reminders_channel_id: Option<String>,
+    // Weekly digest: a real background job (services::digest) checks this
+    // rather than the per-user notify_weekly_digest preference (which has
+    // no send mechanism behind it) - see 009_add_announcement_feed.sql.
+    pub digest_enabled: bool,
+    pub last_digest_sent_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -23,4 +28,5 @@ pub struct UpdateBotChannelConfigRequest {
     pub events_channel_id: Option<String>,
     pub announcements_channel_id: Option<String>,
     pub reminders_channel_id: Option<String>,
+    pub digest_enabled: Option<bool>,
 }

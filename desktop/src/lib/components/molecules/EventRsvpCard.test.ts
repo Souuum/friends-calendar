@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
-import AnnouncementCard from './AnnouncementCard.svelte';
+import EventRsvpCard from './EventRsvpCard.svelte';
 import type { EventWithParticipants } from '$lib/types';
 
 const baseEvent: EventWithParticipants = {
@@ -26,9 +26,9 @@ const baseEvent: EventWithParticipants = {
   ]
 };
 
-describe('AnnouncementCard', () => {
+describe('EventRsvpCard', () => {
   it('shows the event title, location, price and link', () => {
-    render(AnnouncementCard, { event: baseEvent });
+    render(EventRsvpCard, { event: baseEvent });
 
     expect(screen.getByText('Board Game Night')).toBeInTheDocument();
     expect(screen.getByText("Alice's place")).toBeInTheDocument();
@@ -37,7 +37,7 @@ describe('AnnouncementCard', () => {
   });
 
   it("shows whether the current user accepted, and everyone else's response", () => {
-    render(AnnouncementCard, { event: baseEvent });
+    render(EventRsvpCard, { event: baseEvent });
 
     expect(screen.getByText('✓ You accepted')).toBeInTheDocument();
     expect(screen.getByText('bob')).toBeInTheDocument();
@@ -46,7 +46,7 @@ describe('AnnouncementCard', () => {
   });
 
   it('reflects a declined or unanswered status', () => {
-    const { rerender } = render(AnnouncementCard, {
+    const { rerender } = render(EventRsvpCard, {
       event: { ...baseEvent, my_status: 'declined' }
     });
     expect(screen.getByText('✗ You declined')).toBeInTheDocument();
@@ -64,7 +64,7 @@ describe('AnnouncementCard', () => {
       link: undefined
     };
 
-    render(AnnouncementCard, { event: minimal });
+    render(EventRsvpCard, { event: minimal });
 
     expect(screen.queryByText("Alice's place")).not.toBeInTheDocument();
     expect(screen.queryByText('5€')).not.toBeInTheDocument();

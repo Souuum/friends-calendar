@@ -29,12 +29,15 @@ export interface BotChannelConfig {
   events_channel_id?: string;
   announcements_channel_id?: string;
   reminders_channel_id?: string;
+  digest_enabled: boolean;
+  last_digest_sent_at?: string;
 }
 
 export interface UpdateBotChannelConfigRequest {
   events_channel_id?: string;
   announcements_channel_id?: string;
   reminders_channel_id?: string;
+  digest_enabled?: boolean;
 }
 
 export interface CalendarEvent {
@@ -88,6 +91,21 @@ export interface LinkedServerInfo {
   name: string;
   icon_url?: string;
   approximate_member_count?: number;
+}
+
+export type AnnouncementTag = 'event' | 'general';
+
+export interface AnnouncementPostInfo {
+  id: string;
+  author_username: string;
+  author_avatar_url?: string;
+  title?: string;
+  body: string;
+  tag: AnnouncementTag;
+  reaction_count: number;
+  reply_count: number;
+  pinned: boolean;
+  posted_at: string;
 }
 
 export interface NotificationInfo {

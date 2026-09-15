@@ -23,6 +23,8 @@ pub async fn get_config(_claims: Claims, State(state): State<AppState>) -> Resul
             events_channel_id: None,
             announcements_channel_id: None,
             reminders_channel_id: None,
+            digest_enabled: false,
+            last_digest_sent_at: None,
         });
 
     Ok(Json(config))
@@ -41,6 +43,7 @@ pub async fn update_config(
         req.events_channel_id,
         req.announcements_channel_id,
         req.reminders_channel_id,
+        req.digest_enabled,
     )
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;

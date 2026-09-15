@@ -17,6 +17,7 @@
   let eventsChannelId = '';
   let announcementsChannelId = '';
   let remindersChannelId = '';
+  let digestEnabled = false;
 
   let saving = false;
   let saveError = '';
@@ -42,6 +43,7 @@
       eventsChannelId = config.events_channel_id ?? '';
       announcementsChannelId = config.announcements_channel_id ?? '';
       remindersChannelId = config.reminders_channel_id ?? '';
+      digestEnabled = config.digest_enabled;
     } catch (err) {
       configError = err instanceof Error ? err.message : 'Failed to load bot channel config';
     } finally {
@@ -58,7 +60,8 @@
         events_channel_id: eventsChannelId.trim() === '' ? undefined : eventsChannelId.trim(),
         announcements_channel_id:
           announcementsChannelId.trim() === '' ? undefined : announcementsChannelId.trim(),
-        reminders_channel_id: remindersChannelId.trim() === '' ? undefined : remindersChannelId.trim()
+        reminders_channel_id: remindersChannelId.trim() === '' ? undefined : remindersChannelId.trim(),
+        digest_enabled: digestEnabled
       });
       saved = true;
     } catch (err) {
@@ -147,6 +150,16 @@
             class="w-full max-w-sm px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
           />
         </div>
+
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" bind:checked={digestEnabled} />
+          Post a weekly digest to the announcements channel (every Monday, 9:00 UTC)
+        </label>
+        {#if config.last_digest_sent_at}
+          <p class="text-xs text-gray-500">
+            Last sent {new Date(config.last_digest_sent_at).toLocaleString()}
+          </p>
+        {/if}
 
         {#if saveError}
           <p class="text-sm text-red-600" role="alert">{saveError}</p>
