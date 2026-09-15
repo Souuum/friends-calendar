@@ -16,6 +16,7 @@
   // (and highlight correctly on direct navigation/refresh, via $page).
   const navItems = [
     { label: 'Calendars', icon: '📅', view: '/' },
+    { label: 'Friends', icon: '👥', view: '/friends' },
     { label: 'Announcement', icon: '🔔', view: '/announcements' }
   ];
 
