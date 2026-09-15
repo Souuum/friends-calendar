@@ -20,7 +20,8 @@
     { label: 'Calendars', icon: '📅', view: '/' },
     { label: 'Friends', icon: '👥', view: '/friends' },
     { label: 'Announcement', icon: '🔔', view: '/announcements' },
-    { label: 'Notifications', icon: '🔔', view: '/notifications', badge: $unreadNotificationCount }
+    { label: 'Notifications', icon: '🔔', view: '/notifications', badge: $unreadNotificationCount },
+    { label: 'Discord server', icon: '🤖', view: '/server' }
   ];
 
   function handleLogout() {

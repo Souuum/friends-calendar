@@ -5,6 +5,36 @@ export interface User {
   discriminator?: string;
   avatar?: string;
   email?: string;
+  display_name?: string;
+  timezone: string;
+  default_visibility: 'private' | 'friends' | 'public';
+  notify_event_invites: boolean;
+  notify_rsvp_changes: boolean;
+  notify_announcements: boolean;
+  notify_weekly_digest: boolean;
+}
+
+export interface UpdateProfileRequest {
+  display_name?: string;
+  timezone?: string;
+  default_visibility?: 'private' | 'friends' | 'public';
+  notify_event_invites?: boolean;
+  notify_rsvp_changes?: boolean;
+  notify_announcements?: boolean;
+  notify_weekly_digest?: boolean;
+}
+
+export interface BotChannelConfig {
+  guild_id: string;
+  events_channel_id?: string;
+  announcements_channel_id?: string;
+  reminders_channel_id?: string;
+}
+
+export interface UpdateBotChannelConfigRequest {
+  events_channel_id?: string;
+  announcements_channel_id?: string;
+  reminders_channel_id?: string;
 }
 
 export interface CalendarEvent {

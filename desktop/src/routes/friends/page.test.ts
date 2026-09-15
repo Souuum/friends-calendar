@@ -1,16 +1,17 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
-import type { EventWithParticipants, FriendInfo } from '$lib/types';
+import type { EventWithParticipants, FriendInfo, SyncFriendsResult } from '$lib/types';
 
-const { getFriends, getEvents, getFreeFriendsNow, goto } = vi.hoisted(() => ({
+const { getFriends, getEvents, getFreeFriendsNow, syncFriends, goto } = vi.hoisted(() => ({
   getFriends: vi.fn(),
   getEvents: vi.fn(),
   getFreeFriendsNow: vi.fn(),
+  syncFriends: vi.fn(),
   goto: vi.fn()
 }));
 
 vi.mock('$lib/api', () => ({
-  api: { getFriends, getEvents, getFreeFriendsNow, clearToken: vi.fn(), getToken: vi.fn() }
+  api: { getFriends, getEvents, getFreeFriendsNow, syncFriends, clearToken: vi.fn(), getToken: vi.fn() }
 }));
 
 vi.mock('$app/navigation', () => ({ goto }));
@@ -63,8 +64,24 @@ describe('friends directory page', () => {
     getFriends.mockReset();
     getEvents.mockReset();
     getFreeFriendsNow.mockReset();
+    syncFriends.mockReset();
     goto.mockReset();
     getFreeFriendsNow.mockResolvedValue([]);
+  });
+
+  it('re-syncs friends when "Sync friends" is clicked', async () => {
+    getFriends.mockResolvedValue([]);
+    getEvents.mockResolvedValue([]);
+    const result: SyncFriendsResult = { synced: 1, removed: 0, friends: [alice] };
+    syncFriends.mockResolvedValue(result);
+
+    render(FriendsPage);
+    await waitFor(() => expect(screen.getByText('No friends synced yet.')).toBeInTheDocument());
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Sync friends' }));
+
+    await waitFor(() => expect(screen.getByText('alice')).toBeInTheDocument());
+    expect(syncFriends).toHaveBeenCalledOnce();
   });
 
   it('shows a "Free now" pill only for friends the availability endpoint reports free', async () => {

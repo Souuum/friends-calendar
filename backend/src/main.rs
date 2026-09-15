@@ -1,6 +1,6 @@
 use axum::{
     Router,
-    routing::{get, post, put, delete},
+    routing::{get, post, put, patch, delete},
 };
 use std::net::SocketAddr;
 use tower_http::cors::CorsLayer;
@@ -39,6 +39,8 @@ pub(crate) fn build_router(state: AppState) -> Router {
         .route("/api/auth/discord", get(handlers::auth::discord_login))
         .route("/api/auth/callback", get(handlers::auth::discord_callback))
         .route("/api/auth/me", get(handlers::auth::get_current_user))
+        .route("/api/auth/me", patch(handlers::profile::update_profile))
+        .route("/api/auth/me", delete(handlers::profile::delete_account))
         .route("/api/auth/logout", post(handlers::auth::logout))
         // Calendar event routes
         .route("/api/events", post(handlers::calendar::create_event))
@@ -72,6 +74,9 @@ pub(crate) fn build_router(state: AppState) -> Router {
         // Availability
         .route("/api/availability/friends-now", get(handlers::availability::friends_now))
         .route("/api/availability/week", get(handlers::availability::week))
+        // Discord bot channel config
+        .route("/api/discord/config", get(handlers::discord_config::get_config))
+        .route("/api/discord/config", put(handlers::discord_config::update_config))
         .layer(cors)
         .with_state(state)
 }

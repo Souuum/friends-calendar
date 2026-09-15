@@ -140,6 +140,8 @@ GET    /                                       root()  — plaintext banner
 GET    /api/auth/discord                       handlers::auth::discord_login
 GET    /api/auth/callback                      handlers::auth::discord_callback
 GET    /api/auth/me                             handlers::auth::get_current_user
+PATCH  /api/auth/me                             handlers::profile::update_profile
+DELETE /api/auth/me                             handlers::profile::delete_account
 POST   /api/auth/logout                        handlers::auth::logout
 
 # Calendar events
@@ -181,6 +183,10 @@ POST   /api/friend-requests/post-invite           handlers::friend_requests::pos
 # Availability
 GET    /api/availability/friends-now              handlers::availability::friends_now
 GET    /api/availability/week                      handlers::availability::week
+
+# Discord bot channel config (DB-backed, see Settings/Server pages below)
+GET    /api/discord/config                         handlers::discord_config::get_config
+PUT    /api/discord/config                         handlers::discord_config::update_config
 ```
 
 Frontend (`desktop/src/lib/api.ts`) targets `http://localhost:8080` by
@@ -198,6 +204,9 @@ default (`VITE_API_URL` override), which matches the backend's bind address.
 005_add_price_and_link.sql            price/link on calendar_events
 006_create_notifications.sql          notifications table (see Notifications below)
 007_create_friend_requests.sql        friend_requests table (see mockup roadmap below)
+008_add_profile_and_bot_config.sql    profile/preference columns on users (display_name,
+                                       timezone, default_visibility, notify_* booleans) +
+                                       discord_bot_config table (see Settings/Server below)
 ```
 
 `004`/`005` originated on `feat(DiscordBot)` as its own `003`/`004` (see
@@ -256,38 +265,86 @@ never had an implementation for.
   Discord's REST API directly rather than depending on `serenity` or
   `feat(DiscordBot)`'s gateway bot, so it works standalone on `master`.
 - No automatic re-sync (e.g. on login, or on a schedule) — it's purely
-  on-demand, triggered from the settings page (below) via the "Sync
-  friends" button.
+  on-demand, triggered from the `/friends` directory page via the "Sync
+  friends" button (moved there from `/settings` when that page was split —
+  see Settings/Server pages below).
 
 Tests: `backend/src/services/friends.rs`'s `#[cfg(test)] mod tests` — see
 "Testing" further down for the general policy and where the patterns are
 documented.
 
-### Settings page (`/settings`) — linked Discord server + friends
+### Settings page (`/settings`) — profile, preferences, account deletion
 
-The "user page" from the task that added this: what Discord server this app
-is linked to, and who else from that server also uses the app (friends,
-above). Single-server only — `DISCORD_GUILD_ID` is one guild, not a list;
-multi-server support would need a real data model change, not just this UI.
+`/settings` used to hold linked-server info and the friends list; both moved
+out (server → `/server` below, friends → the `/friends` directory's own
+"Sync friends" button) so it no longer shows the same friend/server info in
+three places. What's left is genuinely account-scoped:
+
+- `PATCH /api/auth/me` (`handlers::profile::update_profile`,
+  `services::profile::update_profile`) — fetch-merge-update over the new
+  `users` columns from `008_add_profile_and_bot_config.sql`: `display_name`,
+  `timezone`, `default_visibility`, and four `notify_*` booleans
+  (`notify_event_invites`, `notify_rsvp_changes`, `notify_announcements`,
+  `notify_weekly_digest`). Only fields present in the request body change —
+  same pattern `services::calendar::update_event` already established.
+  `default_visibility` is stored but not yet consumed as an actual default
+  anywhere `CreateEventModal.svelte` builds a request — that wiring is left
+  for whoever builds on this next.
+- `DELETE /api/auth/me` (`handlers::profile::delete_account`,
+  `services::profile::delete_account`) — real, cascading account deletion
+  (`ON DELETE CASCADE` on `calendar_events`/`event_participants`/etc.,
+  verified via a real test, not just assumed from the schema). Guarded: the
+  request body must echo the account's own `confirm_username`, or it 400s
+  and leaves the account untouched (`DeleteAccountOutcome::ConfirmationMismatch`)
+  — a valid session alone isn't enough. `desktop/src/routes/settings/+page.svelte`
+  disables the delete button client-side until the typed confirmation text
+  matches the username too, as a first line of defense before the request
+  even goes out.
+- Notification toggles are stored but **not yet read** by
+  `services::notifications::create` or anywhere else — they're
+  user-editable preferences with no enforcement point wired up yet, same
+  kind of gap as `default_visibility` above.
+
+### Server page (`/server`) — linked Discord server + bot channel config
+
+Split out of the old `/settings` so "which Discord server, and which
+channels does the bot use" has its own page, separate from personal
+profile/preferences. Single-server only — `DISCORD_GUILD_ID` is one guild,
+not a list; multi-server support would need a real data model change, not
+just this UI.
 
 - `GET /api/discord/server` (`handlers::discord::get_linked_server`,
-  `services::friends::get_linked_server_info`) — `GET /guilds/{id}` on the
-  bot token, returns `{ id, name, icon_url, approximate_member_count }`.
-  Same "400 if Discord isn't configured" treatment as friend sync, same
-  `AppState.discord_bot_token`/`discord_guild_id` fields.
-- `desktop/src/routes/settings/+page.svelte` — a route (not a modal/panel),
-  reachable from the profile menu's "Settings" item in `Header.svelte`
-  (previously a dead `console.log` stub — now `goto('/settings')`). Fetches
-  the linked server and friends independently on mount; owns loading/error
-  state for both, same container/presentational split as
-  `CalendarView.svelte`. Renders `LinkedServerCard.svelte` (new,
-  presentational) for the server and the already-existing `FriendsList.svelte`
-  for friends — the latter is now actually wired into the app for the first
-  time.
-- `AppState` gained `discord_api_base: String` (defaults to the real
-  Discord API, overridable via `DISCORD_API_BASE` — mainly for tests) so
-  this endpoint and `services::friends` share one source of truth for
-  "where is Discord" instead of each hardcoding it separately.
+  `services::friends::get_linked_server_info`) — unchanged from before,
+  `GET /guilds/{id}` on the bot token, returns
+  `{ id, name, icon_url, approximate_member_count }`.
+- `GET`/`PUT /api/discord/config` (`handlers::discord_config`,
+  `services::discord_config`, backed by `discord_bot_config`, one row per
+  guild) — DB-backed, user-editable channel IDs for events/announcements/
+  reminders, **replacing** the old single-purpose
+  `DISCORD_ANNOUNCEMENT_CHANNEL_ID` env var as the source of truth for
+  where auto-announced events get posted. `GET` never 404s — returns an
+  all-null `BotChannelConfig` if nothing's been saved yet, so the page can
+  render an empty form instead of an error state.
+  - **Important, deliberate limitation:** this migration is partial.
+    `services::calendar::create_event`'s per-request auto-announce now
+    resolves the channel via `services::discord_config::resolve_announcement_channel_id`
+    (DB config first, env var as fallback if nothing's configured), so a
+    change here takes effect on the very next event created. `bot.rs`'s
+    gateway `Handler`, however, still reads `announcement_channel_id` once
+    at process startup from the env var and is **not** hot-reloaded — a
+    change made on this page won't reach the long-lived gateway connection
+    until the process restarts. Not fixed here because it would mean either
+    polling the DB from the gateway handler or a restart-signal mechanism,
+    both bigger than this skill's scope; flagging it rather than silently
+    leaving a half-working "live-editable" claim.
+- `desktop/src/routes/server/+page.svelte` — reachable via `Frame.svelte`'s
+  new "Discord server" sidebar item. Renders `LinkedServerCard.svelte`
+  (unchanged, reused as-is) plus the channel-config form, and a static
+  bot-permissions list (no endpoint backs this — it documents the
+  permissions the bot needs, same content on every load).
+- `AppState.discord_api_base: String` (defaults to the real Discord API,
+  overridable via `DISCORD_API_BASE` — mainly for tests) is unchanged from
+  before — this endpoint and `services::friends` still share it.
 
 ### Announcements page (`/announcements`) — events posted to Discord + RSVPs
 
@@ -377,7 +434,7 @@ rather than re-deriving the patterns. Summary:
 - Frontend: `vitest` + `@testing-library/svelte` + `@testing-library/jest-dom`
   + `happy-dom`, co-located `<Component>.test.ts`. Run `yarn test` from
   `desktop/`. Prefer presentational/props-driven components (see
-  `FriendsList.svelte`, `LinkedServerCard.svelte`) — trivially testable
+  `LinkedServerCard.svelte`) — trivially testable
   without mocking anything. Page-level components that own their own
   `onMount` fetch (see `routes/settings/+page.svelte`) need `$lib/api` (and
   often `$app/navigation`) mocked via `vi.mock(...)` — see
@@ -400,16 +457,16 @@ A Claude Design project (`Friends Calendar Mockups.dc.html`, project id
 was imported 2026-09-15 as the design for this app's next stage. It's
 close to a full redesign — 9 screens, several needing backend subsystems
 that don't exist yet — so it was split into one skill per feature area
-rather than attempted as one change. 4 of 6 executed as of 2026-09-15
-(friends-directory, notifications, friend-requests, availability), run
-autonomously back-to-back while the user was away, each on its own branch,
-merged and pushed once its own tests/build were green. The remaining two
-were deliberately **not** run in that unattended pass, not skipped by
-oversight: `mockup-announcements-feed` has an explicit product-scope
-question only the user can answer (replace vs. keep the existing
-`/announcements`), and `mockup-settings-and-server` includes a live
-account-deletion endpoint — both felt wrong to push through without anyone
-around to review. Status per skill:
+rather than attempted as one change. 5 of 6 executed as of 2026-09-15
+(friends-directory, notifications, friend-requests, availability,
+settings-and-server), the first four run autonomously back-to-back while
+the user was away, each on its own branch, merged and pushed once its own
+tests/build were green. `mockup-settings-and-server` (including its live
+account-deletion endpoint) ran after the user explicitly authorized
+continuing. `mockup-announcements-feed` remains **not** run: it has an
+explicit product-scope question only the user can answer (replace vs.
+keep the existing `/announcements`) that a general "go ahead" doesn't
+resolve. Status per skill:
 
 - `.claude/skills/mockup-friends-directory/SKILL.md` — **done.** Friends
   directory (`/friends`), friend detail (`/friends/[id]`), and the
@@ -454,11 +511,18 @@ around to review. Status per skill:
   tracking, see above) with a real Discord-channel message mirror — these
   are two different features that happen to share a name; read the skill
   before starting, it flags a scope decision that needs the user's input.
-- `.claude/skills/mockup-settings-and-server/SKILL.md` — not started.
-  Splits the current `/settings` (linked server + friends) into a real
-  profile/preferences page and a separate `/server` page with DB-backed,
-  user-editable multi-channel bot config (replacing today's single
-  `DISCORD_ANNOUNCEMENT_CHANNEL_ID` env var).
+- `.claude/skills/mockup-settings-and-server/SKILL.md` — **done.** Split
+  the old `/settings` (linked server + friends) into a real
+  profile/preferences page (`/settings` — display name, timezone, default
+  visibility, notification toggles, guarded account deletion) and a
+  separate `/server` page (linked server card + DB-backed, user-editable
+  multi-channel bot config, replacing the single `DISCORD_ANNOUNCEMENT_CHANNEL_ID`
+  env var for the per-request auto-announce path only — see Server page
+  above for the deliberate gap where `bot.rs`'s gateway handler still
+  isn't hot-reloaded). The "Sync friends" button that used to live on
+  `/settings` moved to the `/friends` directory page instead of being
+  dropped, since removing it from `/settings` without adding it anywhere
+  else would have silently taken away the only way to trigger a sync.
 - `.claude/skills/mockup-availability/SKILL.md` — **done**, partially:
   `services::availability` (pure interval logic, heavily unit-tested, plus
   `free_users_now`/`week_availability` on top of it) and
@@ -495,9 +559,10 @@ desktop/
 ├── src/
 │   ├── routes/
 │   │   ├── +layout.svelte, +page.svelte    # root: login screen or CalendarView
-│   │   ├── settings/+page.svelte           # linked Discord server + friends, see above
+│   │   ├── settings/+page.svelte           # profile/preferences + account deletion, see above
+│   │   ├── server/+page.svelte             # linked Discord server + bot channel config, see above
 │   │   ├── announcements/+page.svelte      # events posted to Discord + RSVPs, see above
-│   │   ├── friends/                        # directory (+page.svelte) + detail ([id]/+page.svelte) + add/+page.svelte (requests), see mockup roadmap below
+│   │   ├── friends/                        # directory (+page.svelte, incl. "Sync friends") + detail ([id]/+page.svelte) + add/+page.svelte (requests), see mockup roadmap below
 │   │   └── notifications/+page.svelte      # see mockup roadmap below
 │   ├── lib/
 │   │   ├── api.ts             # fetch wrapper, JWT storage in localStorage
@@ -513,7 +578,7 @@ desktop/
 │   │       │                   # EventCard, CompactEvent, DetailedEvent, ...)
 │   │       ├── molecules/      # CalendarHeader, EventList, EventTooltip,
 │   │       │                   # ModalContainer, ProfileMenu/, TimedEvent,
-│   │       │                   # FriendsList, LinkedServerCard, AnnouncementCard
+│   │       │                   # LinkedServerCard, AnnouncementCard
 │   │       ├── organisms/      # DayView, WeekView, MonthView, Header,
 │   │       │                   # EventDetailsModal, BlurModal
 │   │       └── templates/      # Calendar, Frame, ViewButton
