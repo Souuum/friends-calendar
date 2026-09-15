@@ -78,7 +78,8 @@ backend/
 │   ├── 002_create_events_table.sql
 │   ├── 003_create_friendships.sql          # friend-list sync, see below
 │   ├── 004_add_discord_message_events.sql  # discord_message_id/discord_channel_id on calendar_events
-│   └── 005_add_price_and_link.sql          # price/link on calendar_events
+│   ├── 005_add_price_and_link.sql          # price/link on calendar_events
+│   └── 006_create_notifications.sql        # notifications table, see below
 └── src/
     ├── main.rs                # entrypoint, build_router() (pub(crate), reused by functional tests), CORS, server bootstrap, spawns the Discord bot
     ├── config.rs               # AppState: db pool, oauth2 client, jwt secret, pkce store, discord bot token/guild id/announcement channel/api base, http client. #[cfg(test)] AppState::for_test(..)
@@ -89,7 +90,8 @@ backend/
     │   ├── auth.rs              # Discord OAuth2 login/callback/me/logout, verify_jwt(), generate_jwt() (pub(crate), reused by functional tests)
     │   ├── calendar.rs          # CRUD for events + participants + link_discord_message
     │   ├── discord.rs           # get_linked_server — which Discord server this app is linked to
-    │   └── friends.rs           # list/sync friends
+    │   ├── friends.rs           # list/sync friends
+    │   └── notifications.rs     # list/mark-read/mark-all-read/unread-count
     ├── middleware/
     │   ├── mod.rs
     │   └── auth.rs              # Claims extractor (FromRequestParts) backing JWT auth
@@ -98,13 +100,15 @@ backend/
     │   ├── user.rs               # User, DiscordUser
     │   ├── calendar_event.rs     # CalendarEvent, CreateEventRequest, UpdateEventRequest, Visibility, ParticipationStatus, etc.
     │   ├── friendship.rs         # FriendInfo, SyncFriendsResult
-    │   └── discord_guild.rs      # LinkedServerInfo
+    │   ├── discord_guild.rs      # LinkedServerInfo
+    │   └── notification.rs       # NotificationInfo
     └── services/
         ├── mod.rs
         ├── auth.rs
-        ├── calendar.rs
+        ├── calendar.rs               # also owns the event_invite/rsvp_change notification triggers, see below
         ├── friends.rs                # Discord guild member fetch + friendship sync + get_linked_server_info
-        └── discord_announcement.rs   # posts event announcements + creates discussion threads
+        ├── discord_announcement.rs   # posts event announcements + creates discussion threads
+        └── notifications.rs          # create/list/mark-read/mark-all-read/unread-count
 ```
 
 Runs on `axum = "0.7"`, `sqlx` (Postgres, runtime-tokio-native-tls),
@@ -153,6 +157,12 @@ POST   /api/events/:id/link-discord             handlers::calendar::link_discord
 
 # Discord server info
 GET    /api/discord/server                       handlers::discord::get_linked_server
+
+# Notifications
+GET    /api/notifications                        handlers::notifications::list_notifications
+GET    /api/notifications/unread-count           handlers::notifications::unread_count
+POST   /api/notifications/read-all               handlers::notifications::mark_all_read
+POST   /api/notifications/:id/read               handlers::notifications::mark_read
 ```
 
 Frontend (`desktop/src/lib/api.ts`) targets `http://localhost:8080` by
@@ -168,6 +178,7 @@ default (`VITE_API_URL` override), which matches the backend's bind address.
 003_create_friendships.sql            friendships table (see Friend-list sync below)
 004_add_discord_message_events.sql    discord_message_id/discord_channel_id on calendar_events
 005_add_price_and_link.sql            price/link on calendar_events
+006_create_notifications.sql          notifications table (see Notifications below)
 ```
 
 `004`/`005` originated on `feat(DiscordBot)` as its own `003`/`004` (see
@@ -377,10 +388,23 @@ rather than attempted as one change. Status:
   invite-picker in `CreateEventModal.svelte`. No new backend needed.
 - `.claude/skills/mockup-friend-requests/SKILL.md` — not started. Manual
   Discord-tag friend requests (send/accept/decline) — new `friend_requests`
-  table, today friends only come from guild sync.
-- `.claude/skills/mockup-notifications/SKILL.md` — not started. New
-  `notifications` table + triggers wired into existing invite/RSVP/friend-
-  request flows + a header badge.
+  table, today friends only come from guild sync. Can now wire its
+  accept/send notification triggers straight in, since notifications
+  (below) landed first.
+- `.claude/skills/mockup-notifications/SKILL.md` — **done.** `notifications`
+  table (`006_create_notifications.sql`), `services::notifications`,
+  `handlers::notifications` (`GET /api/notifications`, `GET
+  /api/notifications/unread-count`, `POST /api/notifications/:id/read`,
+  `POST /api/notifications/read-all`), triggers wired into
+  `services::calendar::create_event` (invite) and
+  `update_participation_status` (RSVP change) — the two flows that already
+  existed and needed no new data to notify about. `/notifications` page,
+  a shared `unreadNotificationCount` store (`stores.ts`) so the header
+  bell and the sidebar's Notifications badge agree without each fetching
+  independently, and `ViewButton.svelte` gained badge rendering. The
+  announcement-posting trigger is intentionally **not** wired (the skill
+  flags it as ambiguous — who should be notified on a post? - pending
+  `mockup-announcements-feed`).
 - `.claude/skills/mockup-announcements-feed/SKILL.md` — not started, and
   has open design questions (see the skill) rather than being fully
   shovel-ready. Would **replace** the current `/announcements` (event-RSVP
@@ -417,10 +441,12 @@ desktop/
 │   │   ├── +layout.svelte, +page.svelte    # root: login screen or CalendarView
 │   │   ├── settings/+page.svelte           # linked Discord server + friends, see above
 │   │   ├── announcements/+page.svelte      # events posted to Discord + RSVPs, see above
-│   │   └── friends/                        # directory (+page.svelte) + detail ([id]/+page.svelte), see mockup roadmap below
+│   │   ├── friends/                        # directory (+page.svelte) + detail ([id]/+page.svelte), see mockup roadmap below
+│   │   └── notifications/+page.svelte      # see mockup roadmap below
 │   ├── lib/
 │   │   ├── api.ts             # fetch wrapper, JWT storage in localStorage
-│   │   ├── stores.ts, types.ts
+│   │   ├── stores.ts          # user/isAuthenticated/isLoading + unreadNotificationCount (shared by Header's bell and Frame's sidebar badge)
+│   │   ├── types.ts
 │   │   ├── actions/clickOutside.ts
 │   │   ├── utils/{dateUtils.ts,tooltipUtils.ts}
 │   │   └── components/
