@@ -150,12 +150,12 @@ pub async fn update_event(
     Json(req): Json<UpdateEventRequest>,
 ) -> Result<Json<CalendarEvent>, AppError> {
     // Validate time range if both are provided
-    if let (Some(start), Some(end)) = (req.start_time, req.end_time) {
-        if end <= start {
-            return Err(AppError::ValidationError(
-                "End time must be after start time".to_string(),
-            ));
-        }
+    if let (Some(start), Some(end)) = (req.start_time, req.end_time)
+        && end <= start
+    {
+        return Err(AppError::ValidationError(
+            "End time must be after start time".to_string(),
+        ));
     }
 
     let user = crate::services::auth::get_user_by_discord_id(&state.db, &claims.sub)

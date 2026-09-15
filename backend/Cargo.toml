@@ -10,11 +10,25 @@ tower = { version = "0.4", features = ["util"] } # util = ServiceExt::oneshot, u
 tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
 hyper = "1.0"
 
-oauth2 = "4.4"
+# 5.x required to get off reqwest 0.11 / hyper 0.14, which dragged in
+# h2 0.3 (RUSTSEC-2026-0258) and rustls 0.21 -> rustls-webpki 0.101
+# (RUSTSEC-2026-0098/0099/0104). 5.x uses reqwest 0.12, the same major this
+# crate already depends on directly, so the two no longer diverge.
+oauth2 = "5.0"
 reqwest = { version = "0.12", features = ["json"] }
 jsonwebtoken = "9"
 
-sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "postgres", "uuid", "chrono"] }
+# 0.8+ required by RUSTSEC-2024-0363 (binary protocol misinterpretation via
+# truncating/overflowing casts, unfixed in the 0.7 line). 0.8 also split the
+# old combined "runtime-tokio-native-tls" feature into separate runtime and
+# TLS features, hence the two flags below rather than one.
+sqlx = { version = "0.8", features = [
+    "runtime-tokio",
+    "tls-native-tls",
+    "postgres",
+    "uuid",
+    "chrono",
+] }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

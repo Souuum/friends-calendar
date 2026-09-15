@@ -1,0 +1,43 @@
+# cargo-audit configuration (read by the "Security Audit" CI job).
+#
+# Everything ignored below was checked against the ACTUAL build graph with
+# `cargo tree --workspace -i <crate> --target all --all-features`, not just
+# eyeballed from the advisory list. Re-check with that command before
+# assuming any of these is still accurate - plain `cargo tree -i <crate>`
+# silently misses target- and feature-gated paths and will tell you a crate
+# isn't built when it is.
+#
+# Anything NOT listed here still fails the build, which is the point: this
+# file is a short, justified exception list, not a blanket opt-out.
+
+[advisories]
+ignore = [
+    # rsa 0.9.10 - Marvin Attack timing sidechannel. No fixed version exists
+    # upstream. Not reachable here: it is only pulled in via sqlx's `mysql`
+    # feature, which this project does not enable (sqlx is configured
+    # postgres-only in backend/Cargo.toml). It appears in Cargo.lock because
+    # the resolver records optional dependencies it did not activate -
+    # `cargo tree -i rsa` finds nothing, i.e. the crate is never compiled.
+    "RUSTSEC-2023-0071",
+
+    # rustls-webpki 0.102.8 (x4) - certificate/CRL parsing and name-constraint
+    # flaws. These ARE genuinely compiled into the backend, via:
+    #   serenity 0.12.5 -> tokio-tungstenite 0.21 -> rustls 0.22 -> rustls-webpki 0.102
+    # serenity 0.12.5 is the latest published release, and it pins
+    # tokio-tungstenite 0.21, so there is no version of this dependency chain
+    # that resolves to a patched rustls-webpki today. Ignored because the job
+    # cannot pass otherwise - NOT because the risk is zero.
+    #
+    # Scope of the exposure: this chain is the Discord gateway WebSocket
+    # connection (bot.rs), which talks only to Discord's own endpoints, so an
+    # attacker would need to already control the TLS peer or a CA-issued
+    # certificate path to reach it. Nothing user-supplied selects that host.
+    #
+    # FOLLOW-UP: drop these four the moment serenity ships a release built on
+    # rustls 0.23 / rustls-webpki 0.103+. Worth re-checking on any serenity
+    # bump.
+    "RUSTSEC-2026-0104",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0049",
+]

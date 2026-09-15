@@ -5,7 +5,6 @@ use axum::{
 };
 use std::net::SocketAddr;
 use tower_http::cors::CorsLayer;
-use tracing_subscriber;
 
 mod bot;
 mod config;

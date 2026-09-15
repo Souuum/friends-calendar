@@ -1,15 +1,28 @@
 use oauth2::{
-    AuthUrl, ClientId, ClientSecret, PkceCodeVerifier, RedirectUrl, TokenUrl, basic::BasicClient,
+    AuthUrl, ClientId, ClientSecret, EndpointNotSet, EndpointSet, PkceCodeVerifier, RedirectUrl,
+    TokenUrl, basic::BasicClient,
 };
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::collections::HashMap;
 use std::env;
 use std::sync::{Arc, Mutex};
 
+/// oauth2 5.x encodes which endpoints a client has configured in the type
+/// itself, so `BasicClient` alone is no longer a complete type. This is the
+/// shape this app builds: auth URI and token URI set, device-authorization /
+/// introspection / revocation unused.
+pub type DiscordOAuthClient =
+    BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>;
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
-    pub oauth_client: BasicClient,
+    pub oauth_client: DiscordOAuthClient,
+    /// Dedicated HTTP client for the OAuth2 token exchange, built with
+    /// redirects disabled. oauth2 5.x requires this: a redirect-following
+    /// client can be steered into leaking the authorization code to another
+    /// host (SSRF), so it must not be the general-purpose `http_client` below.
+    pub oauth_http_client: reqwest::Client,
     pub jwt_secret: String,
     pub frontend_url: String,
     pub pkce_verifiers: Arc<Mutex<HashMap<String, PkceCodeVerifier>>>,
@@ -33,6 +46,13 @@ pub struct AppState {
 }
 
 const DEFAULT_DISCORD_API_BASE: &str = "https://discord.com/api/v10";
+
+fn build_oauth_http_client() -> reqwest::Client {
+    reqwest::ClientBuilder::new()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("failed to build the OAuth2 HTTP client")
+}
 
 impl AppState {
     pub async fn new() -> Result<Self, Box<dyn std::error::Error>> {
@@ -68,13 +88,11 @@ impl AppState {
         let redirect_url = RedirectUrl::new("http://localhost:8080/api/auth/callback".to_string())
             .expect("Invalid redirect URL");
 
-        let oauth_client = BasicClient::new(
-            discord_client_id,
-            Some(discord_client_secret),
-            auth_url,
-            Some(token_url),
-        )
-        .set_redirect_uri(redirect_url);
+        let oauth_client = BasicClient::new(discord_client_id)
+            .set_client_secret(discord_client_secret)
+            .set_auth_uri(auth_url)
+            .set_token_uri(token_url)
+            .set_redirect_uri(redirect_url);
 
         let jwt_secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set");
         let frontend_url =
@@ -112,6 +130,7 @@ impl AppState {
         Ok(Self {
             db,
             oauth_client,
+            oauth_http_client: build_oauth_http_client(),
             jwt_secret,
             frontend_url,
             pkce_verifiers: Arc::new(Mutex::new(HashMap::new())),
@@ -132,16 +151,19 @@ impl AppState {
     /// object construction, no network call happens until something
     /// actually exchanges a code, which no test here does.
     pub fn for_test(db: PgPool, discord_api_base: String) -> Self {
-        let oauth_client = BasicClient::new(
-            ClientId::new("test-client-id".to_string()),
-            Some(ClientSecret::new("test-client-secret".to_string())),
-            AuthUrl::new("https://discord.com/api/oauth2/authorize".to_string()).unwrap(),
-            Some(TokenUrl::new("https://discord.com/api/oauth2/token".to_string()).unwrap()),
-        );
+        let oauth_client = BasicClient::new(ClientId::new("test-client-id".to_string()))
+            .set_client_secret(ClientSecret::new("test-client-secret".to_string()))
+            .set_auth_uri(
+                AuthUrl::new("https://discord.com/api/oauth2/authorize".to_string()).unwrap(),
+            )
+            .set_token_uri(
+                TokenUrl::new("https://discord.com/api/oauth2/token".to_string()).unwrap(),
+            );
 
         Self {
             db,
             oauth_client,
+            oauth_http_client: build_oauth_http_client(),
             jwt_secret: "test-jwt-secret".to_string(),
             frontend_url: "http://localhost:1420".to_string(),
             pkce_verifiers: Arc::new(Mutex::new(HashMap::new())),

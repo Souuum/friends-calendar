@@ -1,7 +1,8 @@
-<script>
-  import ViewSwitcher from "$lib/components/atoms/ViewSwitcher.svelte";
-    export let view
+<script lang="ts">
+  import ViewSwitcher from '$lib/components/atoms/ViewSwitcher.svelte';
+  import type { ViewType } from '$lib/types';
 
+  export let view: ViewType = 'month';
 </script>
 
 <ViewSwitcher bind:view />

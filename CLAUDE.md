@@ -51,13 +51,28 @@ nothing else in the branch or its commit messages explains it.
 ## Package managers / workspace setup
 
 - **Cargo workspace**: `[workspace] members = ["backend", "desktop/src-tauri"]`
-  at repo root, resolver `"2"`. ⚠️ **The manifest is committed as
-  `cargo.toml` (lowercase), not `Cargo.toml`.** This only works by accident on
-  case-insensitive filesystems (macOS/Windows default). On case-sensitive
-  Linux (e.g. the `ubuntu-latest` CI runners) `cargo` at the repo root won't
-  find it, since Cargo requires the exact filename `Cargo.toml`. Every
-  workflow in `.github/workflows/` avoids this by explicitly `cd backend`
-  first, so it hasn't bitten yet, but it should be renamed.
+  at repo root, resolver `"2"`. The manifest was committed as `cargo.toml`
+  (lowercase) until 2026-09-16; **it is now `Cargo.toml`**, and that rename
+  fixed real breakage rather than being cosmetic. On case-sensitive Linux
+  (the CI runners, and the Proxmox container) cargo could not see a file
+  named `cargo.toml`, so `backend` resolved as a *standalone* package there
+  while resolving as a *workspace member* on macOS — two different dependency
+  sets from the same commit. Consequences that were actually biting:
+  - CI built against a stale, committed `backend/Cargo.lock` (last touched
+    Nov 2025) instead of the root lockfile. That file has since been deleted;
+    the root `Cargo.lock` is the single source of truth. Don't re-add a
+    member-level lockfile — cargo ignores it for workspace builds, so it can
+    only ever drift.
+  - Build output location differs: inside the workspace the binary lands in
+    the **shared root `target/`**, not `backend/target/`. `.github/workflows/cd.yml`
+    depends on this path, and `terraform/templates/systemd.service` expects
+    `/opt/friends-calendar/target/release/rust-friends-calendar`.
+  - Build only the one package you want (`cargo build -p rust-friends-calendar`).
+    A bare `cargo build` at the root now also builds the `desktop/src-tauri`
+    member, which needs GTK/WebKit system libraries that no server or CI
+    container has.
+  - The VPS is unaffected: provisioning copies `backend/` alone to
+    `/opt/friends-calendar`, so it builds there as a standalone crate.
 - **JS/TS**: yarn at the root (`yarn.lock` present, no root `package-lock.json`).
   Root `package.json` is a thin orchestration layer (`concurrently` to run
   backend + desktop dev servers). It is **not** an npm/yarn workspaces
@@ -505,11 +520,16 @@ rather than re-deriving the patterns. Summary:
   the settable-store mock pattern (`__setPathname`), or
   `routes/friends/[id]/page.test.ts` for a version that also supplies
   `$page.params` for a dynamic route.
-- `cargo clippy --all-targets --all-features -- -D warnings` and
-  `yarn run check` (not `yarn check`, which is yarn's own unrelated
-  built-in command) both have pre-existing failures unrelated to any given
-  change — don't chase those, but make sure new code doesn't add to the
-  pile.
+- `cargo clippy --all-targets --all-features -- -D warnings` is **clean as of
+  2026-09-16** and gates CI — any new lint is yours, fix it rather than
+  adding to a pile that no longer exists.
+- `yarn run check` (not `yarn check`, which is yarn's own unrelated built-in
+  command) is **also clean as of 2026-09-16** — the 4 long-standing errors
+  (an unused `@ts-expect-error` in `vite.config.js`, three implicit-`any`s in
+  `ViewSwitcherStory.svelte`) were fixed because CI runs this step and would
+  otherwise have failed the Frontend job the moment the install was
+  repaired. One non-fatal warning remains (`TimeSlot.svelte`'s unused `hour`
+  export); svelte-check exits 0 on warnings.
 
 ## Friends Calendar Mockups (Claude Design project) — roadmap
 
@@ -851,6 +871,36 @@ All three exist in the repo, at different levels of completeness:
     there), then ships just the binary over SSH and restarts the systemd
     unit. No Terraform involved — see `docs/deployment.md`.
 
+  Both workflows' *first real runs* (2026-09-15) failed on all three jobs.
+  Fixed 2026-09-16; each cause is worth knowing because none of them
+  reproduce locally by default:
+  - **Frontend Tests** died at `yarn install --frozen-lockfile`, not at any
+    test. `vitest` declares `engines.node "^22.12.0 || ^24.0.0 || >=26.0.0"`
+    and `@testing-library/jest-dom` declares `">=22"`; **yarn v1 treats an
+    incompatible `engines` field as a hard error** (npm only warns), and the
+    job pinned `node-version: "20"`. Now on 22. This is invisible locally
+    whenever `node_modules/` already exists — yarn takes an "Already
+    up-to-date" fast path and never re-checks engines.
+  - **Test** died on `cargo clippy -- -D warnings` against 9 pre-existing
+    lints (redundant/unused imports, a dead `AuthResponse` struct, a
+    collapsible `if`, a derivable `Default`, four needless borrows). All
+    fixed; clippy is now clean, so the "pre-existing clippy failures, don't
+    chase them" caveat under Testing no longer applies to the backend.
+  - **Security Audit** was auditing the wrong file — `cd backend && cargo
+    audit` picked up the stale `backend/Cargo.lock` (see workspace notes
+    above), reporting advisories already fixed in the real lockfile. It now
+    runs from the repo root against the workspace `Cargo.lock`. Genuine
+    findings were fixed by upgrading `sqlx` 0.7→0.8 (RUSTSEC-2024-0363) and
+    `oauth2` 4.4→5.0 (which dragged in reqwest 0.11/hyper 0.14 → h2 0.3 and
+    rustls 0.21 → rustls-webpki 0.101, five advisories in total). What's
+    left is in `.cargo/audit.toml` with per-ID justification.
+
+  ⚠️ When checking whether an advisory actually affects this app, use
+  `cargo tree --workspace -i <crate> --target all --all-features`. Plain
+  `cargo tree -i <crate>` silently misses target- and feature-gated paths —
+  it reported `h2`/`rustls-webpki` as "not built" here when both were in
+  fact compiled into the backend via `oauth2` and `serenity`.
+
 - **Discord bot**: real, and merged into `master` since 2026-09-14
   (`backend/src/bot.rs` + `services/discord_announcement.rs`). See below.
 
@@ -918,8 +968,9 @@ its contents.
 
 ## Summary of things to clean up
 
-1. Root `cargo.toml` → rename to `Cargo.toml` (case bug, silently works only
-   on case-insensitive filesystems).
+1. ~~Root `cargo.toml` → rename to `Cargo.toml`~~ — **done 2026-09-16**, along
+   with deleting the stale `backend/Cargo.lock`. See "Package managers /
+   workspace setup" above for what it was breaking.
 2. Remove `desktop/package-lock.json` (mixed npm/yarn artifacts; yarn is the
    one actually used).
 3. Delete the now-fully-stale branches: `feat(Event)`, `feat(Storybook)`,
@@ -935,3 +986,9 @@ its contents.
    deploy SSH key, add the four `DEPLOY_*`/`PROD_DOMAIN` repo secrets, and
    confirm what's actually running on the Proxmox host today via `pct
    list` before pointing a deploy pipeline at it).
+6. `serenity` is stuck on a dependency chain (tokio-tungstenite 0.21 →
+   rustls 0.22 → rustls-webpki 0.102) with four open RUSTSEC advisories and
+   no fixed release available — 0.12.5 is the newest published version.
+   Those four IDs are the bulk of `.cargo/audit.toml`'s ignore list; drop
+   them the moment serenity ships on rustls 0.23+. Re-check on any serenity
+   bump.
