@@ -2,19 +2,16 @@
   import type { ViewType } from '$lib/types';
   import IconButton from '$lib/components/atoms/ArrowButton.svelte';
   import ViewSwitcher from '$lib/components/atoms/ViewSwitcher.svelte';
-  import CreateEventModal from '../CreateEventModal.svelte';
 
   export let title: string;
   export let view: ViewType;
   export let onPrev: () => void;
   export let onNext: () => void;
   export let onToday: () => void;
-
-  let showCreateModal = false;
-
-  function handleEventCreated() {
-    showCreateModal = false;
-  }
+  // Lifted to Calendar.svelte (rather than owned here) so the Free-tonight
+  // bar's "Propose a time" button can open the same modal instance - see
+  // .claude/skills/mockup-calendar-redesign/SKILL.md.
+  export let onNewEvent: () => void;
 </script>
 
 <div class="flex items-center justify-between p-6">
@@ -26,7 +23,7 @@
 
   <div class="flex items-center gap-3">
     <button
-      on:click={() => (showCreateModal = true)}
+      on:click={onNewEvent}
       class="bg-secondary text-white px-4 py-2 rounded-lg font-medium transition"
     >
       + New Event
@@ -40,7 +37,3 @@
     <ViewSwitcher {view} on:view-change />
   </div>
 </div>
-
-{#if showCreateModal}
-  <CreateEventModal on:close={() => (showCreateModal = false)} on:created={handleEventCreated} />
-{/if}
