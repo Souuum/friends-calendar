@@ -1,19 +1,19 @@
+use axum::http::{HeaderValue, Method};
 use axum::{
     Router,
-    routing::{get, post, put, patch, delete},
+    routing::{delete, get, patch, post, put},
 };
 use std::net::SocketAddr;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber;
-use axum::http::{HeaderValue, Method};
 
-mod config;
-mod models;
-mod handlers;
-mod services;
-mod middleware;
-mod error;
 mod bot;
+mod config;
+mod error;
+mod handlers;
+mod middleware;
+mod models;
+mod services;
 
 use config::AppState;
 
@@ -25,7 +25,13 @@ pub(crate) fn build_router(state: AppState) -> Router {
     // Build CORS layer - specific origins and headers when using credentials
     let cors = CorsLayer::new()
         .allow_origin("http://localhost:1420".parse::<HeaderValue>().unwrap())
-        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::OPTIONS])
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
         .allow_headers([
             axum::http::header::AUTHORIZATION,
             axum::http::header::CONTENT_TYPE,
@@ -49,38 +55,98 @@ pub(crate) fn build_router(state: AppState) -> Router {
         .route("/api/events/:id", put(handlers::calendar::update_event))
         .route("/api/events/:id", delete(handlers::calendar::delete_event))
         // Participant routes
-        .route("/api/events/:id/participants", post(handlers::calendar::invite_participants))
-        .route("/api/events/:id/participation", put(handlers::calendar::update_participation))
-        .route("/api/events/:id/participants/:user_id", delete(handlers::calendar::remove_participant))
+        .route(
+            "/api/events/:id/participants",
+            post(handlers::calendar::invite_participants),
+        )
+        .route(
+            "/api/events/:id/participation",
+            put(handlers::calendar::update_participation),
+        )
+        .route(
+            "/api/events/:id/participants/:user_id",
+            delete(handlers::calendar::remove_participant),
+        )
         // Friends routes
         .route("/api/friends", get(handlers::friends::list_friends))
         .route("/api/friends/sync", post(handlers::friends::sync_friends))
         // Discord bot routes
-        .route("/api/events/:id/link-discord", post(handlers::calendar::link_discord_message))
+        .route(
+            "/api/events/:id/link-discord",
+            post(handlers::calendar::link_discord_message),
+        )
         // Discord server info
-        .route("/api/discord/server", get(handlers::discord::get_linked_server))
+        .route(
+            "/api/discord/server",
+            get(handlers::discord::get_linked_server),
+        )
         // Notifications
-        .route("/api/notifications", get(handlers::notifications::list_notifications))
-        .route("/api/notifications/unread-count", get(handlers::notifications::unread_count))
-        .route("/api/notifications/read-all", post(handlers::notifications::mark_all_read))
-        .route("/api/notifications/:id/read", post(handlers::notifications::mark_read))
+        .route(
+            "/api/notifications",
+            get(handlers::notifications::list_notifications),
+        )
+        .route(
+            "/api/notifications/unread-count",
+            get(handlers::notifications::unread_count),
+        )
+        .route(
+            "/api/notifications/read-all",
+            post(handlers::notifications::mark_all_read),
+        )
+        .route(
+            "/api/notifications/:id/read",
+            post(handlers::notifications::mark_read),
+        )
         // Friend requests
-        .route("/api/friend-requests", post(handlers::friend_requests::send_request))
-        .route("/api/friend-requests", get(handlers::friend_requests::list_incoming))
-        .route("/api/friend-requests/:id/accept", post(handlers::friend_requests::accept_request))
-        .route("/api/friend-requests/:id/decline", post(handlers::friend_requests::decline_request))
-        .route("/api/friend-requests/missing-members", get(handlers::friend_requests::missing_members))
-        .route("/api/friend-requests/post-invite", post(handlers::friend_requests::post_invite))
+        .route(
+            "/api/friend-requests",
+            post(handlers::friend_requests::send_request),
+        )
+        .route(
+            "/api/friend-requests",
+            get(handlers::friend_requests::list_incoming),
+        )
+        .route(
+            "/api/friend-requests/:id/accept",
+            post(handlers::friend_requests::accept_request),
+        )
+        .route(
+            "/api/friend-requests/:id/decline",
+            post(handlers::friend_requests::decline_request),
+        )
+        .route(
+            "/api/friend-requests/missing-members",
+            get(handlers::friend_requests::missing_members),
+        )
+        .route(
+            "/api/friend-requests/post-invite",
+            post(handlers::friend_requests::post_invite),
+        )
         // Availability
-        .route("/api/availability/friends-now", get(handlers::availability::friends_now))
+        .route(
+            "/api/availability/friends-now",
+            get(handlers::availability::friends_now),
+        )
         .route("/api/availability/week", get(handlers::availability::week))
         // Discord bot channel config
-        .route("/api/discord/config", get(handlers::discord_config::get_config))
-        .route("/api/discord/config", put(handlers::discord_config::update_config))
+        .route(
+            "/api/discord/config",
+            get(handlers::discord_config::get_config),
+        )
+        .route(
+            "/api/discord/config",
+            put(handlers::discord_config::update_config),
+        )
         // Announcements: a mirror of the linked channel's Discord messages
         // (replaces the old event-RSVP-tracking /announcements view)
-        .route("/api/announcements", get(handlers::announcements::list_announcements))
-        .route("/api/announcements/sync", post(handlers::announcements::sync_announcements))
+        .route(
+            "/api/announcements",
+            get(handlers::announcements::list_announcements),
+        )
+        .route(
+            "/api/announcements/sync",
+            post(handlers::announcements::sync_announcements),
+        )
         .layer(cors)
         .with_state(state)
 }
@@ -101,12 +167,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // doesn't take down the whole backend — same reasoning as friend sync
     // in services::friends: a Discord integration being unconfigured
     // shouldn't block booting the rest of the API.
-    match (&state.discord_bot_token, state.discord_announcement_channel_id) {
+    match (
+        &state.discord_bot_token,
+        state.discord_announcement_channel_id,
+    ) {
         (Some(bot_token), Some(announcement_channel_id)) => {
             let bot_token = bot_token.clone();
             let db_clone = state.db.clone();
             tokio::spawn(async move {
-                if let Err(e) = bot::DiscordBot::start(bot_token, db_clone, announcement_channel_id).await {
+                if let Err(e) =
+                    bot::DiscordBot::start(bot_token, db_clone, announcement_channel_id).await
+                {
                     tracing::error!("❌ Discord bot error: {:?}", e);
                 }
             });
@@ -129,7 +200,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let db_clone = state.db.clone();
         let http_clone = state.http_client.clone();
         let base_url = state.discord_api_base.clone();
-        tokio::spawn(services::digest::spawn_digest_loop(base_url, db_clone, http_clone, bot_token, guild_id));
+        tokio::spawn(services::digest::spawn_digest_loop(
+            base_url, db_clone, http_clone, bot_token, guild_id,
+        ));
     }
 
     let app = build_router(state);

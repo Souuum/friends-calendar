@@ -1,13 +1,10 @@
-use crate::models::{User, DiscordUser};
+use crate::models::{DiscordUser, User};
+use anyhow::Result;
+use chrono::Utc;
 use sqlx::PgPool;
 use uuid::Uuid;
-use chrono::Utc;
-use anyhow::Result;
 
-pub async fn create_or_update_user(
-    db: &PgPool,
-    discord_user: DiscordUser,
-) -> Result<User> {
+pub async fn create_or_update_user(db: &PgPool, discord_user: DiscordUser) -> Result<User> {
     let user = sqlx::query_as::<_, User>(
         r#"
         INSERT INTO users (id, discord_id, username, discriminator, avatar, email, created_at, updated_at)
@@ -37,12 +34,10 @@ pub async fn create_or_update_user(
 }
 
 pub async fn get_user_by_discord_id(db: &PgPool, discord_id: &str) -> Result<Option<User>> {
-    let user = sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE discord_id = $1"
-    )
-    .bind(discord_id)
-    .fetch_optional(db)
-    .await?;
+    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE discord_id = $1")
+        .bind(discord_id)
+        .fetch_optional(db)
+        .await?;
 
     Ok(user)
 }

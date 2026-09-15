@@ -108,20 +108,23 @@ pub async fn mark_read(db: &PgPool, user_id: Uuid, notification_id: Uuid) -> Res
 }
 
 pub async fn mark_all_read(db: &PgPool, user_id: Uuid) -> Result<u64> {
-    let result = sqlx::query("UPDATE notifications SET read_at = $1 WHERE user_id = $2 AND read_at IS NULL")
-        .bind(Utc::now())
-        .bind(user_id)
-        .execute(db)
-        .await?;
+    let result =
+        sqlx::query("UPDATE notifications SET read_at = $1 WHERE user_id = $2 AND read_at IS NULL")
+            .bind(Utc::now())
+            .bind(user_id)
+            .execute(db)
+            .await?;
 
     Ok(result.rows_affected())
 }
 
 pub async fn unread_count(db: &PgPool, user_id: Uuid) -> Result<i64> {
-    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM notifications WHERE user_id = $1 AND read_at IS NULL")
-        .bind(user_id)
-        .fetch_one(db)
-        .await?;
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM notifications WHERE user_id = $1 AND read_at IS NULL",
+    )
+    .bind(user_id)
+    .fetch_one(db)
+    .await?;
 
     Ok(count)
 }
@@ -152,12 +155,26 @@ mod tests {
         let recipient = seed_user(&db, "me-discord", "me").await;
         let actor = seed_user(&db, "alice-discord", "alice").await;
 
-        create(&db, recipient, "event_invite", Some(actor), None, "alice invited you to something")
-            .await
-            .unwrap();
-        create(&db, recipient, "rsvp_change", Some(actor), None, "alice accepted your event")
-            .await
-            .unwrap();
+        create(
+            &db,
+            recipient,
+            "event_invite",
+            Some(actor),
+            None,
+            "alice invited you to something",
+        )
+        .await
+        .unwrap();
+        create(
+            &db,
+            recipient,
+            "rsvp_change",
+            Some(actor),
+            None,
+            "alice accepted your event",
+        )
+        .await
+        .unwrap();
 
         let notifications = list(&db, recipient, 10).await.unwrap();
 
@@ -173,7 +190,9 @@ mod tests {
         let me = seed_user(&db, "me-discord", "me").await;
         let someone_else = seed_user(&db, "other-discord", "other").await;
 
-        create(&db, someone_else, "event_invite", None, None, "not yours").await.unwrap();
+        create(&db, someone_else, "event_invite", None, None, "not yours")
+            .await
+            .unwrap();
 
         let notifications = list(&db, me, 10).await.unwrap();
         assert!(notifications.is_empty());
@@ -184,7 +203,9 @@ mod tests {
         let me = seed_user(&db, "me-discord", "me").await;
         let someone_else = seed_user(&db, "other-discord", "other").await;
 
-        create(&db, me, "event_invite", None, None, "hi").await.unwrap();
+        create(&db, me, "event_invite", None, None, "hi")
+            .await
+            .unwrap();
         let notification = &list(&db, me, 10).await.unwrap()[0];
 
         // someone else can't mark it read
@@ -205,13 +226,21 @@ mod tests {
     async fn mark_all_read_and_unread_count(db: PgPool) {
         let me = seed_user(&db, "me-discord", "me").await;
 
-        create(&db, me, "event_invite", None, None, "one").await.unwrap();
-        create(&db, me, "event_invite", None, None, "two").await.unwrap();
-        create(&db, me, "event_invite", None, None, "three").await.unwrap();
+        create(&db, me, "event_invite", None, None, "one")
+            .await
+            .unwrap();
+        create(&db, me, "event_invite", None, None, "two")
+            .await
+            .unwrap();
+        create(&db, me, "event_invite", None, None, "three")
+            .await
+            .unwrap();
 
         assert_eq!(unread_count(&db, me).await.unwrap(), 3);
 
-        mark_read(&db, me, list(&db, me, 10).await.unwrap()[0].id).await.unwrap();
+        mark_read(&db, me, list(&db, me, 10).await.unwrap()[0].id)
+            .await
+            .unwrap();
         assert_eq!(unread_count(&db, me).await.unwrap(), 2);
 
         let marked = mark_all_read(&db, me).await.unwrap();

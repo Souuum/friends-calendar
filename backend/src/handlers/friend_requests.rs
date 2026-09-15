@@ -1,13 +1,16 @@
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{config::AppState, error::AppError, middleware::auth::Claims, models::FriendRequestInfo, services::friend_requests};
+use crate::{
+    config::AppState, error::AppError, middleware::auth::Claims, models::FriendRequestInfo,
+    services::friend_requests,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct SendFriendRequestBody {
@@ -35,14 +38,22 @@ pub async fn send_request(
 
     use friend_requests::SendRequestOutcome::*;
     match outcome {
-        Sent => Ok(Json(SendFriendRequestResponse { status: "sent".to_string() })),
-        AutoAccepted => Ok(Json(SendFriendRequestResponse { status: "auto_accepted".to_string() })),
+        Sent => Ok(Json(SendFriendRequestResponse {
+            status: "sent".to_string(),
+        })),
+        AutoAccepted => Ok(Json(SendFriendRequestResponse {
+            status: "auto_accepted".to_string(),
+        })),
         UserNotFound => Err(AppError::NotFound),
         CannotRequestSelf => Err(AppError::ValidationError(
             "You can't send a friend request to yourself".to_string(),
         )),
-        AlreadyFriends => Err(AppError::ValidationError("You're already friends".to_string())),
-        AlreadyPending => Err(AppError::ValidationError("A request is already pending".to_string())),
+        AlreadyFriends => Err(AppError::ValidationError(
+            "You're already friends".to_string(),
+        )),
+        AlreadyPending => Err(AppError::ValidationError(
+            "A request is already pending".to_string(),
+        )),
     }
 }
 
@@ -62,7 +73,12 @@ pub async fn list_incoming(
     Ok(Json(requests))
 }
 
-async fn respond(claims: Claims, state: AppState, request_id: Uuid, accept: bool) -> Result<impl IntoResponse, AppError> {
+async fn respond(
+    claims: Claims,
+    state: AppState,
+    request_id: Uuid,
+    accept: bool,
+) -> Result<impl IntoResponse, AppError> {
     let user = crate::services::auth::get_user_by_discord_id(&state.db, &claims.sub)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?
@@ -105,7 +121,11 @@ pub async fn missing_members(
 ) -> Result<Json<MissingMembersResponse>, AppError> {
     let (bot_token, guild_id) = match (&state.discord_bot_token, &state.discord_guild_id) {
         (Some(t), Some(g)) => (t, g),
-        _ => return Err(AppError::ValidationError("No Discord server is linked".to_string())),
+        _ => {
+            return Err(AppError::ValidationError(
+                "No Discord server is linked".to_string(),
+            ));
+        }
     };
 
     let count = friend_requests::count_guild_members_without_accounts(
@@ -121,13 +141,22 @@ pub async fn missing_members(
     Ok(Json(MissingMembersResponse { count }))
 }
 
-pub async fn post_invite(_claims: Claims, State(state): State<AppState>) -> Result<impl IntoResponse, AppError> {
+pub async fn post_invite(
+    _claims: Claims,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, AppError> {
     let (bot_token, guild_id) = match (&state.discord_bot_token, &state.discord_guild_id) {
         (Some(t), Some(g)) => (t, g),
-        _ => return Err(AppError::ValidationError("No Discord server is linked".to_string())),
+        _ => {
+            return Err(AppError::ValidationError(
+                "No Discord server is linked".to_string(),
+            ));
+        }
     };
     let Some(channel_id) = state.discord_announcement_channel_id else {
-        return Err(AppError::ValidationError("No announcement channel configured".to_string()));
+        return Err(AppError::ValidationError(
+            "No announcement channel configured".to_string(),
+        ));
     };
 
     let count = friend_requests::count_guild_members_without_accounts(
@@ -205,7 +234,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["status"], "sent");
 
@@ -222,7 +253,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let requests: Value = serde_json::from_slice(&body).unwrap();
         let requests = requests.as_array().unwrap();
         assert_eq!(requests.len(), 1);
@@ -256,7 +289,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let friends: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(friends.as_array().unwrap().len(), 1);
         assert_eq!(friends[0]["username"], "bob");
@@ -292,7 +327,12 @@ mod tests {
         let app = crate::build_router(state);
 
         let response = app
-            .oneshot(Request::builder().uri("/api/friend-requests").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/friend-requests")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 

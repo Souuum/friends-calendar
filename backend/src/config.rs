@@ -1,10 +1,9 @@
 use oauth2::{
-    basic::BasicClient,
-    AuthUrl, ClientId, ClientSecret, RedirectUrl, TokenUrl, PkceCodeVerifier,
+    AuthUrl, ClientId, ClientSecret, PkceCodeVerifier, RedirectUrl, TokenUrl, basic::BasicClient,
 };
-use sqlx::{postgres::PgPoolOptions, PgPool};
-use std::env;
+use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::collections::HashMap;
+use std::env;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
@@ -38,11 +37,10 @@ const DEFAULT_DISCORD_API_BASE: &str = "https://discord.com/api/v10";
 impl AppState {
     pub async fn new() -> Result<Self, Box<dyn std::error::Error>> {
         // Database connection
-        let database_url = env::var("DATABASE_URL")
-            .expect("DATABASE_URL must be set");
-        
+        let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+
         tracing::info!("🔌 Connecting to database...");
-        
+
         let db = PgPoolOptions::new()
             .max_connections(5)
             .connect(&database_url)
@@ -56,18 +54,17 @@ impl AppState {
         tracing::info!("✅ Migrations complete");
 
         // OAuth2 client setup
-        let discord_client_id = ClientId::new(
-            env::var("DISCORD_CLIENT_ID").expect("DISCORD_CLIENT_ID must be set")
-        );
+        let discord_client_id =
+            ClientId::new(env::var("DISCORD_CLIENT_ID").expect("DISCORD_CLIENT_ID must be set"));
         let discord_client_secret = ClientSecret::new(
-            env::var("DISCORD_CLIENT_SECRET").expect("DISCORD_CLIENT_SECRET must be set")
+            env::var("DISCORD_CLIENT_SECRET").expect("DISCORD_CLIENT_SECRET must be set"),
         );
-        
+
         let auth_url = AuthUrl::new("https://discord.com/api/oauth2/authorize".to_string())
             .expect("Invalid authorization endpoint URL");
         let token_url = TokenUrl::new("https://discord.com/api/oauth2/token".to_string())
             .expect("Invalid token endpoint URL");
-        
+
         let redirect_url = RedirectUrl::new("http://localhost:8080/api/auth/callback".to_string())
             .expect("Invalid redirect URL");
 
@@ -80,18 +77,14 @@ impl AppState {
         .set_redirect_uri(redirect_url);
 
         let jwt_secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set");
-        let frontend_url = env::var("FRONTEND_URL")
-            .unwrap_or_else(|_| "http://localhost:1420".to_string());
+        let frontend_url =
+            env::var("FRONTEND_URL").unwrap_or_else(|_| "http://localhost:1420".to_string());
 
         // .filter(...) treats a present-but-blank var (e.g. `DISCORD_GUILD_ID=`
         // left unfilled in .env) the same as an unset one, rather than
         // silently trying to hit Discord with an empty guild id in the URL.
-        let discord_bot_token = env::var("DISCORD_BOT_TOKEN")
-            .ok()
-            .filter(|s| !s.is_empty());
-        let discord_guild_id = env::var("DISCORD_GUILD_ID")
-            .ok()
-            .filter(|s| !s.is_empty());
+        let discord_bot_token = env::var("DISCORD_BOT_TOKEN").ok().filter(|s| !s.is_empty());
+        let discord_guild_id = env::var("DISCORD_GUILD_ID").ok().filter(|s| !s.is_empty());
         if discord_bot_token.is_none() || discord_guild_id.is_none() {
             tracing::warn!(
                 "⚠️  DISCORD_BOT_TOKEN / DISCORD_GUILD_ID not set — /api/friends/sync will be unavailable"
@@ -104,7 +97,9 @@ impl AppState {
             .and_then(|s| match s.parse() {
                 Ok(id) => Some(id),
                 Err(_) => {
-                    tracing::warn!("⚠️  DISCORD_ANNOUNCEMENT_CHANNEL_ID isn't a valid channel ID, ignoring it");
+                    tracing::warn!(
+                        "⚠️  DISCORD_ANNOUNCEMENT_CHANNEL_ID isn't a valid channel ID, ignoring it"
+                    );
                     None
                 }
             });

@@ -1,8 +1,8 @@
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use uuid::Uuid;
 
@@ -10,13 +10,13 @@ use serde::Deserialize;
 
 use crate::{
     config::AppState,
-    models::{
-        CalendarEvent, CreateEventRequest, UpdateEventRequest, ListEventsQuery,
-        EventWithParticipants, InviteParticipantsRequest, UpdateParticipationRequest
-    },
-    services::{calendar,discord_announcement::DiscordAnnouncer},
-    middleware::auth::Claims,
     error::AppError,
+    middleware::auth::Claims,
+    models::{
+        CalendarEvent, CreateEventRequest, EventWithParticipants, InviteParticipantsRequest,
+        ListEventsQuery, UpdateEventRequest, UpdateParticipationRequest,
+    },
+    services::{calendar, discord_announcement::DiscordAnnouncer},
 };
 
 // Create a new event
@@ -27,7 +27,9 @@ pub async fn create_event(
 ) -> Result<Json<CalendarEvent>, AppError> {
     // Validate time range
     if req.end_time <= req.start_time {
-        return Err(AppError::ValidationError("End time must be after start time".to_string()));
+        return Err(AppError::ValidationError(
+            "End time must be after start time".to_string(),
+        ));
     }
 
     let user = crate::services::auth::get_user_by_discord_id(&state.db, &claims.sub)
@@ -39,7 +41,11 @@ pub async fn create_event(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    tracing::info!("📅 Event created: {} by user {}", event.title, user.username);
+    tracing::info!(
+        "📅 Event created: {} by user {}",
+        event.title,
+        user.username
+    );
 
     // Auto-announce to Discord if configured. The channel comes from
     // services::discord_config first (live-editable from /server), falling
@@ -75,9 +81,13 @@ pub async fn create_event(
                 .bind(channel_id.to_string())
                 .bind(event.id)
                 .fetch_one(&state.db)
-                .await {
+                .await
+                {
                     event = updated;
-                    tracing::info!("✅ Event announced and linked to Discord message {}", message_id);
+                    tracing::info!(
+                        "✅ Event announced and linked to Discord message {}",
+                        message_id
+                    );
                 }
             }
             Err(e) => {
@@ -120,11 +130,11 @@ pub async fn list_events(
         .ok_or(AppError::Unauthorized)?;
 
     let events = calendar::list_user_events(
-        &state.db, 
-        user.id, 
-        query.start_date, 
+        &state.db,
+        user.id,
+        query.start_date,
         query.end_date,
-        query.include_declined.unwrap_or(false)
+        query.include_declined.unwrap_or(false),
     )
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -142,7 +152,9 @@ pub async fn update_event(
     // Validate time range if both are provided
     if let (Some(start), Some(end)) = (req.start_time, req.end_time) {
         if end <= start {
-            return Err(AppError::ValidationError("End time must be after start time".to_string()));
+            return Err(AppError::ValidationError(
+                "End time must be after start time".to_string(),
+            ));
         }
     }
 
@@ -156,7 +168,11 @@ pub async fn update_event(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?
         .ok_or(AppError::NotFound)?;
 
-    tracing::info!("📝 Event updated: {} by user {}", event.title, user.username);
+    tracing::info!(
+        "📝 Event updated: {} by user {}",
+        event.title,
+        user.username
+    );
 
     Ok(Json(event))
 }
@@ -201,8 +217,12 @@ pub async fn invite_participants(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    tracing::info!("👥 {} participants invited to event {} by user {}", 
-        participants.len(), event_id, user.username);
+    tracing::info!(
+        "👥 {} participants invited to event {} by user {}",
+        participants.len(),
+        event_id,
+        user.username
+    );
 
     Ok(Json(participants))
 }
@@ -219,13 +239,18 @@ pub async fn update_participation(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?
         .ok_or(AppError::Unauthorized)?;
 
-    let participant = calendar::update_participation_status(&state.db, event_id, user.id, req.status.clone())
-        .await
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
-        .ok_or(AppError::NotFound)?;
+    let participant =
+        calendar::update_participation_status(&state.db, event_id, user.id, req.status.clone())
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?
+            .ok_or(AppError::NotFound)?;
 
-    tracing::info!("✅ User {} updated participation to {:?} for event {}", 
-        user.username, req.status, event_id);
+    tracing::info!(
+        "✅ User {} updated participation to {:?} for event {}",
+        user.username,
+        req.status,
+        event_id
+    );
 
     Ok(Json(participant))
 }
@@ -249,7 +274,11 @@ pub async fn remove_participant(
         return Err(AppError::NotFound);
     }
 
-    tracing::info!("❌ User removed from event {} by creator {}", event_id, user.username);
+    tracing::info!(
+        "❌ User removed from event {} by creator {}",
+        event_id,
+        user.username
+    );
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -289,7 +318,11 @@ pub async fn link_discord_message(
     .map_err(|e| AppError::DatabaseError(e.to_string()))?
     .ok_or(AppError::NotFound)?;
 
-    tracing::info!("🔗 Linked event {} to Discord message {}", event_id, req.message_id);
+    tracing::info!(
+        "🔗 Linked event {} to Discord message {}",
+        event_id,
+        req.message_id
+    );
 
     Ok(Json(event))
 }

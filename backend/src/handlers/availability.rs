@@ -1,6 +1,6 @@
 use axum::{
-    extract::{Query, State},
     Json,
+    extract::{Query, State},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,10 @@ pub struct FreeNowResponse {
 /// "Free tonight" bar's data, from the caller's own friend list
 /// (services::friends::get_friends), not an arbitrary id list, so nobody
 /// can probe a stranger's availability by guessing user ids.
-pub async fn friends_now(claims: Claims, State(state): State<AppState>) -> Result<Json<FreeNowResponse>, AppError> {
+pub async fn friends_now(
+    claims: Claims,
+    State(state): State<AppState>,
+) -> Result<Json<FreeNowResponse>, AppError> {
     let user = crate::services::auth::get_user_by_discord_id(&state.db, &claims.sub)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?
@@ -64,16 +67,25 @@ pub async fn week(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
     if !friends.iter().any(|f| f.user_id == query.with) {
-        return Err(AppError::ValidationError("Not one of your friends".to_string()));
+        return Err(AppError::ValidationError(
+            "Not one of your friends".to_string(),
+        ));
     }
 
-    let days = services::availability::week_availability(&state.db, &[user.id, query.with], query.week_start)
-        .await
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    let days = services::availability::week_availability(
+        &state.db,
+        &[user.id, query.with],
+        query.week_start,
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     Ok(Json(
         days.into_iter()
-            .map(|d| DayAvailabilityResponse { date: d.date, free_user_ids: d.free_user_ids })
+            .map(|d| DayAvailabilityResponse {
+                date: d.date,
+                free_user_ids: d.free_user_ids,
+            })
             .collect(),
     ))
 }
@@ -146,7 +158,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json: Value = serde_json::from_slice(&body).unwrap();
         let free_ids = json["free_friend_ids"].as_array().unwrap();
         assert_eq!(free_ids.len(), 1);
@@ -168,11 +182,16 @@ mod tests {
         // percent-encoded or the timestamp gets corrupted before it even
         // reaches the handler. desktop/src/lib/api.ts uses
         // URLSearchParams for this exact reason - it encodes automatically.
-        let week_start = (Utc::now() + Duration::days(0)).to_rfc3339().replace('+', "%2B");
+        let week_start = (Utc::now() + Duration::days(0))
+            .to_rfc3339()
+            .replace('+', "%2B");
         let response = app
             .oneshot(
                 Request::builder()
-                    .uri(format!("/api/availability/week?with={}&week_start={week_start}", stranger.id))
+                    .uri(format!(
+                        "/api/availability/week?with={}&week_start={week_start}",
+                        stranger.id
+                    ))
                     .header("Authorization", format!("Bearer {token}"))
                     .body(Body::empty())
                     .unwrap(),
@@ -197,7 +216,10 @@ mod tests {
         let response = app
             .oneshot(
                 Request::builder()
-                    .uri(format!("/api/availability/week?with={}&week_start={week_start}", friend.id))
+                    .uri(format!(
+                        "/api/availability/week?with={}&week_start={week_start}",
+                        friend.id
+                    ))
                     .header("Authorization", format!("Bearer {token}"))
                     .body(Body::empty())
                     .unwrap(),
@@ -206,7 +228,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json.as_array().unwrap().len(), 7);
     }

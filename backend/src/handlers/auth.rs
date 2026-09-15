@@ -1,24 +1,21 @@
 use axum::{
+    Json,
     extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Redirect},
-    Json,
 };
-use oauth2::{
-    AuthorizationCode, CsrfToken, PkceCodeChallenge, Scope,
-    TokenResponse,
-};
+use oauth2::{AuthorizationCode, CsrfToken, PkceCodeChallenge, Scope, TokenResponse};
 
+use chrono::{Duration, Utc};
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
-use jsonwebtoken::{encode, decode, Header, Validation, EncodingKey, DecodingKey};
-use chrono::{Utc, Duration};
 
 use crate::{
     config::AppState,
-    models::{User, DiscordUser},
-    services::auth::{create_or_update_user, get_user_by_discord_id},
-    middleware::auth::Claims,
     error::AppError,
+    middleware::auth::Claims,
+    models::{DiscordUser, User},
+    services::auth::{create_or_update_user, get_user_by_discord_id},
 };
 
 #[derive(Debug, Deserialize)]
@@ -34,9 +31,7 @@ pub struct AuthResponse {
 }
 
 // Discord login - generates authorization URL
-pub async fn discord_login(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+pub async fn discord_login(State(state): State<AppState>) -> impl IntoResponse {
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
 
     let (auth_url, csrf_token) = state
@@ -50,8 +45,15 @@ pub async fn discord_login(
 
     // Store PKCE verifier with CSRF token as key
     let csrf_secret = csrf_token.secret().clone();
-    tracing::info!("🔑 Storing PKCE verifier with FULL state: '{}'", csrf_secret); // Changed
-    state.pkce_verifiers.lock().unwrap().insert(csrf_secret, pkce_verifier);
+    tracing::info!(
+        "🔑 Storing PKCE verifier with FULL state: '{}'",
+        csrf_secret
+    ); // Changed
+    state
+        .pkce_verifiers
+        .lock()
+        .unwrap()
+        .insert(csrf_secret, pkce_verifier);
 
     tracing::info!("🔗 Full auth URL: {}", auth_url);
 
@@ -63,22 +65,31 @@ pub async fn discord_callback(
     Query(params): Query<AuthCallback>,
     State(state): State<AppState>,
 ) -> Result<Redirect, AppError> {
-    tracing::info!("📥 Received callback with code: {}, FULL state: '{}'", &params.code[..10], &params.state); // Changed
-    
+    tracing::info!(
+        "📥 Received callback with code: {}, FULL state: '{}'",
+        &params.code[..10],
+        &params.state
+    ); // Changed
+
     // Debug: Show what keys exist
     {
         let verifiers = state.pkce_verifiers.lock().unwrap();
-        tracing::info!("🔍 Available states in HashMap: {:?}", verifiers.keys().collect::<Vec<_>>());
+        tracing::info!(
+            "🔍 Available states in HashMap: {:?}",
+            verifiers.keys().collect::<Vec<_>>()
+        );
     }
-    
+
     // Retrieve PKCE verifier using the state (CSRF token)
     let pkce_verifier = {
         let mut verifiers = state.pkce_verifiers.lock().unwrap();
-        verifiers.remove(&params.state)
-            .ok_or_else(|| {
-                tracing::error!("❌ PKCE verifier not found for FULL state: '{}'", &params.state);
-                AppError::OAuth2Error("PKCE verifier not found".to_string())
-            })?
+        verifiers.remove(&params.state).ok_or_else(|| {
+            tracing::error!(
+                "❌ PKCE verifier not found for FULL state: '{}'",
+                &params.state
+            );
+            AppError::OAuth2Error("PKCE verifier not found".to_string())
+        })?
     };
 
     tracing::info!("✅ Found PKCE verifier for state");
@@ -112,22 +123,29 @@ pub async fn discord_callback(
 
     let status = response.status();
     tracing::info!("📡 Discord API response status: {}", status);
-    
+
     if !status.is_success() {
-        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
         tracing::error!("❌ Discord API error: {}", error_text);
-        return Err(AppError::ExternalApiError(format!("Discord API returned {}: {}", status, error_text)));
+        return Err(AppError::ExternalApiError(format!(
+            "Discord API returned {}: {}",
+            status, error_text
+        )));
     }
 
-    let discord_user: DiscordUser = response
-        .json()
-        .await
-        .map_err(|e| {
-            tracing::error!("❌ Failed to parse Discord user JSON: {:?}", e);
-            AppError::ExternalApiError(e.to_string())
-        })?;
+    let discord_user: DiscordUser = response.json().await.map_err(|e| {
+        tracing::error!("❌ Failed to parse Discord user JSON: {:?}", e);
+        AppError::ExternalApiError(e.to_string())
+    })?;
 
-    tracing::info!("👤 Got Discord user: {} (ID: {})", discord_user.username, discord_user.id);
+    tracing::info!(
+        "👤 Got Discord user: {} (ID: {})",
+        discord_user.username,
+        discord_user.id
+    );
 
     // Create or update user in database
     tracing::info!("💾 Attempting to save user to database...");
@@ -141,18 +159,17 @@ pub async fn discord_callback(
     tracing::info!("✅ User saved to database: {:?}", user.id);
 
     // Generate JWT
-    let jwt_token = generate_jwt(&user.discord_id, &state.jwt_secret)
-        .map_err(|e| {
-            tracing::error!("❌ JWT generation failed: {:?}", e);
-            AppError::JwtError(e.to_string())
-        })?;
+    let jwt_token = generate_jwt(&user.discord_id, &state.jwt_secret).map_err(|e| {
+        tracing::error!("❌ JWT generation failed: {:?}", e);
+        AppError::JwtError(e.to_string())
+    })?;
 
     tracing::info!("🎫 JWT token generated successfully");
 
     // Redirect to frontend with token
     let redirect_url = format!("{}?token={}", state.frontend_url, jwt_token);
     tracing::info!("🔀 Redirecting to: {}", redirect_url);
-    
+
     Ok(Redirect::to(&redirect_url))
 }
 
@@ -175,7 +192,10 @@ pub async fn logout() -> impl IntoResponse {
 }
 
 // JWT helper functions
-pub(crate) fn generate_jwt(discord_id: &str, secret: &str) -> Result<String, jsonwebtoken::errors::Error> {
+pub(crate) fn generate_jwt(
+    discord_id: &str,
+    secret: &str,
+) -> Result<String, jsonwebtoken::errors::Error> {
     let expiration = Utc::now()
         .checked_add_signed(Duration::hours(24))
         .expect("valid timestamp")

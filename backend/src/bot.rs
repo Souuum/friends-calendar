@@ -10,7 +10,11 @@ use uuid::Uuid;
 pub struct DiscordBot;
 
 impl DiscordBot {
-    pub async fn start(bot_token: String, db: PgPool, announcement_channel_id: u64) -> Result<(), serenity::Error> {
+    pub async fn start(
+        bot_token: String,
+        db: PgPool,
+        announcement_channel_id: u64,
+    ) -> Result<(), serenity::Error> {
         let intents = GatewayIntents::GUILD_MESSAGE_REACTIONS
             | GatewayIntents::GUILDS
             | GatewayIntents::GUILD_MEMBERS;
@@ -100,9 +104,15 @@ impl Handler {
     // match the rest of the codebase, and deliberately so: query! needs a
     // live, schema-matching DATABASE_URL at *compile* time, which would
     // make `cargo build` fail on a fresh clone/CI without a pre-seeded DB.
-    async fn handle_event_reaction(&self, ctx: &Context, reaction: &Reaction) -> anyhow::Result<()> {
+    async fn handle_event_reaction(
+        &self,
+        ctx: &Context,
+        reaction: &Reaction,
+    ) -> anyhow::Result<()> {
         let message_id = reaction.message_id.get().to_string();
-        let user_id = reaction.user_id.ok_or_else(|| anyhow::anyhow!("No user ID"))?;
+        let user_id = reaction
+            .user_id
+            .ok_or_else(|| anyhow::anyhow!("No user ID"))?;
 
         let event: Option<(Uuid, Uuid)> = sqlx::query_as(
             "SELECT id, creator_id FROM calendar_events WHERE discord_message_id = $1",
@@ -119,7 +129,9 @@ impl Handler {
         let discord_user = user_id.to_user(&ctx.http).await?;
         let discord_id = discord_user.id.get().to_string();
 
-        let user_db_id = self.get_or_create_user(&discord_id, &discord_user.name).await?;
+        let user_db_id = self
+            .get_or_create_user(&discord_id, &discord_user.name)
+            .await?;
 
         let result = sqlx::query(
             r#"
@@ -137,35 +149,49 @@ impl Handler {
 
         if result.rows_affected() > 0 {
             if user_db_id == creator_id {
-                tracing::info!("✅ Creator {} rejoined event {}", discord_user.name, event_id);
+                tracing::info!(
+                    "✅ Creator {} rejoined event {}",
+                    discord_user.name,
+                    event_id
+                );
             } else {
-                tracing::info!("✅ Added user {} as participant to event {}", discord_user.name, event_id);
+                tracing::info!(
+                    "✅ Added user {} as participant to event {}",
+                    discord_user.name,
+                    event_id
+                );
             }
         }
 
         Ok(())
     }
 
-    async fn handle_reaction_remove(&self, _ctx: &Context, reaction: &Reaction) -> anyhow::Result<()> {
+    async fn handle_reaction_remove(
+        &self,
+        _ctx: &Context,
+        reaction: &Reaction,
+    ) -> anyhow::Result<()> {
         let message_id = reaction.message_id.get().to_string();
-        let user_id = reaction.user_id.ok_or_else(|| anyhow::anyhow!("No user ID"))?;
+        let user_id = reaction
+            .user_id
+            .ok_or_else(|| anyhow::anyhow!("No user ID"))?;
         let discord_id = user_id.get().to_string();
 
-        let event_id: Option<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM calendar_events WHERE discord_message_id = $1",
-        )
-        .bind(&message_id)
-        .fetch_optional(&*self.db)
-        .await?;
+        let event_id: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM calendar_events WHERE discord_message_id = $1")
+                .bind(&message_id)
+                .fetch_optional(&*self.db)
+                .await?;
 
         let Some(event_id) = event_id else {
             return Ok(());
         };
 
-        let user_db_id: Option<Uuid> = sqlx::query_scalar("SELECT id FROM users WHERE discord_id = $1")
-            .bind(&discord_id)
-            .fetch_optional(&*self.db)
-            .await?;
+        let user_db_id: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM users WHERE discord_id = $1")
+                .bind(&discord_id)
+                .fetch_optional(&*self.db)
+                .await?;
 
         let Some(user_db_id) = user_db_id else {
             return Ok(());
@@ -189,10 +215,11 @@ impl Handler {
     }
 
     async fn get_or_create_user(&self, discord_id: &str, username: &str) -> anyhow::Result<Uuid> {
-        let existing: Option<Uuid> = sqlx::query_scalar("SELECT id FROM users WHERE discord_id = $1")
-            .bind(discord_id)
-            .fetch_optional(&*self.db)
-            .await?;
+        let existing: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM users WHERE discord_id = $1")
+                .bind(discord_id)
+                .fetch_optional(&*self.db)
+                .await?;
 
         if let Some(id) = existing {
             return Ok(id);

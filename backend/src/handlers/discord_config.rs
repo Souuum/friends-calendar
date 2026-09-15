@@ -1,7 +1,10 @@
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 
 use crate::{
-    config::AppState, error::AppError, middleware::auth::Claims, models::{BotChannelConfig, UpdateBotChannelConfigRequest},
+    config::AppState,
+    error::AppError,
+    middleware::auth::Claims,
+    models::{BotChannelConfig, UpdateBotChannelConfigRequest},
     services::discord_config,
 };
 
@@ -12,7 +15,10 @@ fn require_guild_id(state: &AppState) -> Result<&str, AppError> {
         .ok_or_else(|| AppError::ValidationError("No Discord server is linked".to_string()))
 }
 
-pub async fn get_config(_claims: Claims, State(state): State<AppState>) -> Result<Json<BotChannelConfig>, AppError> {
+pub async fn get_config(
+    _claims: Claims,
+    State(state): State<AppState>,
+) -> Result<Json<BotChannelConfig>, AppError> {
     let guild_id = require_guild_id(&state)?;
 
     let config = discord_config::get_config(&state.db, guild_id)
@@ -99,7 +105,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json: Value = serde_json::from_slice(&body).unwrap();
         assert!(json["announcements_channel_id"].is_null());
 
@@ -128,7 +136,9 @@ mod tests {
             )
             .await
             .unwrap();
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["announcements_channel_id"], "12345");
     }
@@ -139,7 +149,12 @@ mod tests {
         let app = crate::build_router(state);
 
         let response = app
-            .oneshot(Request::builder().uri("/api/discord/config").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/discord/config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
