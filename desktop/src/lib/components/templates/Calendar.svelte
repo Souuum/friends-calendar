@@ -41,11 +41,13 @@
 
   type FilterKey = 'all' | 'going' | 'awaiting' | 'mine';
   let activeFilter: FilterKey = 'all';
+  // Labels match the mockup's calFilters copy exactly - "Awaiting my
+  // answer" and "Created by me", not paraphrased versions.
   const filters: { key: FilterKey; label: string }[] = [
     { key: 'all', label: 'All events' },
     { key: 'going', label: 'Going' },
-    { key: 'awaiting', label: 'Awaiting my response' },
-    { key: 'mine', label: 'Mine' }
+    { key: 'awaiting', label: 'Awaiting my answer' },
+    { key: 'mine', label: 'Created by me' }
   ];
 
   async function loadFreeTonight() {
@@ -193,9 +195,9 @@
 
 <div class="px-6">
   <div
-    class="flex items-center gap-3 flex-wrap bg-white border border-gray-200 rounded-xl px-4 py-3 mb-3"
+    class="flex items-center gap-3 flex-wrap bg-white border border-line rounded-[11px] px-3.5 py-[11px] mb-3"
   >
-    <span class="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Free tonight</span>
+    <span class="font-mono text-[10px] tracking-widest uppercase text-muted">Free tonight</span>
     {#if freeTonightError}
       <span class="text-xs text-red-600" role="alert">{freeTonightError}</span>
     {:else if freeFriends.length === 0}
@@ -207,22 +209,22 @@
             <img
               src={friend.avatar_url}
               alt=""
-              class="w-6 h-6 rounded-full border-2 border-white -mr-2"
+              class="w-[26px] h-[26px] rounded-full border-2 border-white -mr-[7px]"
             />
           {:else}
             <div
-              class="w-6 h-6 rounded-full bg-gray-300 border-2 border-white -mr-2 flex items-center justify-center text-[9px] font-bold text-white"
+              class="w-[26px] h-[26px] rounded-full bg-gray-300 border-2 border-white -mr-[7px] flex items-center justify-center text-[9px] font-bold text-white"
             >
               {friend.username.slice(0, 2).toUpperCase()}
             </div>
           {/if}
         {/each}
       </div>
-      <span class="text-sm">{freeFriends.length} friends have nothing on</span>
+      <span class="text-[13px]">{freeFriends.length} friends have nothing on</span>
     {/if}
     <button
       on:click={() => (showCreateModal = true)}
-      class="ml-auto px-3 py-1.5 border border-primary text-primary rounded-lg text-xs font-semibold hover:bg-primary-hover"
+      class="ml-auto px-3 py-[7px] border border-primary text-primary rounded-lg text-xs font-semibold hover:bg-primary-hover"
     >
       Propose a time
     </button>
@@ -232,9 +234,9 @@
     {#each filters as filter (filter.key)}
       <button
         on:click={() => (activeFilter = filter.key)}
-        class="px-3 py-1.5 rounded-full text-xs font-semibold border {activeFilter === filter.key
-          ? 'border-primary bg-primary-hover text-primary'
-          : 'border-gray-200 text-gray-500'}"
+        class="px-3 py-[7px] rounded-lg text-xs font-semibold border {activeFilter === filter.key
+          ? 'border-primary bg-tint text-primary'
+          : 'border-line bg-white text-muted'}"
       >
         {filter.label}
       </button>

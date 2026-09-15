@@ -18,16 +18,18 @@
   ];
 </script>
 
-<div class="flex bg-gray-100 rounded-lg p-1">
+<div class="flex bg-[#f4f4f7] rounded-[9px] p-[3px]">
   {#each views as viewOption}
     {@const isActive = view === viewOption.value}
     <button
       on:click={() => onChange(viewOption.value)}
-      class="px-3 py-1 text-sm rounded transition-colors cursor-pointer"
+      class="px-[13px] py-1.5 text-[13px] rounded-[7px] transition-colors cursor-pointer"
       class:bg-white={isActive}
       class:shadow-sm={isActive}
       class:font-semibold={isActive}
       class:text-primary={isActive}
+      class:font-medium={!isActive}
+      class:text-muted={!isActive}
     >
       {viewOption.label}
     </button>

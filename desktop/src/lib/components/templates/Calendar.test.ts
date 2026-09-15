@@ -66,7 +66,7 @@ describe('Calendar', () => {
     await waitFor(() => expect(screen.getByText('No friends free right now')).toBeInTheDocument());
   });
 
-  it('filters events by "Mine" without a refetch', async () => {
+  it('filters events by "Created by me" without a refetch', async () => {
     getFreeFriendsNow.mockResolvedValue([]);
     getFriends.mockResolvedValue([]);
 
@@ -78,7 +78,7 @@ describe('Calendar', () => {
     await waitFor(() => expect(screen.getByText('My Event')).toBeInTheDocument());
     expect(screen.getByText('Their Event')).toBeInTheDocument();
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Mine' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Created by me' }));
 
     expect(screen.getByText('My Event')).toBeInTheDocument();
     expect(screen.queryByText('Their Event')).not.toBeInTheDocument();
