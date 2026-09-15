@@ -296,19 +296,21 @@ the second route to navigate to.
   page a small follow-up, but it's a separate decision from what was asked
   here (viewing, not editing) — flagging it rather than fixing it blind.
 
-⚠️ **Real limitation surfaced while building this, not fixed:**
+⚠️ **Real limitation surfaced while building this — half-fixed since:**
 `GET /api/events` (`services::calendar::list_user_events`) only returns
 events where you're already a row in `event_participants` — it does not
 consult `visibility` at all for listing (unlike the single-event `GET
 /api/events/:id`, which does check `OR e.visibility = 'public'`).
-`CreateEventModal.svelte` never sends `participant_ids` either — there's no
-UI for inviting anyone at creation time. Net effect: in this app's current
-state, "your events" (and so "your announcements") is really just "events
-you personally created" for everyone except the creator. The `visibility:
-'friends' | 'public'` field on events doesn't actually do the "let my
-friends/everyone see this" thing its name implies yet. Fixing that
-properly is a real feature (backend listing query + an invite-picker UI),
-not something to bolt on silently while building an unrelated page.
+`CreateEventModal.svelte` didn't send `participant_ids` either — there was
+no UI for inviting anyone at creation time. **The invite-picker half of
+this is now fixed** (see "Friends directory" below,
+`.claude/skills/mockup-friends-directory/SKILL.md`) — you can now actually
+invite friends when creating an event. The listing-query half is still
+open: `visibility: 'friends' | 'public'` still doesn't make an event
+appear for anyone who wasn't explicitly invited, even though the field
+implies it should. That's still a real backend feature (a listing query
+that also matches on visibility, not just direct participancy), not
+something to bolt on silently.
 
 ## Testing
 
@@ -349,12 +351,57 @@ rather than re-deriving the patterns. Summary:
   without mocking anything. Page-level components that own their own
   `onMount` fetch (see `routes/settings/+page.svelte`) need `$lib/api` (and
   often `$app/navigation`) mocked via `vi.mock(...)` — see
-  `routes/settings/page.test.ts`.
+  `routes/settings/page.test.ts`. Anything rendering `Frame.svelte` (most
+  pages) also needs `$app/stores`'s `page` mocked, since `Frame` reads
+  `$page.url.pathname` for sidebar highlighting — see `Frame.test.ts` for
+  the settable-store mock pattern (`__setPathname`), or
+  `routes/friends/[id]/page.test.ts` for a version that also supplies
+  `$page.params` for a dynamic route.
 - `cargo clippy --all-targets --all-features -- -D warnings` and
   `yarn run check` (not `yarn check`, which is yarn's own unrelated
   built-in command) both have pre-existing failures unrelated to any given
   change — don't chase those, but make sure new code doesn't add to the
   pile.
+
+## Friends Calendar Mockups (Claude Design project) — roadmap
+
+A Claude Design project (`Friends Calendar Mockups.dc.html`, project id
+`0b825812-c8f2-4f1a-98d7-38900c6a0133`, read via the `DesignSync` MCP tool)
+was imported 2026-09-15 as the design for this app's next stage. It's
+close to a full redesign — 9 screens, several needing backend subsystems
+that don't exist yet — so it was split into one skill per feature area
+rather than attempted as one change. Status:
+
+- `.claude/skills/mockup-friends-directory/SKILL.md` — **done.** Friends
+  directory (`/friends`), friend detail (`/friends/[id]`), and the
+  invite-picker in `CreateEventModal.svelte`. No new backend needed.
+- `.claude/skills/mockup-friend-requests/SKILL.md` — not started. Manual
+  Discord-tag friend requests (send/accept/decline) — new `friend_requests`
+  table, today friends only come from guild sync.
+- `.claude/skills/mockup-notifications/SKILL.md` — not started. New
+  `notifications` table + triggers wired into existing invite/RSVP/friend-
+  request flows + a header badge.
+- `.claude/skills/mockup-announcements-feed/SKILL.md` — not started, and
+  has open design questions (see the skill) rather than being fully
+  shovel-ready. Would **replace** the current `/announcements` (event-RSVP
+  tracking, see above) with a real Discord-channel message mirror — these
+  are two different features that happen to share a name; read the skill
+  before starting, it flags a scope decision that needs the user's input.
+- `.claude/skills/mockup-settings-and-server/SKILL.md` — not started.
+  Splits the current `/settings` (linked server + friends) into a real
+  profile/preferences page and a separate `/server` page with DB-backed,
+  user-editable multi-channel bot config (replacing today's single
+  `DISCORD_ANNOUNCEMENT_CHANNEL_ID` env var).
+- `.claude/skills/mockup-availability/SKILL.md` — not started. Cross-user
+  free/busy computation, consumed by the other skills' "Free tonight" /
+  weekly-overlap / "Propose a time" UI — several of those were built
+  without this and explicitly note where they simplified as a result (e.g.
+  the friends directory's per-friend "note" uses shared-events instead of
+  the mockup's richer availability-based status pills).
+
+Each skill file is a concrete, runnable playbook (schema sketches, file
+paths, endpoint shapes, test plan) — treat "run `.claude/skills/mockup-*`"
+as a real, actionable request, not just documentation to reference.
 
 ## `desktop/` (SvelteKit + Tauri)
 
@@ -369,7 +416,8 @@ desktop/
 │   ├── routes/
 │   │   ├── +layout.svelte, +page.svelte    # root: login screen or CalendarView
 │   │   ├── settings/+page.svelte           # linked Discord server + friends, see above
-│   │   └── announcements/+page.svelte      # events posted to Discord + RSVPs, see above
+│   │   ├── announcements/+page.svelte      # events posted to Discord + RSVPs, see above
+│   │   └── friends/                        # directory (+page.svelte) + detail ([id]/+page.svelte), see mockup roadmap below
 │   ├── lib/
 │   │   ├── api.ts             # fetch wrapper, JWT storage in localStorage
 │   │   ├── stores.ts, types.ts

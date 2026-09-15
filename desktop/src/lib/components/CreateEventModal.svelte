@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onMount } from 'svelte';
   import { api } from '$lib/api';
+  import type { FriendInfo } from '$lib/types';
 
   const dispatch = createEventDispatcher();
 
@@ -14,6 +15,32 @@
   let error = '';
   let price = '';
   let link = '';
+
+  // Invite picker: participant_ids has always been accepted by the
+  // backend (services::calendar::create_event), but nothing here ever
+  // sent it - meaning nobody but the creator was ever actually invited,
+  // regardless of `visibility`. See mockup-friends-directory skill.
+  let friends: FriendInfo[] = [];
+  let friendsError = '';
+  let selectedFriendIds = new Set<string>();
+
+  onMount(async () => {
+    try {
+      friends = await api.getFriends();
+    } catch (err) {
+      friendsError = err instanceof Error ? err.message : 'Failed to load friends';
+    }
+  });
+
+  function toggleFriend(userId: string) {
+    const next = new Set(selectedFriendIds);
+    if (next.has(userId)) {
+      next.delete(userId);
+    } else {
+      next.add(userId);
+    }
+    selectedFriendIds = next;
+  }
 
   async function handleSubmit() {
     if (!title || !startTime || !endTime) {
@@ -29,7 +56,8 @@
       location: location || undefined,
       visibility,
       price: price || undefined,
-      link: link || undefined
+      link: link || undefined,
+      participant_ids: selectedFriendIds.size > 0 ? Array.from(selectedFriendIds) : undefined
     };
     console.log('📤 Sending payload:', payload);
 
@@ -172,6 +200,34 @@
             <option value="Friends">Friends</option>
             <option value="Public">Public</option>
           </select>
+        </div>
+
+        <div>
+          <span class="block text-sm font-medium text-gray-700 mb-1">Invite</span>
+          {#if friendsError}
+            <p class="text-sm text-red-600" role="alert">{friendsError}</p>
+          {:else if friends.length === 0}
+            <p class="text-sm text-gray-500">No friends synced yet.</p>
+          {:else}
+            <div class="flex flex-wrap gap-2">
+              {#each friends as friend (friend.user_id)}
+                {@const selected = selectedFriendIds.has(friend.user_id)}
+                <button
+                  type="button"
+                  on:click={() => toggleFriend(friend.user_id)}
+                  aria-pressed={selected}
+                  class="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium border transition {selected
+                    ? 'bg-primary text-white border-primary'
+                    : 'bg-gray-100 text-gray-700 border-transparent hover:bg-gray-200'}"
+                >
+                  {#if friend.avatar_url}
+                    <img src={friend.avatar_url} alt="" class="w-5 h-5 rounded-full" />
+                  {/if}
+                  {friend.username}
+                </button>
+              {/each}
+            </div>
+          {/if}
         </div>
 
         <div class="flex gap-3 pt-4">
