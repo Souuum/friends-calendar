@@ -1,4 +1,4 @@
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 
 use crate::{
     config::AppState,
@@ -50,14 +50,19 @@ pub async fn sync_announcements(
 ) -> Result<Json<Vec<AnnouncementPostInfo>>, AppError> {
     let channel_id = resolve_channel(&state).await?;
 
-    let bot_token = state
-        .discord_bot_token
-        .as_deref()
-        .ok_or_else(|| AppError::ValidationError("DISCORD_BOT_TOKEN is not configured".to_string()))?;
+    let bot_token = state.discord_bot_token.as_deref().ok_or_else(|| {
+        AppError::ValidationError("DISCORD_BOT_TOKEN is not configured".to_string())
+    })?;
 
-    discord_feed::sync_channel(&state.discord_api_base, &state.db, &state.http_client, bot_token, &channel_id)
-        .await
-        .map_err(|e| AppError::ExternalApiError(e.to_string()))?;
+    discord_feed::sync_channel(
+        &state.discord_api_base,
+        &state.db,
+        &state.http_client,
+        bot_token,
+        &channel_id,
+    )
+    .await
+    .map_err(|e| AppError::ExternalApiError(e.to_string()))?;
 
     let posts = discord_feed::list_posts(&state.db, &channel_id)
         .await
@@ -70,7 +75,7 @@ pub async fn sync_announcements(
 mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use sqlx::PgPool;
     use tower::ServiceExt;
     use wiremock::matchers::{method, path};
@@ -114,7 +119,10 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/channels/123456789/messages"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(vec![discord_message("msg-1", "Hello everyone")]))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(vec![discord_message("msg-1", "Hello everyone")]),
+            )
             .mount(&server)
             .await;
 
@@ -135,7 +143,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let synced: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(synced.as_array().unwrap().len(), 1);
 
@@ -150,7 +160,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let posts: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(posts[0]["body"], "Hello everyone");
         assert_eq!(posts[0]["author_username"], "alice");
@@ -162,7 +174,12 @@ mod tests {
         let app = crate::build_router(state);
 
         let response = app
-            .oneshot(Request::builder().uri("/api/announcements").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/announcements")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 

@@ -71,7 +71,6 @@ nothing else in the branch or its commit messages explains it.
 ```
 backend/
 ├── .env                       # not committed content matters here — see Secrets note below
-├── .github/workflows/rust.yml # dead: GitHub only reads .github/workflows at repo ROOT, this one never runs
 ├── Cargo.toml / Cargo.lock
 ├── migrations/
 │   ├── 001_create_users_table.sql
@@ -132,13 +131,10 @@ backend), `tower` with the `util` feature enabled specifically for
 `ServiceExt::oneshot` in functional tests.
 
 Server binds `127.0.0.1:8080`. CORS is hard-coded to allow only
-`http://localhost:1420` (the Tauri dev origin) with credentials.
-
-⚠️ `backend/.github/workflows/rust.yml` is leftover scaffolding from a point
-when `backend/` was presumably its own repo — GitHub Actions never looks
-inside `backend/.github`, only the top-level `.github/workflows`, so this
-file is inert. Either delete it or fold anything useful into the root
-`ci.yml`.
+`http://localhost:1420` (the Tauri dev origin) with credentials. (This is
+also why `terraform/templates/nginx.conf` doesn't set its own CORS headers
+— see the Terraform section below for why that combination breaks browsers
+when both layers do it.)
 
 ### Implemented API endpoints (from `backend/src/main.rs`)
 
@@ -760,32 +756,52 @@ molecules/organisms/templates have no stories yet.
 
 All three exist in the repo, at different levels of completeness:
 
-- **Terraform** (`terraform/`): **real and complete-looking**, not just
-  discussed. `main.tf` provisions a `proxmox_lxc` container, plus
+- **Terraform** (`terraform/`): real, and now fixed up (2026-09-15) rather
+  than just present. `main.tf` provisions a `proxmox_lxc` container, plus
   `cloudflare.tf` (DNS), `ssl.tf`, `provisioning.tf`, `outputs.tf`,
   `variables.tf`, and templates for nginx/systemd/env. This matches
   `Makefile`'s `init/plan/apply/destroy/ssh/logs/status/update` targets and
   the `scripts/` helpers (`ssh.sh`, `logs.sh`, `status.sh`, `update.sh`,
   `backup.sh`). The `feat(terraform)` branch is fully merged (identical to
-  `master`) — that branch can be deleted.
+  `master`) — that branch can be deleted. Real bugs found and fixed in this
+  pass: `templates/systemd.service`'s `ExecStart` pointed at a binary named
+  `friends-calendar` — the actual binary (from `backend/Cargo.toml`'s
+  package name) is `rust-friends-calendar`, so the service could never
+  have started after a real build; `templates/nginx.conf` set its own CORS
+  headers on top of the backend's own `CorsLayer` (`main.rs`), which gets a
+  response rejected by browsers for carrying `Access-Control-Allow-Origin`
+  twice — removed, the backend owns CORS exclusively; `scripts/update.sh`'s
+  rsync had no `--exclude '.env'`, so running it would have overwritten the
+  VPS's real `.env` with whatever `.env` sits in the local working tree
+  (see Secrets note below — a real one exists there); `scripts/backup.sh`
+  referenced a `proxmox_host` Terraform output that didn't exist in
+  `outputs.tf` (added); `env.tpl`/`variables.tf` never provisioned
+  `DISCORD_GUILD_ID`, needed since this session's friend-sync/
+  `/api/discord/config`/digest work (added). See `docs/deployment.md` for
+  the full provisioning + deploy flow, including why Terraform apply is
+  deliberately a manual step, not run from CI.
 
-- **GitHub Actions** (`.github/workflows/`): real and present —
-  `ci.yml`, `cd-staging.yml`, `cd-production.yml`.
-  ⚠️ Internally inconsistent with the rest of the repo, though:
-  - `ci.yml`'s `frontend-test` job does `cd frontend && npm ci` / `npm test`
-    / `npm run build` / `npm run check` — **there is no `frontend/`
-    directory**; the actual frontend lives at `desktop/` and uses `yarn`,
-    not `npm`. This job will fail as soon as it triggers.
-  - `cd-staging.yml` deploys on push to `develop`, `cd-production.yml` on
-    push to `main` / tags `v*`. **Neither `develop` nor `main` branches
-    exist** in this repo — the working/default branch is `master`. As
-    written, these two deploy workflows can never fire.
-  - `ci.yml` triggers on PRs/pushes to `[main, develop]`, same mismatch.
-  This all reads like the CI/CD was authored against an assumed
-  `main`/`develop`/`frontend` layout that doesn't match how the repo was
-  actually set up (`master` branch, `desktop/` directory). Needs
-  reconciling one way or the other — either rename the branches/dir, or fix
-  the workflow branch filters and paths.
+- **GitHub Actions** (`.github/workflows/`): `ci.yml` and `cd.yml`, both
+  fixed/rewritten 2026-09-15 — the previous `ci.yml`/`cd-staging.yml`/
+  `cd-production.yml` never actually ran successfully (see git history for
+  what was wrong: wrong branch names throughout — `main`/`develop` instead
+  of this repo's actual `master`; `ci.yml`'s frontend job targeted a
+  nonexistent `frontend/` directory with `npm` instead of the real
+  `desktop/` with `yarn`; both CD workflows ran `terraform apply
+  -auto-approve` on every push against a Terraform setup with no remote
+  state backend, which would either collide with existing infra or lose
+  track of it entirely between runs, and even if that worked, the
+  provisioning `null_resource` has no `triggers`, so a re-`apply` was
+  never actually going to redeploy new code anyway).
+  - `ci.yml`: fmt/clippy/test/build for the backend, test/check/build for
+    `desktop/` (now actually pointed at the right directory and package
+    manager), `cargo audit`. Triggers on `master` only.
+  - `cd.yml`: triggers via `workflow_run` once `ci.yml` succeeds on
+    `master` — builds the release binary in a `rust:1-bookworm` container
+    (glibc-matched to the container's `debian-12-standard` template, since
+    plain `ubuntu-latest` is newer and produces a binary that won't run
+    there), then ships just the binary over SSH and restarts the systemd
+    unit. No Terraform involved — see `docs/deployment.md`.
 
 - **Discord bot**: real, and merged into `master` since 2026-09-14
   (`backend/src/bot.rs` + `services/discord_announcement.rs`). See below.
@@ -858,15 +874,16 @@ its contents.
    on case-insensitive filesystems).
 2. Remove `desktop/package-lock.json` (mixed npm/yarn artifacts; yarn is the
    one actually used).
-3. Delete `backend/.github/workflows/rust.yml` (dead — GH Actions doesn't
-   read non-root `.github`) or merge its intent into root `ci.yml`.
-4. Fix `.github/workflows/ci.yml`'s `frontend/` → `desktop/` path + `npm` →
-   `yarn`, and reconcile the `main`/`develop` branch names in `ci.yml`,
-   `cd-staging.yml`, `cd-production.yml` against the real `master` branch (or
-   rename branches to match).
-5. Delete the now-fully-stale branches: `feat(Event)`, `feat(Storybook)`,
+3. Delete the now-fully-stale branches: `feat(Event)`, `feat(Storybook)`,
    `feat(terraform)` (local-only), `origin/dev/refacto`, `feat(Calendar)`,
    `feat(DiscordBot)` — all 0 ahead of `master` as of 2026-09-14, nothing
    left to merge from any of them.
-6. `bot.rs`/`discord_announcement.rs` have no automated tests (see Discord
+4. `bot.rs`/`discord_announcement.rs` have no automated tests (see Discord
    bot section above for why and what a first pass could look like).
+5. CI/CD is now fixed and real (see the Terraform/GitHub Actions section
+   above and `docs/deployment.md`), but the pipeline can't deploy anything
+   until a person does the one-time manual setup `docs/deployment.md`
+   describes (create the `production` GitHub Environment, generate a
+   deploy SSH key, add the four `DEPLOY_*`/`PROD_DOMAIN` repo secrets, and
+   confirm what's actually running on the Proxmox host today via `pct
+   list` before pointing a deploy pipeline at it).

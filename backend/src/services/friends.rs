@@ -1,5 +1,5 @@
 use crate::models::{FriendInfo, LinkedServerInfo, SyncFriendsResult, User};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde::Deserialize;
@@ -44,7 +44,8 @@ pub async fn fetch_guild_member_discord_ids(
     bot_token: &str,
     guild_id: &str,
 ) -> Result<Vec<String>> {
-    fetch_guild_member_discord_ids_paged(base_url, MEMBERS_PAGE_SIZE, http, bot_token, guild_id).await
+    fetch_guild_member_discord_ids_paged(base_url, MEMBERS_PAGE_SIZE, http, bot_token, guild_id)
+        .await
 }
 
 // `page_size` only exists as a separate parameter so the pagination/"keep
@@ -116,7 +117,8 @@ pub async fn sync_friends(
     user_id: Uuid,
     own_discord_id: &str,
 ) -> Result<SyncFriendsResult> {
-    let member_discord_ids = fetch_guild_member_discord_ids(base_url, http, bot_token, guild_id).await?;
+    let member_discord_ids =
+        fetch_guild_member_discord_ids(base_url, http, bot_token, guild_id).await?;
 
     let candidate_ids: Vec<String> = member_discord_ids
         .into_iter()
@@ -211,12 +213,14 @@ pub async fn get_friends(db: &PgPool, user_id: Uuid) -> Result<Vec<FriendInfo>> 
 
     let friends = rows
         .into_iter()
-        .map(|(user_id, discord_id, username, avatar, synced_at)| FriendInfo {
-            user_id,
-            username,
-            avatar_url: User::build_avatar_url(&discord_id, &avatar),
-            synced_at,
-        })
+        .map(
+            |(user_id, discord_id, username, avatar, synced_at)| FriendInfo {
+                user_id,
+                username,
+                avatar_url: User::build_avatar_url(&discord_id, &avatar),
+                synced_at,
+            },
+        )
         .collect();
 
     Ok(friends)
@@ -286,7 +290,11 @@ mod tests {
     impl Respond for PagedMembers {
         fn respond(&self, request: &Request) -> ResponseTemplate {
             let has_after = request.url.query_pairs().any(|(k, _)| k == "after");
-            let body = if has_after { &self.second_page } else { &self.first_page };
+            let body = if has_after {
+                &self.second_page
+            } else {
+                &self.first_page
+            };
             ResponseTemplate::new(200).set_body_json(body)
         }
     }
@@ -446,9 +454,17 @@ mod tests {
             .await;
 
         let http = Client::new();
-        let result = sync_friends(&server.uri(), &db, &http, "test-token", "g1", me, "me-discord")
-            .await
-            .unwrap();
+        let result = sync_friends(
+            &server.uri(),
+            &db,
+            &http,
+            "test-token",
+            "g1",
+            me,
+            "me-discord",
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.synced, 1);
         assert_eq!(result.removed, 0);
@@ -476,16 +492,23 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/guilds/g1/members"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(vec![discord_member("me-discord", false)]),
+                ResponseTemplate::new(200).set_body_json(vec![discord_member("me-discord", false)]),
             )
             .mount(&server)
             .await;
 
         let http = Client::new();
-        let result = sync_friends(&server.uri(), &db, &http, "test-token", "g1", me, "me-discord")
-            .await
-            .unwrap();
+        let result = sync_friends(
+            &server.uri(),
+            &db,
+            &http,
+            "test-token",
+            "g1",
+            me,
+            "me-discord",
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.synced, 0);
         assert_eq!(result.removed, 1);

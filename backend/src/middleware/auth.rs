@@ -1,17 +1,17 @@
+use axum::async_trait;
+use axum::extract::FromRequestParts;
+use axum::http::request::Parts;
 use axum::{
     extract::{Request, State},
     http::StatusCode,
     middleware::Next,
     response::Response,
 };
-use axum::async_trait;
-use axum::extract::FromRequestParts;
-use axum::http::request::Parts;
 use serde::{Deserialize, Serialize};
 
 use crate::config::AppState;
-use crate::handlers::auth::verify_jwt;
 use crate::error::AppError;
+use crate::handlers::auth::verify_jwt;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
@@ -39,8 +39,7 @@ impl FromRequestParts<AppState> for Claims {
         }
 
         let token = &auth_header[7..];
-        
-        verify_jwt(token, &state.jwt_secret)
-            .map_err(|_| AppError::Unauthorized)
+
+        verify_jwt(token, &state.jwt_secret).map_err(|_| AppError::Unauthorized)
     }
 }

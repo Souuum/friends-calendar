@@ -14,11 +14,11 @@ resource "null_resource" "setup_container" {
       "apt-get update",
       "apt-get upgrade -y",
       "apt-get install -y curl git build-essential pkg-config libssl-dev postgresql-client nginx certbot python3-certbot-nginx ca-certificates",
-      
+
       # Install Rust
       "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
       "source $HOME/.cargo/env",
-      
+
       # Create app directory
       "mkdir -p /opt/friends-calendar",
     ]
@@ -33,13 +33,14 @@ resource "null_resource" "setup_container" {
   # Create .env file
   provisioner "file" {
     content = templatefile("${path.module}/templates/env.tpl", {
-      database_url        = var.database_url
-      discord_client_id   = var.discord_client_id
+      database_url          = var.database_url
+      discord_client_id     = var.discord_client_id
       discord_client_secret = var.discord_client_secret
-      discord_bot_token   = var.discord_bot_token
-      discord_channel_id  = var.discord_channel_id
-      jwt_secret          = var.jwt_secret
-      frontend_url        = var.frontend_url
+      discord_bot_token     = var.discord_bot_token
+      discord_guild_id      = var.discord_guild_id
+      discord_channel_id    = var.discord_channel_id
+      jwt_secret            = var.jwt_secret
+      frontend_url          = var.frontend_url
     })
     destination = "/opt/friends-calendar/.env"
   }
@@ -74,7 +75,7 @@ resource "null_resource" "setup_container" {
       "systemctl daemon-reload",
       "systemctl enable friends-calendar",
       "systemctl start friends-calendar",
-      
+
       # Setup Nginx
       "ln -sf /etc/nginx/sites-available/friends-calendar /etc/nginx/sites-enabled/",
       "nginx -t",

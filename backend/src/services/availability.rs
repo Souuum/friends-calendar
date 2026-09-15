@@ -87,7 +87,10 @@ fn compute_free_users_per_day(
                 })
                 .collect();
 
-            DayAvailability { date: day_start, free_user_ids }
+            DayAvailability {
+                date: day_start,
+                free_user_ids,
+            }
         })
         .collect()
 }
@@ -109,7 +112,12 @@ pub async fn week_availability(
     week_start: DateTime<Utc>,
 ) -> Result<Vec<DayAvailability>> {
     if user_ids.is_empty() {
-        return Ok((0..7).map(|d| DayAvailability { date: week_start + Duration::days(d), free_user_ids: vec![] }).collect());
+        return Ok((0..7)
+            .map(|d| DayAvailability {
+                date: week_start + Duration::days(d),
+                free_user_ids: vec![],
+            })
+            .collect());
     }
     let window_end = week_start + Duration::days(7);
     let busy = fetch_busy_intervals(db, user_ids, week_start, window_end).await?;
@@ -145,7 +153,8 @@ mod tests {
         assert_eq!(free, vec![alice]);
 
         // One minute before the end - still busy.
-        let free = compute_free_users_at(&busy, &[alice], dt(2026, 3, 1, 20) - Duration::minutes(1));
+        let free =
+            compute_free_users_at(&busy, &[alice], dt(2026, 3, 1, 20) - Duration::minutes(1));
         assert!(free.is_empty());
     }
 
@@ -181,7 +190,11 @@ mod tests {
         let days = compute_free_users_per_day(&busy, &[alice], week_start);
         assert!(days[0].free_user_ids.is_empty(), "Monday should be busy");
         assert!(days[1].free_user_ids.is_empty(), "Tuesday should be busy");
-        assert_eq!(days[2].free_user_ids, vec![alice], "Wednesday should be free");
+        assert_eq!(
+            days[2].free_user_ids,
+            vec![alice],
+            "Wednesday should be free"
+        );
     }
 
     #[test]
@@ -253,9 +266,33 @@ mod tests {
         let carol = seed_user(&db, "carol-discord", "carol").await;
 
         let now = Utc::now();
-        seed_event(&db, alice, alice, crate::models::ParticipationStatus::Accepted, now - Duration::minutes(30), now + Duration::minutes(30)).await;
-        seed_event(&db, bob, bob, crate::models::ParticipationStatus::Maybe, now - Duration::minutes(30), now + Duration::minutes(30)).await;
-        seed_event(&db, carol, carol, crate::models::ParticipationStatus::Declined, now - Duration::minutes(30), now + Duration::minutes(30)).await;
+        seed_event(
+            &db,
+            alice,
+            alice,
+            crate::models::ParticipationStatus::Accepted,
+            now - Duration::minutes(30),
+            now + Duration::minutes(30),
+        )
+        .await;
+        seed_event(
+            &db,
+            bob,
+            bob,
+            crate::models::ParticipationStatus::Maybe,
+            now - Duration::minutes(30),
+            now + Duration::minutes(30),
+        )
+        .await;
+        seed_event(
+            &db,
+            carol,
+            carol,
+            crate::models::ParticipationStatus::Declined,
+            now - Duration::minutes(30),
+            now + Duration::minutes(30),
+        )
+        .await;
 
         let free = free_users_now(&db, &[alice, bob, carol]).await.unwrap();
         assert_eq!(free, vec![carol]);
@@ -264,9 +301,21 @@ mod tests {
     #[sqlx::test]
     async fn week_availability_returns_seven_days_from_real_data(db: PgPool) {
         let alice = seed_user(&db, "alice-discord", "alice").await;
-        let week_start = Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
+        let week_start = Utc::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc();
 
-        seed_event(&db, alice, alice, crate::models::ParticipationStatus::Accepted, week_start + Duration::days(2) + Duration::hours(10), week_start + Duration::days(2) + Duration::hours(12)).await;
+        seed_event(
+            &db,
+            alice,
+            alice,
+            crate::models::ParticipationStatus::Accepted,
+            week_start + Duration::days(2) + Duration::hours(10),
+            week_start + Duration::days(2) + Duration::hours(12),
+        )
+        .await;
 
         let days = week_availability(&db, &[alice], week_start).await.unwrap();
         assert_eq!(days.len(), 7);

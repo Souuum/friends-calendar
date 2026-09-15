@@ -98,14 +98,23 @@ mod tests {
 
     #[sqlx::test]
     async fn upsert_creates_then_updates_the_same_row(db: PgPool) {
-        let first = upsert_config(&db, "g1", Some("111".to_string()), None, None, None).await.unwrap();
+        let first = upsert_config(&db, "g1", Some("111".to_string()), None, None, None)
+            .await
+            .unwrap();
         assert_eq!(first.events_channel_id.as_deref(), Some("111"));
         assert!(first.announcements_channel_id.is_none());
         assert!(!first.digest_enabled);
 
-        let second = upsert_config(&db, "g1", Some("111".to_string()), Some("222".to_string()), None, None)
-            .await
-            .unwrap();
+        let second = upsert_config(
+            &db,
+            "g1",
+            Some("111".to_string()),
+            Some("222".to_string()),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(second.announcements_channel_id.as_deref(), Some("222"));
 
         // still one row, not two
@@ -118,7 +127,9 @@ mod tests {
 
     #[sqlx::test]
     async fn upsert_only_changes_digest_enabled_when_explicitly_sent(db: PgPool) {
-        let first = upsert_config(&db, "g1", None, None, None, Some(true)).await.unwrap();
+        let first = upsert_config(&db, "g1", None, None, None, Some(true))
+            .await
+            .unwrap();
         assert!(first.digest_enabled);
 
         // A channel-only update (digest_enabled: None) must not silently
@@ -131,29 +142,41 @@ mod tests {
 
     #[sqlx::test]
     async fn resolve_announcement_channel_prefers_db_config_over_the_fallback(db: PgPool) {
-        upsert_config(&db, "g1", None, Some("222".to_string()), None, None).await.unwrap();
+        upsert_config(&db, "g1", None, Some("222".to_string()), None, None)
+            .await
+            .unwrap();
 
-        let resolved = resolve_announcement_channel_id(&db, "g1", Some(999)).await.unwrap();
+        let resolved = resolve_announcement_channel_id(&db, "g1", Some(999))
+            .await
+            .unwrap();
         assert_eq!(resolved, Some(222));
     }
 
     #[sqlx::test]
     async fn resolve_announcement_channel_falls_back_when_no_db_config_exists(db: PgPool) {
-        let resolved = resolve_announcement_channel_id(&db, "g1", Some(999)).await.unwrap();
+        let resolved = resolve_announcement_channel_id(&db, "g1", Some(999))
+            .await
+            .unwrap();
         assert_eq!(resolved, Some(999));
     }
 
     #[sqlx::test]
     async fn resolve_announcement_channel_falls_back_when_db_value_is_unset(db: PgPool) {
-        upsert_config(&db, "g1", Some("111".to_string()), None, None, None).await.unwrap();
+        upsert_config(&db, "g1", Some("111".to_string()), None, None, None)
+            .await
+            .unwrap();
 
-        let resolved = resolve_announcement_channel_id(&db, "g1", Some(999)).await.unwrap();
+        let resolved = resolve_announcement_channel_id(&db, "g1", Some(999))
+            .await
+            .unwrap();
         assert_eq!(resolved, Some(999));
     }
 
     #[sqlx::test]
     async fn mark_digest_sent_stamps_the_row(db: PgPool) {
-        upsert_config(&db, "g1", None, None, None, Some(true)).await.unwrap();
+        upsert_config(&db, "g1", None, None, None, Some(true))
+            .await
+            .unwrap();
 
         let sent_at = Utc::now();
         mark_digest_sent(&db, "g1", sent_at).await.unwrap();

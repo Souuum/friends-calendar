@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde_json::json;
 
@@ -25,7 +25,7 @@ impl IntoResponse for AppError {
             AppError::JwtError(msg) => (StatusCode::UNAUTHORIZED, msg),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
             AppError::NotFound => (StatusCode::NOT_FOUND, "Not found".to_string()),
-            AppError::ValidationError(msg) => (StatusCode::BAD_REQUEST, msg), 
+            AppError::ValidationError(msg) => (StatusCode::BAD_REQUEST, msg),
         };
 
         let body = Json(json!({

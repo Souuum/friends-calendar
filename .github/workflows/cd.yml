@@ -1,0 +1,104 @@
+name: Deploy
+
+# Runs only after CI has actually passed on master - not on every push
+# independently, so this never re-runs the test/build steps CI already
+# did and can never deploy something CI rejected. Terraform does NOT run
+# here: infra provisioning is a deliberate, manual `make apply` step (see
+# docs/deployment.md) - this workflow only ships a new binary to a
+# container that's assumed to already exist.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [master]
+
+jobs:
+  build:
+    name: Build release binary
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    # Matches the container's OS (debian-12-standard / bookworm) so the
+    # binary links against the same glibc it'll run against. Building on
+    # plain ubuntu-latest (24.04, glibc 2.39) would produce a binary that
+    # refuses to run on bookworm's older glibc (2.36).
+    container: rust:1-bookworm
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: Build release binary
+        run: |
+          cd backend
+          cargo build --release
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-friends-calendar
+          path: backend/target/release/rust-friends-calendar
+          retention-days: 7
+
+  deploy:
+    name: Deploy to VPS
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Download binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-friends-calendar
+          path: ./artifact
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.DEPLOY_SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Ship binary and restart service
+        run: |
+          chmod +x ./artifact/rust-friends-calendar
+          scp -i ~/.ssh/deploy_key \
+            ./artifact/rust-friends-calendar \
+            "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}:/opt/friends-calendar/target/release/rust-friends-calendar.new"
+
+          # Atomic rename: a mid-transfer failure above never leaves a
+          # half-written binary in the live path, and the running process
+          # (if any) keeps its own open file handle to the old inode until
+          # the restart below actually happens.
+          #
+          # Assumes DEPLOY_SSH_USER can restart the service and write to
+          # /opt/friends-calendar without sudo - matches how
+          # terraform/provisioning.tf and scripts/update.sh already
+          # operate (root over SSH). If DEPLOY_SSH_USER isn't root, either
+          # grant it passwordless sudo for these two commands specifically,
+          # or add `sudo` back here - see docs/deployment.md.
+          ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}" '
+            set -e
+            mv /opt/friends-calendar/target/release/rust-friends-calendar.new /opt/friends-calendar/target/release/rust-friends-calendar
+            systemctl restart friends-calendar
+          '
+
+      - name: Health check
+        run: |
+          for i in 1 2 3 4 5; do
+            if curl -fsS "https://${{ secrets.PROD_DOMAIN }}/"; then
+              echo "✅ Health check passed"
+              exit 0
+            fi
+            echo "⏳ Waiting for service... ($i/5)"
+            sleep 10
+          done
+          echo "❌ Health check failed - service did not come back up after deploy"
+          exit 1

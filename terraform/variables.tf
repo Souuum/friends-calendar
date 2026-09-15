@@ -141,6 +141,16 @@ variable "discord_bot_token" {
   sensitive   = true
 }
 
+# The guild the bot lives in - required for friend sync
+# (services::friends), /api/discord/config resolution, and the weekly
+# digest job (services::digest). Without this, those features return a
+# clear 400 rather than crashing (AppState reads it as Option<String>),
+# but a real deploy should still set it.
+variable "discord_guild_id" {
+  description = "Discord guild (server) ID the bot lives in"
+  type        = string
+}
+
 variable "discord_channel_id" {
   description = "Discord announcement channel ID"
   type        = string

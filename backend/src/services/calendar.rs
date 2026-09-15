@@ -1,12 +1,11 @@
 use crate::models::{
-    User,
-    CalendarEvent, CreateEventRequest, UpdateEventRequest, Visibility,
-    EventParticipant, ParticipationStatus, EventWithParticipants, ParticipantInfo
+    CalendarEvent, CreateEventRequest, EventParticipant, EventWithParticipants, ParticipantInfo,
+    ParticipationStatus, UpdateEventRequest, User, Visibility,
 };
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
-use anyhow::Result;
 
 pub async fn create_event(
     db: &PgPool,
@@ -14,7 +13,7 @@ pub async fn create_event(
     req: CreateEventRequest,
 ) -> Result<CalendarEvent> {
     let event_id = Uuid::new_v4();
-    
+
     let event = sqlx::query_as::<_, CalendarEvent>(
         r#"
         INSERT INTO calendar_events 
@@ -58,7 +57,8 @@ pub async fn create_event(
     if let Some(participant_ids) = req.participant_ids {
         // Only fetched if there's actually someone to notify - avoids the
         // extra query for the (very common) case of a solo event.
-        let creator_username: Option<String> = if participant_ids.iter().any(|id| *id != creator_id) {
+        let creator_username: Option<String> = if participant_ids.iter().any(|id| *id != creator_id)
+        {
             sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
                 .bind(creator_id)
                 .fetch_optional(db)
@@ -89,7 +89,12 @@ pub async fn create_event(
                 {
                     let message = format!("{creator_username} invited you to {}", event.title);
                     if let Err(e) = crate::services::notifications::create(
-                        db, user_id, "event_invite", Some(creator_id), Some(event_id), &message,
+                        db,
+                        user_id,
+                        "event_invite",
+                        Some(creator_id),
+                        Some(event_id),
+                        &message,
                     )
                     .await
                     {
@@ -132,7 +137,17 @@ pub async fn get_event_with_participants(
     };
 
     // Get participants with user info
-    let participant_rows = sqlx::query_as::<_, (Uuid, String, String, Option<String>, ParticipationStatus, Option<DateTime<Utc>>)>(
+    let participant_rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            Option<String>,
+            ParticipationStatus,
+            Option<DateTime<Utc>>,
+        ),
+    >(
         r#"
         SELECT u.id, u.discord_id, u.username, u.avatar, ep.status, ep.responded_at
         FROM event_participants ep
@@ -147,15 +162,17 @@ pub async fn get_event_with_participants(
 
     let participants: Vec<ParticipantInfo> = participant_rows
         .into_iter()
-        .map(|(user_id, discord_id, username, avatar, status, responded_at)| ParticipantInfo {
-            user_id,
-            discord_id: discord_id.clone(),
-            username,
-            avatar_url: User::build_avatar_url(&discord_id, &avatar),
-            status,
-            responded_at,
-        })
-    .collect();
+        .map(
+            |(user_id, discord_id, username, avatar, status, responded_at)| ParticipantInfo {
+                user_id,
+                discord_id: discord_id.clone(),
+                username,
+                avatar_url: User::build_avatar_url(&discord_id, &avatar),
+                status,
+                responded_at,
+            },
+        )
+        .collect();
 
     // Get my participation status
     let my_status = participants
@@ -184,34 +201,33 @@ pub async fn list_user_events(
         SELECT DISTINCT e.* FROM calendar_events e
         JOIN event_participants ep ON e.id = ep.event_id
         WHERE ep.user_id = $1
-        "#
+        "#,
     );
-    
+
     if !include_declined {
         query.push_str(" AND ep.status != 'declined'");
     }
-    
+
     let mut param_count = 1;
-    
+
     if start_date.is_some() {
         param_count += 1;
         query.push_str(&format!(" AND e.start_time >= ${}", param_count));
     }
-    
+
     if end_date.is_some() {
         param_count += 1;
         query.push_str(&format!(" AND e.end_time <= ${}", param_count));
     }
-    
+
     query.push_str(" ORDER BY e.start_time ASC");
 
-    let mut sql_query = sqlx::query_as::<_, CalendarEvent>(&query)
-        .bind(user_id);
-    
+    let mut sql_query = sqlx::query_as::<_, CalendarEvent>(&query).bind(user_id);
+
     if let Some(start) = start_date {
         sql_query = sql_query.bind(start);
     }
-    
+
     if let Some(end) = end_date {
         sql_query = sql_query.bind(end);
     }
@@ -237,7 +253,7 @@ pub async fn update_event(
 ) -> Result<Option<CalendarEvent>> {
     // Check if user is the creator
     let existing = sqlx::query_as::<_, CalendarEvent>(
-        "SELECT * FROM calendar_events WHERE id = $1 AND creator_id = $2"
+        "SELECT * FROM calendar_events WHERE id = $1 AND creator_id = $2",
     )
     .bind(event_id)
     .bind(creator_id)
@@ -301,18 +317,12 @@ pub async fn update_event(
     Ok(Some(updated))
 }
 
-pub async fn delete_event(
-    db: &PgPool,
-    event_id: Uuid,
-    creator_id: Uuid,
-) -> Result<bool> {
-    let result = sqlx::query(
-        "DELETE FROM calendar_events WHERE id = $1 AND creator_id = $2"
-    )
-    .bind(event_id)
-    .bind(creator_id)
-    .execute(db)
-    .await?;
+pub async fn delete_event(db: &PgPool, event_id: Uuid, creator_id: Uuid) -> Result<bool> {
+    let result = sqlx::query("DELETE FROM calendar_events WHERE id = $1 AND creator_id = $2")
+        .bind(event_id)
+        .bind(creator_id)
+        .execute(db)
+        .await?;
 
     Ok(result.rows_affected() > 0)
 }
@@ -325,7 +335,7 @@ pub async fn invite_participants(
 ) -> Result<Vec<EventParticipant>> {
     // Verify user is the creator
     let event = sqlx::query_as::<_, CalendarEvent>(
-        "SELECT * FROM calendar_events WHERE id = $1 AND creator_id = $2"
+        "SELECT * FROM calendar_events WHERE id = $1 AND creator_id = $2",
     )
     .bind(event_id)
     .bind(creator_id)
@@ -416,13 +426,24 @@ async fn notify_creator_of_rsvp(
         .bind(responder_id)
         .fetch_optional(db)
         .await?;
-    let Some(username) = username else { return Ok(()) };
+    let Some(username) = username else {
+        return Ok(());
+    };
 
     let message = match status {
-        ParticipationStatus::Accepted => format!("{username} is going to your event {}", event.title),
-        ParticipationStatus::Declined => format!("{username} can't make it to your event {}", event.title),
-        ParticipationStatus::Maybe => format!("{username} might come to your event {}", event.title),
-        ParticipationStatus::Pending => format!("{username} reset their response for your event {}", event.title),
+        ParticipationStatus::Accepted => {
+            format!("{username} is going to your event {}", event.title)
+        }
+        ParticipationStatus::Declined => {
+            format!("{username} can't make it to your event {}", event.title)
+        }
+        ParticipationStatus::Maybe => {
+            format!("{username} might come to your event {}", event.title)
+        }
+        ParticipationStatus::Pending => format!(
+            "{username} reset their response for your event {}",
+            event.title
+        ),
     };
 
     crate::services::notifications::create(
@@ -444,7 +465,7 @@ pub async fn remove_participant(
 ) -> Result<bool> {
     // Verify user is the creator
     let is_creator = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM calendar_events WHERE id = $1 AND creator_id = $2)"
+        "SELECT EXISTS(SELECT 1 FROM calendar_events WHERE id = $1 AND creator_id = $2)",
     )
     .bind(event_id)
     .bind(creator_id)
@@ -460,13 +481,11 @@ pub async fn remove_participant(
         return Ok(false);
     }
 
-    let result = sqlx::query(
-        "DELETE FROM event_participants WHERE event_id = $1 AND user_id = $2"
-    )
-    .bind(event_id)
-    .bind(user_id)
-    .execute(db)
-    .await?;
+    let result = sqlx::query("DELETE FROM event_participants WHERE event_id = $1 AND user_id = $2")
+        .bind(event_id)
+        .bind(user_id)
+        .execute(db)
+        .await?;
 
     Ok(result.rows_affected() > 0)
 }
@@ -523,27 +542,46 @@ mod tests {
         let creator = seed_user(&db, "creator-discord", "creator").await;
         let invitee = seed_user(&db, "invitee-discord", "invitee").await;
 
-        create_event(&db, creator, minimal_request("Board games", Some(vec![invitee])))
-            .await
-            .unwrap();
+        create_event(
+            &db,
+            creator,
+            minimal_request("Board games", Some(vec![invitee])),
+        )
+        .await
+        .unwrap();
 
         let invitee_notifications = notifications::list(&db, invitee, 10).await.unwrap();
         assert_eq!(invitee_notifications.len(), 1);
         assert_eq!(invitee_notifications[0].kind, "event_invite");
         assert!(invitee_notifications[0].message.contains("Board games"));
-        assert_eq!(invitee_notifications[0].actor_username.as_deref(), Some("creator"));
+        assert_eq!(
+            invitee_notifications[0].actor_username.as_deref(),
+            Some("creator")
+        );
 
         // The creator doesn't get notified about their own event.
-        assert!(notifications::list(&db, creator, 10).await.unwrap().is_empty());
+        assert!(
+            notifications::list(&db, creator, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[sqlx::test]
     async fn create_event_with_no_participants_notifies_nobody(db: PgPool) {
         let creator = seed_user(&db, "creator-discord", "creator").await;
 
-        create_event(&db, creator, minimal_request("Solo errand", None)).await.unwrap();
+        create_event(&db, creator, minimal_request("Solo errand", None))
+            .await
+            .unwrap();
 
-        assert!(notifications::list(&db, creator, 10).await.unwrap().is_empty());
+        assert!(
+            notifications::list(&db, creator, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[sqlx::test]
@@ -551,9 +589,13 @@ mod tests {
         let creator = seed_user(&db, "creator-discord", "creator").await;
         let friend = seed_user(&db, "friend-discord", "friend").await;
 
-        let event = create_event(&db, creator, minimal_request("Raclette night", Some(vec![friend])))
-            .await
-            .unwrap();
+        let event = create_event(
+            &db,
+            creator,
+            minimal_request("Raclette night", Some(vec![friend])),
+        )
+        .await
+        .unwrap();
 
         update_participation_status(&db, event.id, friend, ParticipationStatus::Accepted)
             .await
@@ -570,6 +612,9 @@ mod tests {
         update_participation_status(&db, event.id, creator, ParticipationStatus::Maybe)
             .await
             .unwrap();
-        assert_eq!(notifications::list(&db, creator, 10).await.unwrap().len(), 1);
+        assert_eq!(
+            notifications::list(&db, creator, 10).await.unwrap().len(),
+            1
+        );
     }
 }

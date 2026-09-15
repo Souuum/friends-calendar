@@ -6,7 +6,11 @@ use uuid::Uuid;
 
 /// Fetch-merge-update, same shape as services::calendar::update_event -
 /// only the fields present in the request change.
-pub async fn update_profile(db: &PgPool, user_id: Uuid, req: UpdateProfileRequest) -> Result<Option<User>> {
+pub async fn update_profile(
+    db: &PgPool,
+    user_id: Uuid,
+    req: UpdateProfileRequest,
+) -> Result<Option<User>> {
     let existing = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
         .bind(user_id)
         .fetch_optional(db)
@@ -78,7 +82,11 @@ pub enum DeleteAccountOutcome {
 /// friend_requests (both directions). notifications.actor_user_id is
 /// ON DELETE SET NULL, not CASCADE - other people's notifications that
 /// merely *mention* this user survive, just anonymized.
-pub async fn delete_account(db: &PgPool, user_id: Uuid, confirm_username: &str) -> Result<DeleteAccountOutcome> {
+pub async fn delete_account(
+    db: &PgPool,
+    user_id: Uuid,
+    confirm_username: &str,
+) -> Result<DeleteAccountOutcome> {
     let username: String = sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
         .bind(user_id)
         .fetch_one(db)
@@ -88,7 +96,10 @@ pub async fn delete_account(db: &PgPool, user_id: Uuid, confirm_username: &str) 
         return Ok(DeleteAccountOutcome::ConfirmationMismatch);
     }
 
-    sqlx::query("DELETE FROM users WHERE id = $1").bind(user_id).execute(db).await?;
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(db)
+        .await?;
 
     Ok(DeleteAccountOutcome::Deleted)
 }
@@ -144,15 +155,19 @@ mod tests {
 
     #[sqlx::test]
     async fn update_profile_returns_none_for_a_nonexistent_user(db: PgPool) {
-        let result = update_profile(&db, Uuid::new_v4(), UpdateProfileRequest {
-            display_name: None,
-            timezone: None,
-            default_visibility: None,
-            notify_event_invites: None,
-            notify_rsvp_changes: None,
-            notify_announcements: None,
-            notify_weekly_digest: None,
-        })
+        let result = update_profile(
+            &db,
+            Uuid::new_v4(),
+            UpdateProfileRequest {
+                display_name: None,
+                timezone: None,
+                default_visibility: None,
+                notify_event_invites: None,
+                notify_rsvp_changes: None,
+                notify_announcements: None,
+                notify_weekly_digest: None,
+            },
+        )
         .await
         .unwrap();
 
@@ -164,7 +179,10 @@ mod tests {
         let user_id = seed_user(&db, "me-discord", "me").await;
 
         let outcome = delete_account(&db, user_id, "not-me").await.unwrap();
-        assert!(matches!(outcome, DeleteAccountOutcome::ConfirmationMismatch));
+        assert!(matches!(
+            outcome,
+            DeleteAccountOutcome::ConfirmationMismatch
+        ));
 
         let still_there: Option<Uuid> = sqlx::query_scalar("SELECT id FROM users WHERE id = $1")
             .bind(user_id)
@@ -200,11 +218,15 @@ mod tests {
             .unwrap();
         assert!(user_left.is_none());
 
-        let event_left: Option<Uuid> = sqlx::query_scalar("SELECT id FROM calendar_events WHERE id = $1")
-            .bind(event_id)
-            .fetch_optional(&db)
-            .await
-            .unwrap();
-        assert!(event_left.is_none(), "creator_id ON DELETE CASCADE should have removed the event too");
+        let event_left: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM calendar_events WHERE id = $1")
+                .bind(event_id)
+                .fetch_optional(&db)
+                .await
+                .unwrap();
+        assert!(
+            event_left.is_none(),
+            "creator_id ON DELETE CASCADE should have removed the event too"
+        );
     }
 }

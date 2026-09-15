@@ -1,6 +1,9 @@
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 
-use crate::{config::AppState, error::AppError, middleware::auth::Claims, models::LinkedServerInfo, services::friends};
+use crate::{
+    config::AppState, error::AppError, middleware::auth::Claims, models::LinkedServerInfo,
+    services::friends,
+};
 
 // Which Discord server this app is currently linked to (name/icon/member
 // count) — the "other users from that server" half of the same user-page
@@ -13,14 +16,20 @@ pub async fn get_linked_server(
         (Some(token), Some(guild)) => (token, guild),
         _ => {
             return Err(AppError::ValidationError(
-                "No Discord server is linked (set DISCORD_BOT_TOKEN and DISCORD_GUILD_ID)".to_string(),
-            ))
+                "No Discord server is linked (set DISCORD_BOT_TOKEN and DISCORD_GUILD_ID)"
+                    .to_string(),
+            ));
         }
     };
 
-    let info = friends::get_linked_server_info(&state.discord_api_base, &state.http_client, bot_token, guild_id)
-        .await
-        .map_err(|e| AppError::ExternalApiError(e.to_string()))?;
+    let info = friends::get_linked_server_info(
+        &state.discord_api_base,
+        &state.http_client,
+        bot_token,
+        guild_id,
+    )
+    .await
+    .map_err(|e| AppError::ExternalApiError(e.to_string()))?;
 
     Ok(Json(info))
 }
@@ -29,7 +38,7 @@ pub async fn get_linked_server(
 mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use sqlx::PgPool;
     use tower::ServiceExt;
     use wiremock::matchers::{method, path};
@@ -90,7 +99,9 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["id"], "test-guild-id");
         assert_eq!(json["name"], "Friends Server");

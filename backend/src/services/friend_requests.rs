@@ -1,5 +1,5 @@
 use crate::models::{FriendRequestInfo, User};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use sqlx::PgPool;
@@ -17,7 +17,11 @@ pub enum SendRequestOutcome {
     AlreadyPending,
 }
 
-pub async fn send_request(db: &PgPool, from_user_id: Uuid, to_username: &str) -> Result<SendRequestOutcome> {
+pub async fn send_request(
+    db: &PgPool,
+    from_user_id: Uuid,
+    to_username: &str,
+) -> Result<SendRequestOutcome> {
     let to_user: Option<User> = sqlx::query_as("SELECT * FROM users WHERE username = $1")
         .bind(to_username)
         .fetch_optional(db)
@@ -30,12 +34,13 @@ pub async fn send_request(db: &PgPool, from_user_id: Uuid, to_username: &str) ->
         return Ok(SendRequestOutcome::CannotRequestSelf);
     }
 
-    let already_friends: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM friendships WHERE user_id = $1 AND friend_id = $2)")
-            .bind(from_user_id)
-            .bind(to_user.id)
-            .fetch_one(db)
-            .await?;
+    let already_friends: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM friendships WHERE user_id = $1 AND friend_id = $2)",
+    )
+    .bind(from_user_id)
+    .bind(to_user.id)
+    .fetch_one(db)
+    .await?;
     if already_friends {
         return Ok(SendRequestOutcome::AlreadyFriends);
     }
@@ -52,12 +57,13 @@ pub async fn send_request(db: &PgPool, from_user_id: Uuid, to_username: &str) ->
         return Ok(SendRequestOutcome::AutoAccepted);
     }
 
-    let existing: Option<(Uuid, String)> =
-        sqlx::query_as("SELECT id, status FROM friend_requests WHERE from_user_id = $1 AND to_user_id = $2")
-            .bind(from_user_id)
-            .bind(to_user.id)
-            .fetch_optional(db)
-            .await?;
+    let existing: Option<(Uuid, String)> = sqlx::query_as(
+        "SELECT id, status FROM friend_requests WHERE from_user_id = $1 AND to_user_id = $2",
+    )
+    .bind(from_user_id)
+    .bind(to_user.id)
+    .fetch_optional(db)
+    .await?;
 
     match existing {
         Some((_, status)) if status == "pending" => return Ok(SendRequestOutcome::AlreadyPending),
@@ -85,14 +91,20 @@ pub async fn send_request(db: &PgPool, from_user_id: Uuid, to_username: &str) ->
         }
     }
 
-    if let Some(from_username) = sqlx::query_scalar::<_, Option<String>>("SELECT username FROM users WHERE id = $1")
-        .bind(from_user_id)
-        .fetch_one(db)
-        .await?
+    if let Some(from_username) =
+        sqlx::query_scalar::<_, Option<String>>("SELECT username FROM users WHERE id = $1")
+            .bind(from_user_id)
+            .fetch_one(db)
+            .await?
     {
         let message = format!("{from_username} sent you a friend request");
         if let Err(e) = crate::services::notifications::create(
-            db, to_user.id, "friend_request", Some(from_user_id), None, &message,
+            db,
+            to_user.id,
+            "friend_request",
+            Some(from_user_id),
+            None,
+            &message,
         )
         .await
         {
@@ -119,13 +131,15 @@ pub async fn list_incoming(db: &PgPool, user_id: Uuid) -> Result<Vec<FriendReque
 
     Ok(rows
         .into_iter()
-        .map(|(id, from_user_id, username, discord_id, avatar, created_at)| FriendRequestInfo {
-            id,
-            from_user_id,
-            from_username: username,
-            from_avatar_url: User::build_avatar_url(&discord_id, &avatar),
-            created_at,
-        })
+        .map(
+            |(id, from_user_id, username, discord_id, avatar, created_at)| FriendRequestInfo {
+                id,
+                from_user_id,
+                from_username: username,
+                from_avatar_url: User::build_avatar_url(&discord_id, &avatar),
+                created_at,
+            },
+        )
         .collect())
 }
 
@@ -137,7 +151,12 @@ pub enum RespondOutcome {
     NotFound,
 }
 
-pub async fn respond(db: &PgPool, request_id: Uuid, responder_id: Uuid, accept: bool) -> Result<RespondOutcome> {
+pub async fn respond(
+    db: &PgPool,
+    request_id: Uuid,
+    responder_id: Uuid,
+    accept: bool,
+) -> Result<RespondOutcome> {
     let new_status = if accept { "accepted" } else { "declined" };
 
     let from_user_id: Option<Uuid> = sqlx::query_scalar(
@@ -185,7 +204,12 @@ pub async fn respond(db: &PgPool, request_id: Uuid, responder_id: Uuid, accept: 
         {
             let message = format!("{responder_username} accepted your friend request");
             if let Err(e) = crate::services::notifications::create(
-                db, from_user_id, "friend_accepted", Some(responder_id), None, &message,
+                db,
+                from_user_id,
+                "friend_accepted",
+                Some(responder_id),
+                None,
+                &message,
             )
             .await
             {
@@ -206,16 +230,22 @@ pub async fn count_guild_members_without_accounts(
     bot_token: &str,
     guild_id: &str,
 ) -> Result<usize> {
-    let member_discord_ids =
-        crate::services::friends::fetch_guild_member_discord_ids(base_url, http, bot_token, guild_id).await?;
+    let member_discord_ids = crate::services::friends::fetch_guild_member_discord_ids(
+        base_url, http, bot_token, guild_id,
+    )
+    .await?;
 
-    let existing: Vec<String> = sqlx::query_scalar("SELECT discord_id FROM users WHERE discord_id = ANY($1)")
-        .bind(&member_discord_ids)
-        .fetch_all(db)
-        .await?;
+    let existing: Vec<String> =
+        sqlx::query_scalar("SELECT discord_id FROM users WHERE discord_id = ANY($1)")
+            .bind(&member_discord_ids)
+            .fetch_all(db)
+            .await?;
     let existing: std::collections::HashSet<String> = existing.into_iter().collect();
 
-    Ok(member_discord_ids.into_iter().filter(|id| !existing.contains(id)).count())
+    Ok(member_discord_ids
+        .into_iter()
+        .filter(|id| !existing.contains(id))
+        .count())
 }
 
 /// Posts a simple text prompt into the configured channel encouraging
@@ -289,7 +319,9 @@ mod tests {
         assert_eq!(incoming.len(), 1);
         assert_eq!(incoming[0].from_username, "alice");
 
-        let bob_notifications = crate::services::notifications::list(&db, bob, 10).await.unwrap();
+        let bob_notifications = crate::services::notifications::list(&db, bob, 10)
+            .await
+            .unwrap();
         assert_eq!(bob_notifications.len(), 1);
         assert_eq!(bob_notifications[0].kind, "friend_request");
     }
@@ -361,7 +393,9 @@ mod tests {
         assert!(list_incoming(&db, alice).await.unwrap().is_empty());
         assert!(list_incoming(&db, bob).await.unwrap().is_empty());
 
-        let alice_friends = crate::services::friends::get_friends(&db, alice).await.unwrap();
+        let alice_friends = crate::services::friends::get_friends(&db, alice)
+            .await
+            .unwrap();
         assert_eq!(alice_friends.len(), 1);
         assert_eq!(alice_friends[0].username, "bob");
     }
@@ -377,10 +411,24 @@ mod tests {
         let outcome = respond(&db, request_id, bob, true).await.unwrap();
         assert!(matches!(outcome, RespondOutcome::Responded));
 
-        assert_eq!(crate::services::friends::get_friends(&db, alice).await.unwrap().len(), 1);
-        assert_eq!(crate::services::friends::get_friends(&db, bob).await.unwrap().len(), 1);
+        assert_eq!(
+            crate::services::friends::get_friends(&db, alice)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            crate::services::friends::get_friends(&db, bob)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
 
-        let alice_notifications = crate::services::notifications::list(&db, alice, 10).await.unwrap();
+        let alice_notifications = crate::services::notifications::list(&db, alice, 10)
+            .await
+            .unwrap();
         assert_eq!(alice_notifications.len(), 1);
         assert_eq!(alice_notifications[0].kind, "friend_accepted");
     }
@@ -395,7 +443,12 @@ mod tests {
 
         respond(&db, request_id, bob, false).await.unwrap();
 
-        assert!(crate::services::friends::get_friends(&db, alice).await.unwrap().is_empty());
+        assert!(
+            crate::services::friends::get_friends(&db, alice)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[sqlx::test]
@@ -409,7 +462,12 @@ mod tests {
 
         let outcome = respond(&db, request_id, mallory, true).await.unwrap();
         assert!(matches!(outcome, RespondOutcome::NotFound));
-        assert!(crate::services::friends::get_friends(&db, alice).await.unwrap().is_empty());
+        assert!(
+            crate::services::friends::get_friends(&db, alice)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[sqlx::test]
@@ -429,9 +487,10 @@ mod tests {
             .await;
 
         let http = Client::new();
-        let count = count_guild_members_without_accounts(&db, &server.uri(), &http, "test-token", "g1")
-            .await
-            .unwrap();
+        let count =
+            count_guild_members_without_accounts(&db, &server.uri(), &http, "test-token", "g1")
+                .await
+                .unwrap();
 
         assert_eq!(count, 2);
     }

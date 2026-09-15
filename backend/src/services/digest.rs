@@ -70,11 +70,19 @@ fn is_due(now: DateTime<Utc>, last_sent: Option<DateTime<Utc>>) -> bool {
 /// Polls hourly rather than trying to wake exactly at Monday 9am - cheap,
 /// and `is_due`'s 6-day floor makes the exact poll cadence not matter for
 /// correctness, only for how late in the 9am hour the digest might land.
-pub async fn spawn_digest_loop(base_url: String, db: PgPool, http: Client, bot_token: String, guild_id: String) {
+pub async fn spawn_digest_loop(
+    base_url: String,
+    db: PgPool,
+    http: Client,
+    bot_token: String,
+    guild_id: String,
+) {
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(3600));
     loop {
         ticker.tick().await;
-        match maybe_send_weekly_digest(&base_url, &db, &http, &bot_token, &guild_id, Utc::now()).await {
+        match maybe_send_weekly_digest(&base_url, &db, &http, &bot_token, &guild_id, Utc::now())
+            .await
+        {
             Ok(true) => tracing::info!("📬 Sent weekly announcements digest for guild {guild_id}"),
             Ok(false) => {}
             Err(e) => tracing::warn!("⚠️  Failed to send weekly digest: {:?}", e),
@@ -117,7 +125,10 @@ mod tests {
         assert!(!is_due(monday_9am, Some(sent_earlier_that_morning)));
 
         let following_wednesday = dt("2026-03-04T10:00:00Z");
-        assert!(!is_due(following_wednesday, Some(sent_earlier_that_morning)));
+        assert!(!is_due(
+            following_wednesday,
+            Some(sent_earlier_that_morning)
+        ));
     }
 
     #[test]
@@ -144,12 +155,16 @@ mod tests {
 
         let http = Client::new();
         let monday_9am = dt("2026-03-02T09:00:00Z");
-        let sent = maybe_send_weekly_digest(&server.uri(), &db, &http, "test-token", "g1", monday_9am)
-            .await
-            .unwrap();
+        let sent =
+            maybe_send_weekly_digest(&server.uri(), &db, &http, "test-token", "g1", monday_9am)
+                .await
+                .unwrap();
         assert!(sent);
 
-        let config = discord_config::get_config(&db, "g1").await.unwrap().unwrap();
+        let config = discord_config::get_config(&db, "g1")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
             config.last_digest_sent_at.unwrap().timestamp(),
             monday_9am.timestamp()
@@ -167,35 +182,65 @@ mod tests {
         // rather than silently passing.
         let http = Client::new();
         let tuesday = dt("2026-03-03T09:00:00Z");
-        let sent = maybe_send_weekly_digest("http://unused.invalid", &db, &http, "test-token", "g1", tuesday)
-            .await
-            .unwrap();
+        let sent = maybe_send_weekly_digest(
+            "http://unused.invalid",
+            &db,
+            &http,
+            "test-token",
+            "g1",
+            tuesday,
+        )
+        .await
+        .unwrap();
         assert!(!sent);
     }
 
     #[sqlx::test]
     async fn does_not_send_when_digest_is_disabled(db: PgPool) {
-        discord_config::upsert_config(&db, "g1", None, Some("chan1".to_string()), None, Some(false))
-            .await
-            .unwrap();
+        discord_config::upsert_config(
+            &db,
+            "g1",
+            None,
+            Some("chan1".to_string()),
+            None,
+            Some(false),
+        )
+        .await
+        .unwrap();
 
         let http = Client::new();
         let monday_9am = dt("2026-03-02T09:00:00Z");
-        let sent = maybe_send_weekly_digest("http://unused.invalid", &db, &http, "test-token", "g1", monday_9am)
-            .await
-            .unwrap();
+        let sent = maybe_send_weekly_digest(
+            "http://unused.invalid",
+            &db,
+            &http,
+            "test-token",
+            "g1",
+            monday_9am,
+        )
+        .await
+        .unwrap();
         assert!(!sent);
     }
 
     #[sqlx::test]
     async fn does_not_send_without_a_configured_channel(db: PgPool) {
-        discord_config::upsert_config(&db, "g1", None, None, None, Some(true)).await.unwrap();
+        discord_config::upsert_config(&db, "g1", None, None, None, Some(true))
+            .await
+            .unwrap();
 
         let http = Client::new();
         let monday_9am = dt("2026-03-02T09:00:00Z");
-        let sent = maybe_send_weekly_digest("http://unused.invalid", &db, &http, "test-token", "g1", monday_9am)
-            .await
-            .unwrap();
+        let sent = maybe_send_weekly_digest(
+            "http://unused.invalid",
+            &db,
+            &http,
+            "test-token",
+            "g1",
+            monday_9am,
+        )
+        .await
+        .unwrap();
         assert!(!sent);
     }
 
@@ -203,9 +248,16 @@ mod tests {
     async fn does_not_send_before_any_config_row_exists(db: PgPool) {
         let http = Client::new();
         let monday_9am = dt("2026-03-02T09:00:00Z");
-        let sent = maybe_send_weekly_digest("http://unused.invalid", &db, &http, "test-token", "g1", monday_9am)
-            .await
-            .unwrap();
+        let sent = maybe_send_weekly_digest(
+            "http://unused.invalid",
+            &db,
+            &http,
+            "test-token",
+            "g1",
+            monday_9am,
+        )
+        .await
+        .unwrap();
         assert!(!sent);
     }
 }

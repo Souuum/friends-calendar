@@ -1,13 +1,16 @@
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::{config::AppState, error::AppError, middleware::auth::Claims, models::NotificationInfo, services::notifications};
+use crate::{
+    config::AppState, error::AppError, middleware::auth::Claims, models::NotificationInfo,
+    services::notifications,
+};
 
 const DEFAULT_LIST_LIMIT: i64 = 50;
 
@@ -151,13 +154,17 @@ mod tests {
 
         let response = get(app.clone(), &token, "/api/notifications").await;
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json.as_array().unwrap().len(), 1);
 
         let response = get(app, &token, "/api/notifications/unread-count").await;
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["count"], 1);
     }
@@ -168,7 +175,12 @@ mod tests {
         let app = crate::build_router(state);
 
         let response = app
-            .oneshot(Request::builder().uri("/api/notifications").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/notifications")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
@@ -188,15 +200,24 @@ mod tests {
         let other_token = generate_jwt(&other.discord_id, &state.jwt_secret).unwrap();
         let app = crate::build_router(state);
 
-        let response = post(app, &other_token, &format!("/api/notifications/{notification_id}/read")).await;
+        let response = post(
+            app,
+            &other_token,
+            &format!("/api/notifications/{notification_id}/read"),
+        )
+        .await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[sqlx::test]
     async fn mark_all_read_clears_unread_count(db: PgPool) {
         let user = seed_user(&db, "me-discord", "me").await;
-        notifications::create(&db, user.id, "event_invite", None, None, "one").await.unwrap();
-        notifications::create(&db, user.id, "event_invite", None, None, "two").await.unwrap();
+        notifications::create(&db, user.id, "event_invite", None, None, "one")
+            .await
+            .unwrap();
+        notifications::create(&db, user.id, "event_invite", None, None, "two")
+            .await
+            .unwrap();
 
         let state = AppState::for_test(db, "http://unused.invalid".to_string());
         let token = generate_jwt(&user.discord_id, &state.jwt_secret).unwrap();
@@ -206,7 +227,9 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
         let response = get(app, &token, "/api/notifications/unread-count").await;
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["count"], 0);
     }

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde::Deserialize;
@@ -62,13 +62,18 @@ fn split_title(content: &str) -> (Option<String>, String) {
 /// everything else. See the skill's open questions for why "Poll" was
 /// dropped entirely rather than guessed at.
 async fn infer_tag(db: &PgPool, discord_message_id: &str) -> Result<&'static str> {
-    let matched: Option<String> =
-        sqlx::query_scalar("SELECT discord_message_id FROM calendar_events WHERE discord_message_id = $1")
-            .bind(discord_message_id)
-            .fetch_optional(db)
-            .await?;
+    let matched: Option<String> = sqlx::query_scalar(
+        "SELECT discord_message_id FROM calendar_events WHERE discord_message_id = $1",
+    )
+    .bind(discord_message_id)
+    .fetch_optional(db)
+    .await?;
 
-    Ok(if matched.is_some() { "event" } else { "general" })
+    Ok(if matched.is_some() {
+        "event"
+    } else {
+        "general"
+    })
 }
 
 /// Fetch the most recent messages in `channel_id` and upsert them into
@@ -113,7 +118,11 @@ pub async fn sync_channel(
 
         let (title, body) = split_title(&message.content);
         let reaction_count: i32 = message.reactions.iter().map(|r| r.count).sum();
-        let reply_count = message.thread.as_ref().map(|t| t.message_count).unwrap_or(0);
+        let reply_count = message
+            .thread
+            .as_ref()
+            .map(|t| t.message_count)
+            .unwrap_or(0);
         let tag = infer_tag(db, &message.id).await?;
 
         sqlx::query(
@@ -298,7 +307,9 @@ mod tests {
             .await;
 
         let http = Client::new();
-        let synced = sync_channel(&server.uri(), &db, &http, "test-token", "chan1").await.unwrap();
+        let synced = sync_channel(&server.uri(), &db, &http, "test-token", "chan1")
+            .await
+            .unwrap();
         assert_eq!(synced, 2);
 
         let posts = list_posts(&db, "chan1").await.unwrap();
@@ -323,16 +334,20 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/channels/chan1/messages"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(vec![discord_message(
-                "msg-1",
-                "Original content",
-                false,
-            )]))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(vec![discord_message(
+                    "msg-1",
+                    "Original content",
+                    false,
+                )]),
+            )
             .mount(&server)
             .await;
 
         let http = Client::new();
-        sync_channel(&server.uri(), &db, &http, "test-token", "chan1").await.unwrap();
+        sync_channel(&server.uri(), &db, &http, "test-token", "chan1")
+            .await
+            .unwrap();
 
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM announcement_posts")
             .fetch_one(&db)
@@ -345,15 +360,19 @@ mod tests {
         server.reset().await;
         Mock::given(method("GET"))
             .and(path("/channels/chan1/messages"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(vec![discord_message(
-                "msg-1",
-                "Edited content",
-                false,
-            )]))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(vec![discord_message(
+                    "msg-1",
+                    "Edited content",
+                    false,
+                )]),
+            )
             .mount(&server)
             .await;
 
-        sync_channel(&server.uri(), &db, &http, "test-token", "chan1").await.unwrap();
+        sync_channel(&server.uri(), &db, &http, "test-token", "chan1")
+            .await
+            .unwrap();
 
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM announcement_posts")
             .fetch_one(&db)
@@ -370,12 +389,17 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/channels/chan1/messages"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(vec![discord_message("msg-1", "   ", false)]))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(vec![discord_message("msg-1", "   ", false)]),
+            )
             .mount(&server)
             .await;
 
         let http = Client::new();
-        let synced = sync_channel(&server.uri(), &db, &http, "test-token", "chan1").await.unwrap();
+        let synced = sync_channel(&server.uri(), &db, &http, "test-token", "chan1")
+            .await
+            .unwrap();
         assert_eq!(synced, 0);
     }
 
@@ -402,22 +426,36 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/channels/chan1/messages"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(vec![discord_message(
-                "msg-1",
-                "Recent post",
-                false,
-            )]))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(vec![discord_message(
+                    "msg-1",
+                    "Recent post",
+                    false,
+                )]),
+            )
             .mount(&server)
             .await;
 
         let http = Client::new();
-        sync_channel(&server.uri(), &db, &http, "test-token", "chan1").await.unwrap();
+        sync_channel(&server.uri(), &db, &http, "test-token", "chan1")
+            .await
+            .unwrap();
 
-        let since_before = DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap().into();
-        let since_after = DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z").unwrap().into();
+        let since_before = DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .into();
+        let since_after = DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")
+            .unwrap()
+            .into();
 
-        assert_eq!(count_posts_since(&db, "chan1", since_before).await.unwrap(), 1);
-        assert_eq!(count_posts_since(&db, "chan1", since_after).await.unwrap(), 0);
+        assert_eq!(
+            count_posts_since(&db, "chan1", since_before).await.unwrap(),
+            1
+        );
+        assert_eq!(
+            count_posts_since(&db, "chan1", since_after).await.unwrap(),
+            0
+        );
     }
 
     // --- integration: send_channel_message ---------------------------------
