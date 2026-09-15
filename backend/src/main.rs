@@ -57,6 +57,11 @@ pub(crate) fn build_router(state: AppState) -> Router {
         .route("/api/events/:id/link-discord", post(handlers::calendar::link_discord_message))
         // Discord server info
         .route("/api/discord/server", get(handlers::discord::get_linked_server))
+        // Notifications
+        .route("/api/notifications", get(handlers::notifications::list_notifications))
+        .route("/api/notifications/unread-count", get(handlers::notifications::unread_count))
+        .route("/api/notifications/read-all", post(handlers::notifications::mark_all_read))
+        .route("/api/notifications/:id/read", post(handlers::notifications::mark_read))
         .layer(cors)
         .with_state(state)
 }

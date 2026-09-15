@@ -56,9 +56,20 @@ pub async fn create_event(
 
     // Invite other participants if provided
     if let Some(participant_ids) = req.participant_ids {
+        // Only fetched if there's actually someone to notify - avoids the
+        // extra query for the (very common) case of a solo event.
+        let creator_username: Option<String> = if participant_ids.iter().any(|id| *id != creator_id) {
+            sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
+                .bind(creator_id)
+                .fetch_optional(db)
+                .await?
+        } else {
+            None
+        };
+
         for user_id in participant_ids {
             if user_id != creator_id {
-                sqlx::query(
+                let inserted = sqlx::query(
                     r#"
                     INSERT INTO event_participants (id, event_id, user_id, status, invited_at)
                     VALUES ($1, $2, $3, $4, $5)
@@ -72,6 +83,19 @@ pub async fn create_event(
                 .bind(Utc::now())
                 .execute(db)
                 .await?;
+
+                if inserted.rows_affected() > 0
+                    && let Some(creator_username) = &creator_username
+                {
+                    let message = format!("{creator_username} invited you to {}", event.title);
+                    if let Err(e) = crate::services::notifications::create(
+                        db, user_id, "event_invite", Some(creator_id), Some(event_id), &message,
+                    )
+                    .await
+                    {
+                        tracing::warn!("Failed to create invite notification: {:?}", e);
+                    }
+                }
             }
         }
     }
@@ -352,14 +376,64 @@ pub async fn update_participation_status(
         RETURNING *
         "#,
     )
-    .bind(status)
+    .bind(status.clone())
     .bind(Utc::now())
     .bind(event_id)
     .bind(user_id)
     .fetch_optional(db)
     .await?;
 
+    // Notify the event's creator that someone responded - not fatal to the
+    // request if this fails, the RSVP itself already succeeded above, and
+    // skip entirely when the responder *is* the creator (their own RSVP on
+    // their own event isn't news to them).
+    if participant.is_some()
+        && let Err(e) = notify_creator_of_rsvp(db, event_id, user_id, &status).await
+    {
+        tracing::warn!("Failed to create RSVP-change notification: {:?}", e);
+    }
+
     Ok(participant)
+}
+
+async fn notify_creator_of_rsvp(
+    db: &PgPool,
+    event_id: Uuid,
+    responder_id: Uuid,
+    status: &ParticipationStatus,
+) -> Result<()> {
+    let event = sqlx::query_as::<_, CalendarEvent>("SELECT * FROM calendar_events WHERE id = $1")
+        .bind(event_id)
+        .fetch_optional(db)
+        .await?;
+    let Some(event) = event else { return Ok(()) };
+
+    if event.creator_id == responder_id {
+        return Ok(());
+    }
+
+    let username: Option<String> = sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
+        .bind(responder_id)
+        .fetch_optional(db)
+        .await?;
+    let Some(username) = username else { return Ok(()) };
+
+    let message = match status {
+        ParticipationStatus::Accepted => format!("{username} is going to your event {}", event.title),
+        ParticipationStatus::Declined => format!("{username} can't make it to your event {}", event.title),
+        ParticipationStatus::Maybe => format!("{username} might come to your event {}", event.title),
+        ParticipationStatus::Pending => format!("{username} reset their response for your event {}", event.title),
+    };
+
+    crate::services::notifications::create(
+        db,
+        event.creator_id,
+        "rsvp_change",
+        Some(responder_id),
+        Some(event_id),
+        &message,
+    )
+    .await
 }
 
 pub async fn remove_participant(
@@ -395,4 +469,107 @@ pub async fn remove_participant(
     .await?;
 
     Ok(result.rows_affected() > 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::CreateEventRequest;
+    use crate::services::notifications;
+
+    async fn seed_user(db: &PgPool, discord_id: &str, username: &str) -> Uuid {
+        let id = Uuid::new_v4();
+        sqlx::query(
+            r#"
+            INSERT INTO users (id, discord_id, username, created_at, updated_at)
+            VALUES ($1, $2, $3, now(), now())
+            "#,
+        )
+        .bind(id)
+        .bind(discord_id)
+        .bind(username)
+        .execute(db)
+        .await
+        .unwrap();
+        id
+    }
+
+    fn minimal_request(title: &str, participant_ids: Option<Vec<Uuid>>) -> CreateEventRequest {
+        let now = Utc::now();
+        CreateEventRequest {
+            title: title.to_string(),
+            description: None,
+            start_time: now,
+            end_time: now + chrono::Duration::hours(1),
+            location: None,
+            visibility: None,
+            participant_ids,
+            price: None,
+            link: None,
+        }
+    }
+
+    // These cover the notification *trigger wiring* itself (create_event /
+    // update_participation_status calling services::notifications::create
+    // at the right moments) - services::notifications's own module has the
+    // create/list/mark-read unit coverage. See
+    // .claude/skills/mockup-notifications/SKILL.md for why both matter:
+    // testing services::notifications in isolation wouldn't catch a bug
+    // where these call sites forgot to invoke it, or notified the wrong
+    // person.
+
+    #[sqlx::test]
+    async fn create_event_notifies_invited_participants_but_not_the_creator(db: PgPool) {
+        let creator = seed_user(&db, "creator-discord", "creator").await;
+        let invitee = seed_user(&db, "invitee-discord", "invitee").await;
+
+        create_event(&db, creator, minimal_request("Board games", Some(vec![invitee])))
+            .await
+            .unwrap();
+
+        let invitee_notifications = notifications::list(&db, invitee, 10).await.unwrap();
+        assert_eq!(invitee_notifications.len(), 1);
+        assert_eq!(invitee_notifications[0].kind, "event_invite");
+        assert!(invitee_notifications[0].message.contains("Board games"));
+        assert_eq!(invitee_notifications[0].actor_username.as_deref(), Some("creator"));
+
+        // The creator doesn't get notified about their own event.
+        assert!(notifications::list(&db, creator, 10).await.unwrap().is_empty());
+    }
+
+    #[sqlx::test]
+    async fn create_event_with_no_participants_notifies_nobody(db: PgPool) {
+        let creator = seed_user(&db, "creator-discord", "creator").await;
+
+        create_event(&db, creator, minimal_request("Solo errand", None)).await.unwrap();
+
+        assert!(notifications::list(&db, creator, 10).await.unwrap().is_empty());
+    }
+
+    #[sqlx::test]
+    async fn rsvp_change_notifies_the_creator_but_not_when_they_answer_their_own_event(db: PgPool) {
+        let creator = seed_user(&db, "creator-discord", "creator").await;
+        let friend = seed_user(&db, "friend-discord", "friend").await;
+
+        let event = create_event(&db, creator, minimal_request("Raclette night", Some(vec![friend])))
+            .await
+            .unwrap();
+
+        update_participation_status(&db, event.id, friend, ParticipationStatus::Accepted)
+            .await
+            .unwrap();
+
+        let creator_notifications = notifications::list(&db, creator, 10).await.unwrap();
+        assert_eq!(creator_notifications.len(), 1);
+        assert_eq!(creator_notifications[0].kind, "rsvp_change");
+        assert!(creator_notifications[0].message.contains("Raclette night"));
+        assert!(creator_notifications[0].message.contains("friend"));
+
+        // The creator responding to their own event's participant row
+        // (they're auto-added as `accepted`) doesn't notify themselves.
+        update_participation_status(&db, event.id, creator, ParticipationStatus::Maybe)
+            .await
+            .unwrap();
+        assert_eq!(notifications::list(&db, creator, 10).await.unwrap().len(), 1);
+    }
 }
