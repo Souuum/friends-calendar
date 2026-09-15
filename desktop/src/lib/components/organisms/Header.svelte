@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import Button from '$lib/components/atoms/Button.svelte';
   import ProfileMenuTrigger from '$lib/components/molecules/ProfileMenu/ProfileMenuTrigger.svelte';
   import ProfileMenu from '$lib/components/molecules/ProfileMenu/ProfileMenu.svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { api } from '$lib/api';
   import { goto } from '$app/navigation';
+  import { unreadNotificationCount } from '$lib/stores';
 
   export let user;
   export let avatarUrl: string;
@@ -21,17 +23,43 @@
     goto('/settings');
   }
 
+  function goToNotifications() {
+    goto('/notifications');
+  }
+
   function handleLogout() {
     api.clearToken();
     window.location.reload();
   }
 
+  onMount(async () => {
+    if (!user) return;
+    try {
+      unreadNotificationCount.set(await api.getUnreadNotificationCount());
+    } catch {
+      // Non-critical - the header shouldn't break if this one call fails.
+    }
+  });
+
   $: username = $user?.username;
 </script>
 
 <header class="bg-white">
-  <div class="mx-auto px-4 pt-2 sm:px-6 lg:px-8 flex justify-end">
+  <div class="mx-auto px-4 pt-2 sm:px-6 lg:px-8 flex items-center justify-end gap-3">
     {#if user}
+      <button
+        on:click={goToNotifications}
+        aria-label="Notifications"
+        class="relative w-9 h-9 flex items-center justify-center border border-gray-200 rounded-lg hover:bg-gray-50"
+      >
+        🔔
+        {#if $unreadNotificationCount > 0}
+          <span
+            data-testid="unread-dot"
+            class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500"
+          ></span>
+        {/if}
+      </button>
       <ProfileMenuTrigger {username} {show} avatar={avatarUrl} on:click={toggleMenu} />
     {/if}
 

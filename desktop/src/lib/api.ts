@@ -5,7 +5,8 @@ import type {
   ParticipantInfo,
   FriendInfo,
   SyncFriendsResult,
-  LinkedServerInfo
+  LinkedServerInfo,
+  NotificationInfo
 } from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
@@ -154,6 +155,28 @@ class ApiClient {
   // Discord server this app is linked to (single server for now)
   async getLinkedServer(): Promise<LinkedServerInfo> {
     return this.fetch<LinkedServerInfo>('/api/discord/server');
+  }
+
+  // Notifications
+  async getNotifications(): Promise<NotificationInfo[]> {
+    return this.fetch<NotificationInfo[]>('/api/notifications');
+  }
+
+  async getUnreadNotificationCount(): Promise<number> {
+    const { count } = await this.fetch<{ count: number }>('/api/notifications/unread-count');
+    return count;
+  }
+
+  async markNotificationRead(id: string): Promise<void> {
+    return this.fetch<void>(`/api/notifications/${id}/read`, {
+      method: 'POST'
+    });
+  }
+
+  async markAllNotificationsRead(): Promise<void> {
+    return this.fetch<void>('/api/notifications/read-all', {
+      method: 'POST'
+    });
   }
 }
 
