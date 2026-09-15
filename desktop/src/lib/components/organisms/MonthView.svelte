@@ -9,6 +9,7 @@
   export let monthGrid: Date[];
   export let currentMonth: Date;
   export let eventsForDay: (day: Date) => EventWithParticipants[];
+  export let onEventClick: ((event: EventWithParticipants) => void) | undefined = undefined;
 
   const dispatch = createEventDispatcher();
 
@@ -111,7 +112,7 @@
           <CalendarDay date={day} isToday={isToday(day)} isCurrentMonth={isCurrentMonth(day)} />
         </div>
 
-        <EventList events={dayEvents} variant="compact" maxVisible={3} showMore={true} />
+        <EventList events={dayEvents} variant="compact" maxVisible={3} showMore={true} {onEventClick} />
       </div>
     {/each}
   </div>

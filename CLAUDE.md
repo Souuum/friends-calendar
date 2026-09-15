@@ -611,16 +611,105 @@ question on its own. Status per skill:
   (a live "Free now" pill next to `noteFor`'s existing shared-event text)
   and friend detail (`/friends/[id]`'s "Free this week" strip, finally
   filled in - it was explicitly left out when that page was built).
-  **Not done**: the Calendar screen's "Free tonight" bar and
-  `CreateEventModal`'s "Propose a time" - deliberately left alone rather
-  than touching the larger, longer-established `Calendar.svelte`/
-  `CalendarView.svelte` without the user around to review a visual
-  regression on the main screen. The backend endpoints already support
-  both; only the calendar-side UI wiring is left.
+  The Calendar screen's own "Free tonight" bar and "Propose a time" button
+  were left for a later pass — **now done**, see `mockup-calendar-redesign`
+  in the mobile/responsive roadmap below.
 
 Each skill file is a concrete, runnable playbook (schema sketches, file
 paths, endpoint shapes, test plan) — treat "run `.claude/skills/mockup-*`"
 as a real, actionable request, not just documentation to reference.
+
+## Mobile mockup + responsive design — roadmap
+
+2026-09-15 the user added 13 mobile screens (`Friends Calendar Mobile.dc.html`,
+402×874 reference) and a shared `MobileTabBar.dc.html` component to the same
+Claude Design project, and asked for (a) any desktop screen from the design
+that wasn't fully built yet — the Calendar screen's "Free tonight" bar/peek
+panel, specifically — and (b) every screen made responsive to match the
+mobile mockup. Confirmed via `grep` that **zero** responsive styling
+(`@media`, `sm:`/`md:` Tailwind prefixes) existed anywhere in `desktop/src`
+before this. Split into 10 skills (same tiering approach as the earlier
+mockup work); 2 executed so far, 8 written and ready. Breakpoint convention
+for all of them: Tailwind's `md:` (768px), sidebar/desktop layout at `md:`
+and up, bottom-tab-bar/mobile layout below it — comfortably clears the
+mockup's 402px reference width, so no narrower `sm:` tier was added
+speculatively.
+
+- `.claude/skills/mockup-calendar-redesign/SKILL.md` — **done.** Backend-free
+  (`GET /api/availability/friends-now`/`week` already existed but were never
+  wired into the Calendar screen). `Calendar.svelte` gained a Free-tonight
+  bar (`api.getFreeFriendsNow()` + `api.getFriends()`, avatar stack, "N
+  friends have nothing on") and functional filter chips (All/Going/Awaiting/
+  Mine — client-side over the already-fetched `events`, no new endpoint).
+  `EventPeekPanel.svelte` (new, `organisms/`) is a persistent 296px side
+  `aside` showing the selected event with inline Going/Maybe/Can't
+  (`api.updateParticipation`, mirrors `EventDetailsModal.svelte`'s
+  `handleStatusChange`) — it **replaces** month view's old hover-tooltip-only
+  interaction and week/day's modal-on-click for now (an always-visible
+  panel, not a hover/click popup); `EventDetailsModal.svelte` itself is kept
+  unused-but-not-deleted, since `mockup-responsive-calendar` reuses it as
+  the mobile bottom sheet. "Propose a time" and the header's "+ New Event"
+  now open the *same* `CreateEventModal` instance — `showCreateModal` was
+  lifted out of `CalendarHeader.svelte` (which used to own it) into
+  `Calendar.svelte`, with `CalendarHeader` taking a new `onNewEvent`
+  callback prop instead.
+  - **Bug caught by this skill's own tests, not shipped**: `matchesFilter`
+    read `activeFilter` from its enclosing closure, but the `$: filteredEvents
+    = events.filter(matchesFilter)` reactive statement only saw `events` and
+    the `matchesFilter` *reference* as dependencies — Svelte's reactive-`$:`
+    dependency tracking is static (identifiers textually present in the `$:`
+    statement itself), not a trace of what a called function transitively
+    reads. Clicking a filter chip silently did nothing. Fixed by passing
+    `activeFilter` as an explicit argument referenced directly in the `$:`
+    line. A second, related instance: `eventsForDay` was a plain (non-reactive)
+    function closing over `filteredEvents` — `MonthView`/`WeekView`/`DayView`
+    receive it as a prop, and a child component only re-invokes a function
+    prop when *the prop's own reference* changes, not when something the
+    closure reads changes underneath it, so the grid never updated after a
+    filter change even once `filteredEvents` itself was correct. Fixed by
+    declaring `eventsForDay` with `$:` too, so its reference changes whenever
+    `filteredEvents` does. Both were caught by `Calendar.test.ts`'s filter
+    test failing, not by inspection — a concrete argument for the "always add
+    tests" policy paying for itself.
+  - Also (a test-tooling gotcha worth knowing about, not an app bug): calling
+    `render(Calendar, { events: [...] })` in a test silently drops the
+    `events` prop — `@testing-library/svelte`'s `render()` second argument is
+    Svelte's own mount-options object (`target`/`anchor`/`props`/`events`/
+    `context`/`intro`), and a prop literally named `events` collides with
+    Svelte's own `events` mount option. Any component with a prop named one
+    of those six words needs `render(Component, { props: { events: [...] } })`
+    (the explicit wrapper), not the flat shorthand other tests in this repo
+    use for differently-named props.
+- `.claude/skills/mockup-responsive-shell/SKILL.md` — **done.**
+  `BottomTabBar.svelte` (new, `templates/`) mirrors `MobileTabBar.dc.html`'s
+  5 tabs — Calendar (`/`), Friends (`/friends`), Hub (`/announcements`),
+  Alerts (`/notifications`, badge = `$unreadNotificationCount`), Me
+  (`/settings`) — note this is a **different** 5 than `Frame.svelte`'s
+  desktop sidebar `navItems` (which also lists `/server` on its own): the
+  mobile mockup folds "Discord server" under the "Me" tab instead of giving
+  it a 6th tab, reached by drilling in from `/settings`
+  (`mockup-responsive-settings-and-server`'s job, not built yet).
+  `Frame.svelte` hides the sidebar (`hidden md:flex`) and shows
+  `<BottomTabBar>` (`md:hidden`, fixed to the viewport bottom) below `md:`;
+  `<main>` gets bottom padding below `md:` so content doesn't sit under the
+  fixed bar. Route content itself is unchanged by this skill — shell only.
+- `.claude/skills/mockup-responsive-calendar/SKILL.md`,
+  `mockup-responsive-friends/SKILL.md`,
+  `mockup-responsive-add-friends/SKILL.md`,
+  `mockup-announcement-thread/SKILL.md`,
+  `mockup-responsive-announcements/SKILL.md`,
+  `mockup-responsive-notifications-and-rsvp/SKILL.md`,
+  `mockup-responsive-settings-and-server/SKILL.md`,
+  `mockup-responsive-create-event/SKILL.md` — written, not yet executed.
+  The user was asked up front (2026-09-15) and confirmed: announcement
+  replies should be **real** (posted back to Discord via a new backend
+  endpoint, not a read-only thread view — `mockup-announcement-thread`),
+  mobile event creation should be a **real two-step wizard** (not just a
+  responsively-stacked single form — `mockup-responsive-create-event`), and
+  notification cards **should** gain inline Going/Maybe/Can't for event
+  invites (`mockup-responsive-notifications-and-rsvp`) — these three are
+  genuine product-scope decisions baked into their skill files already, not
+  open questions left for whoever runs them next.
 
 ## `desktop/` (SvelteKit + Tauri)
 
@@ -655,8 +744,8 @@ desktop/
 │   │       │                   # ModalContainer, ProfileMenu/, TimedEvent,
 │   │       │                   # LinkedServerCard, EventRsvpCard, AnnouncementPostCard
 │   │       ├── organisms/      # DayView, WeekView, MonthView, Header,
-│   │       │                   # EventDetailsModal, BlurModal
-│   │       └── templates/      # Calendar, Frame, ViewButton
+│   │       │                   # EventDetailsModal, EventPeekPanel, BlurModal
+│   │       └── templates/      # Calendar, Frame, BottomTabBar, ViewButton
 │   └── test/stories/           # Storybook stories (atoms + ProfileMenu)
 ├── .storybook/                 # Storybook + SvelteKit config
 ├── build/                      # yarn build output, gitignored (`/build` in desktop/.gitignore) — not committed

@@ -6,6 +6,7 @@
 
   import Header from '$lib/components/organisms/Header.svelte';
   import ViewButton from '$lib/components/templates/ViewButton.svelte';
+  import BottomTabBar from '$lib/components/templates/BottomTabBar.svelte';
 
   let avatarUrl = `https://cdn.discordapp.com/avatars/${$user?.discord_id}/${$user?.avatar}.png`;
 
@@ -35,14 +36,15 @@
     <Header {avatarUrl} {user} on:logout={handleLogout} />
   {/if}
   <div class="flex">
-    <aside class="w-48 bg-white flex flex-col p-3 gap-2 h-full">
+    <aside class="hidden md:flex w-48 bg-white flex-col p-3 gap-2 h-full">
       {#each navItems as item}
         {@const current = $page.url.pathname === item.view}
         <ViewButton on:click={() => goto(item.view)} {item} {current} />
       {/each}
     </aside>
-    <main class="w-14/16 fit-content">
+    <main class="w-full md:w-14/16 fit-content pb-20 md:pb-0">
       <slot />
     </main>
   </div>
+  <BottomTabBar />
 </div>

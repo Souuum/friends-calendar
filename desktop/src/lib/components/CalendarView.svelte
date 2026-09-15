@@ -49,7 +49,7 @@
     </div>
   {:else}
     <div class="bg-white rounded-lg shadow-sm relative">
-      <Calendar {events} />
+      <Calendar {events} on:refresh={loadEvents} />
     </div>
   {/if}
 </main>

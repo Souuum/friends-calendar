@@ -1,11 +1,14 @@
 <script lang="ts">
-  import type { EventWithParticipants } from '$lib/types';
+  import { onMount } from 'svelte';
+  import { api } from '$lib/api';
+  import type { EventWithParticipants, FriendInfo } from '$lib/types';
   import CalendarHeader from '$lib/components/molecules/CalendarHeader.svelte';
   import MonthView from '$lib/components/organisms/MonthView.svelte';
   import WeekView from '$lib/components/organisms/WeekView.svelte';
   import DayView from '$lib/components/organisms/DayView.svelte';
   import EventTooltip from '$lib/components/molecules/EventTooltip.svelte';
-  import EventDetailsModal from '$lib/components/organisms/EventDetailsModal.svelte';
+  import EventPeekPanel from '$lib/components/organisms/EventPeekPanel.svelte';
+  import CreateEventModal from '$lib/components/CreateEventModal.svelte';
   import { dateUtils } from '$lib/utils/dateUtils';
   import { createEventDispatcher } from 'svelte';
 
@@ -23,9 +26,42 @@
   let tooltipPosition = { x: 0, y: 0 };
   let monthViewRef: MonthView;
 
-  // Modal state (for week/day view)
+  // Peek panel state (month/week/day - replaces the old modal-on-click,
+  // see .claude/skills/mockup-calendar-redesign/SKILL.md).
   let selectedEvent: EventWithParticipants | null = null;
-  let isModalOpen = false;
+
+  // Create-event modal, lifted here (from CalendarHeader) so the
+  // Free-tonight bar's "Propose a time" button opens the same instance as
+  // the header's "+ New Event" button.
+  let showCreateModal = false;
+
+  // Free-tonight bar
+  let freeFriends: FriendInfo[] = [];
+  let freeTonightError = '';
+
+  type FilterKey = 'all' | 'going' | 'awaiting' | 'mine';
+  let activeFilter: FilterKey = 'all';
+  const filters: { key: FilterKey; label: string }[] = [
+    { key: 'all', label: 'All events' },
+    { key: 'going', label: 'Going' },
+    { key: 'awaiting', label: 'Awaiting my response' },
+    { key: 'mine', label: 'Mine' }
+  ];
+
+  async function loadFreeTonight() {
+    try {
+      freeTonightError = '';
+      const [freeIds, friends] = await Promise.all([api.getFreeFriendsNow(), api.getFriends()]);
+      const freeIdSet = new Set(freeIds);
+      freeFriends = friends.filter((f) => freeIdSet.has(f.user_id));
+    } catch (err) {
+      // Best-effort, like /friends's own free-now pill - a failure here
+      // shouldn't block the calendar itself from rendering.
+      freeTonightError = err instanceof Error ? err.message : 'Failed to load availability';
+    }
+  }
+
+  onMount(loadFreeTonight);
 
   function handleShowTooltip(event: CustomEvent) {
     tooltipEvents = event.detail.events;
@@ -49,17 +85,17 @@
     }
   }
 
-  function openEventDetails(event: EventWithParticipants) {
+  function selectEvent(event: EventWithParticipants) {
     selectedEvent = event;
-    isModalOpen = true;
-  }
-
-  function closeModal() {
-    isModalOpen = false;
-    selectedEvent = null;
   }
 
   function handleRefresh() {
+    dispatch('refresh');
+    loadFreeTonight();
+  }
+
+  function handleEventCreated() {
+    showCreateModal = false;
     dispatch('refresh');
   }
 
@@ -75,7 +111,6 @@
       newDate.setDate(newDate.getDate() - 1);
       currentDate = newDate;
     }
-    console.log('Previous date:', currentDate);
   }
 
   function next(): void {
@@ -90,7 +125,6 @@
       newDate.setDate(newDate.getDate() + 1);
       currentDate = newDate;
     }
-    console.log('Next date:', currentDate);
   }
 
   function goToToday(): void {
@@ -101,12 +135,35 @@
     view = e.detail;
   }
 
-  function eventsForDay(day: Date): EventWithParticipants[] {
-    return events.filter((event) => {
+  function matchesFilter(event: EventWithParticipants, filter: FilterKey): boolean {
+    switch (filter) {
+      case 'going':
+        return event.my_status === 'accepted';
+      case 'awaiting':
+        return !event.my_status || event.my_status === 'pending';
+      case 'mine':
+        return event.is_creator;
+      default:
+        return true;
+    }
+  }
+
+  // `activeFilter` has to appear directly in this expression (not just
+  // inside matchesFilter's body) - Svelte's reactive-statement dependency
+  // tracking is static, based on identifiers referenced in the `$:` line
+  // itself, not on what a called function transitively reads.
+  $: filteredEvents = events.filter((event) => matchesFilter(event, activeFilter));
+
+  // Declared reactively (not a plain function) so its reference changes
+  // whenever `filteredEvents` does - MonthView/WeekView/DayView receive
+  // this as a prop, and a child only re-invokes a function prop when the
+  // prop's own reference changes, not when something the closure reads
+  // changes underneath it.
+  $: eventsForDay = (day: Date): EventWithParticipants[] =>
+    filteredEvents.filter((event) => {
       const eventDate = new Date(event.start_time);
       return dateUtils.isSameDay(eventDate, day);
     });
-  }
 
   $: monthGrid = dateUtils.getMonthGrid(currentDate);
   $: weekDays = dateUtils.getWeekDays(currentDate);
@@ -130,36 +187,92 @@
   onPrev={prev}
   onNext={next}
   onToday={goToToday}
+  onNewEvent={() => (showCreateModal = true)}
   on:view-change={handleViewChange}
 />
 
-{#if view === 'month'}
-  <MonthView
-    bind:this={monthViewRef}
-    {monthGrid}
-    currentMonth={currentDate}
-    {eventsForDay}
-    on:showTooltip={handleShowTooltip}
-    on:hideTooltip={handleHideTooltip}
-  />
+<div class="px-6">
+  <div
+    class="flex items-center gap-3 flex-wrap bg-white border border-gray-200 rounded-xl px-4 py-3 mb-3"
+  >
+    <span class="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Free tonight</span>
+    {#if freeTonightError}
+      <span class="text-xs text-red-600" role="alert">{freeTonightError}</span>
+    {:else if freeFriends.length === 0}
+      <span class="text-sm text-gray-500">No friends free right now</span>
+    {:else}
+      <div class="flex">
+        {#each freeFriends as friend (friend.user_id)}
+          {#if friend.avatar_url}
+            <img
+              src={friend.avatar_url}
+              alt=""
+              class="w-6 h-6 rounded-full border-2 border-white -mr-2"
+            />
+          {:else}
+            <div
+              class="w-6 h-6 rounded-full bg-gray-300 border-2 border-white -mr-2 flex items-center justify-center text-[9px] font-bold text-white"
+            >
+              {friend.username.slice(0, 2).toUpperCase()}
+            </div>
+          {/if}
+        {/each}
+      </div>
+      <span class="text-sm">{freeFriends.length} friends have nothing on</span>
+    {/if}
+    <button
+      on:click={() => (showCreateModal = true)}
+      class="ml-auto px-3 py-1.5 border border-primary text-primary rounded-lg text-xs font-semibold hover:bg-primary-hover"
+    >
+      Propose a time
+    </button>
+  </div>
 
-  <EventTooltip
-    events={tooltipEvents}
-    isVisible={tooltipVisible}
-    position={tooltipPosition}
-    on:mouseenter={handleTooltipMouseEnter}
-    on:mouseleave={handleTooltipMouseLeave}
-    on:refresh={handleRefresh}
-  />
-{:else if view === 'week'}
-  <WeekView {weekDays} {eventsForDay} onEventClick={openEventDetails} />
-{:else}
-  <DayView {currentDate} events={eventsForDay(currentDate)} onEventClick={openEventDetails} />
+  <div class="flex gap-2 flex-wrap mb-3">
+    {#each filters as filter (filter.key)}
+      <button
+        on:click={() => (activeFilter = filter.key)}
+        class="px-3 py-1.5 rounded-full text-xs font-semibold border {activeFilter === filter.key
+          ? 'border-primary bg-primary-hover text-primary'
+          : 'border-gray-200 text-gray-500'}"
+      >
+        {filter.label}
+      </button>
+    {/each}
+  </div>
+</div>
+
+<div class="flex gap-4 items-start px-6 pb-6">
+  <div class="flex-1 min-w-0">
+    {#if view === 'month'}
+      <MonthView
+        bind:this={monthViewRef}
+        {monthGrid}
+        currentMonth={currentDate}
+        {eventsForDay}
+        onEventClick={selectEvent}
+        on:showTooltip={handleShowTooltip}
+        on:hideTooltip={handleHideTooltip}
+      />
+
+      <EventTooltip
+        events={tooltipEvents}
+        isVisible={tooltipVisible}
+        position={tooltipPosition}
+        on:mouseenter={handleTooltipMouseEnter}
+        on:mouseleave={handleTooltipMouseLeave}
+        on:refresh={handleRefresh}
+      />
+    {:else if view === 'week'}
+      <WeekView {weekDays} {eventsForDay} onEventClick={selectEvent} />
+    {:else}
+      <DayView {currentDate} events={eventsForDay(currentDate)} onEventClick={selectEvent} />
+    {/if}
+  </div>
+
+  <EventPeekPanel event={selectedEvent} on:refresh={handleRefresh} />
+</div>
+
+{#if showCreateModal}
+  <CreateEventModal on:close={() => (showCreateModal = false)} on:created={handleEventCreated} />
 {/if}
-
-<EventDetailsModal
-  event={selectedEvent}
-  isOpen={isModalOpen}
-  on:close={closeModal}
-  on:refresh={handleRefresh}
-/>
