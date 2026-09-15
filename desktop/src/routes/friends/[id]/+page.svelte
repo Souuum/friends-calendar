@@ -4,7 +4,7 @@
   import { goto } from '$app/navigation';
   import { api } from '$lib/api';
   import Frame from '$lib/components/templates/Frame.svelte';
-  import AnnouncementCard from '$lib/components/molecules/AnnouncementCard.svelte';
+  import EventRsvpCard from '$lib/components/molecules/EventRsvpCard.svelte';
   import { dateUtils } from '$lib/utils/dateUtils';
   import type { DayAvailability, EventWithParticipants, FriendInfo } from '$lib/types';
 
@@ -119,7 +119,7 @@
       {:else}
         <div class="space-y-3">
           {#each sharedEvents as event (event.id)}
-            <AnnouncementCard {event} />
+            <EventRsvpCard {event} />
           {/each}
         </div>
       {/if}

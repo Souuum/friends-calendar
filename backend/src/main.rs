@@ -77,6 +77,10 @@ pub(crate) fn build_router(state: AppState) -> Router {
         // Discord bot channel config
         .route("/api/discord/config", get(handlers::discord_config::get_config))
         .route("/api/discord/config", put(handlers::discord_config::update_config))
+        // Announcements: a mirror of the linked channel's Discord messages
+        // (replaces the old event-RSVP-tracking /announcements view)
+        .route("/api/announcements", get(handlers::announcements::list_announcements))
+        .route("/api/announcements/sync", post(handlers::announcements::sync_announcements))
         .layer(cors)
         .with_state(state)
 }
@@ -112,6 +116,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "⚠️  DISCORD_BOT_TOKEN / DISCORD_ANNOUNCEMENT_CHANNEL_ID not set — Discord bot will not start"
             );
         }
+    }
+
+    // Weekly announcements digest — same conditional-spawn shape as the
+    // Discord bot above. Only needs bot_token + guild_id (not the
+    // announcement-channel env var): the actual send target is resolved
+    // per-tick from services::discord_config, since it's meant to follow
+    // whatever's configured on the /server page.
+    if let (Some(bot_token), Some(guild_id)) = (&state.discord_bot_token, &state.discord_guild_id) {
+        let bot_token = bot_token.clone();
+        let guild_id = guild_id.clone();
+        let db_clone = state.db.clone();
+        let http_clone = state.http_client.clone();
+        let base_url = state.discord_api_base.clone();
+        tokio::spawn(services::digest::spawn_digest_loop(base_url, db_clone, http_clone, bot_token, guild_id));
     }
 
     let app = build_router(state);

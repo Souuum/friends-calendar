@@ -1,8 +1,10 @@
 pub mod auth;
 pub mod availability;
 pub mod calendar;
+pub mod digest;
 pub mod discord_announcement;
 pub mod discord_config;
+pub mod discord_feed;
 pub mod friend_requests;
 pub mod friends;
 pub mod notifications;

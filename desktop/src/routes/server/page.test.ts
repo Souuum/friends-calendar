@@ -45,7 +45,9 @@ const emptyConfig: BotChannelConfig = {
   guild_id: 'g1',
   events_channel_id: undefined,
   announcements_channel_id: undefined,
-  reminders_channel_id: undefined
+  reminders_channel_id: undefined,
+  digest_enabled: false,
+  last_digest_sent_at: undefined
 };
 
 describe('server page', () => {
@@ -91,6 +93,22 @@ describe('server page', () => {
     await waitFor(() => expect(screen.getByText('Saved.')).toBeInTheDocument());
     expect(updateDiscordConfig).toHaveBeenCalledWith(
       expect.objectContaining({ announcements_channel_id: '999' })
+    );
+  });
+
+  it('toggles the weekly digest setting', async () => {
+    getLinkedServer.mockResolvedValue(server);
+    getDiscordConfig.mockResolvedValue(emptyConfig);
+    updateDiscordConfig.mockResolvedValue({ ...emptyConfig, digest_enabled: true });
+
+    render(ServerPage);
+    await waitFor(() => expect(screen.getByLabelText(/weekly digest/i)).not.toBeChecked());
+
+    await fireEvent.click(screen.getByLabelText(/weekly digest/i));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save channels' }));
+
+    await waitFor(() =>
+      expect(updateDiscordConfig).toHaveBeenCalledWith(expect.objectContaining({ digest_enabled: true }))
     );
   });
 });

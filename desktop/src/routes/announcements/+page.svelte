@@ -2,28 +2,35 @@
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import Frame from '$lib/components/templates/Frame.svelte';
-  import AnnouncementCard from '$lib/components/molecules/AnnouncementCard.svelte';
-  import type { EventWithParticipants } from '$lib/types';
+  import AnnouncementPostCard from '$lib/components/molecules/AnnouncementPostCard.svelte';
+  import type { AnnouncementPostInfo } from '$lib/types';
 
-  let announcements: EventWithParticipants[] = [];
+  let posts: AnnouncementPostInfo[] = [];
   let loading = true;
   let error = '';
+  let syncing = false;
 
   async function load() {
     try {
       loading = true;
       error = '';
-      // include_declined: this page lists everything that was announced,
-      // not just events you're still going to - an event you declined
-      // should still show up here.
-      const events = await api.getEvents({ include_declined: true });
-      announcements = events
-        .filter((event) => !!event.discord_message_id)
-        .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+      posts = await api.getAnnouncements();
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to load announcements';
     } finally {
       loading = false;
+    }
+  }
+
+  async function handleSync() {
+    try {
+      syncing = true;
+      error = '';
+      posts = await api.syncAnnouncements();
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Failed to sync announcements';
+    } finally {
+      syncing = false;
     }
   }
 
@@ -36,18 +43,35 @@
 
 <Frame>
   <div class="max-w-2xl mx-auto py-6 px-4 space-y-4">
-    <h1 class="text-xl font-semibold">Announcements</h1>
+    <div class="flex items-center justify-between">
+      <h1 class="text-xl font-semibold m-0">Announcements</h1>
+      <button
+        on:click={handleSync}
+        disabled={syncing}
+        class="px-3 py-1.5 rounded-lg font-medium text-sm transition bg-discord-blurple hover:bg-blue-600 text-white disabled:opacity-50"
+      >
+        {syncing ? 'Syncing…' : 'Sync now'}
+      </button>
+    </div>
+    <p class="text-sm text-gray-500 m-0">
+      A mirror of the linked Discord channel's messages. Manage which channel this pulls from on
+      the <a href="/server" class="text-discord-blurple hover:underline">Discord server</a> page.
+    </p>
 
     {#if error}
       <p class="text-sm text-red-600" role="alert">{error}</p>
-    {:else if loading}
+    {/if}
+
+    {#if loading}
       <p class="text-sm text-gray-500">Loading…</p>
-    {:else if announcements.length === 0}
-      <p class="text-sm text-gray-500">No events have been announced to Discord yet.</p>
-    {:else}
-      {#each announcements as event (event.id)}
-        <AnnouncementCard {event} />
+    {:else if posts.length > 0}
+      {#each posts as post (post.id)}
+        <AnnouncementPostCard {post} />
       {/each}
+    {:else if !error}
+      <p class="text-sm text-gray-500">
+        Nothing synced yet. Click "Sync now" to pull in the channel's messages.
+      </p>
     {/if}
   </div>
 </Frame>

@@ -11,7 +11,8 @@ import type {
   DayAvailability,
   UpdateProfileRequest,
   BotChannelConfig,
-  UpdateBotChannelConfigRequest
+  UpdateBotChannelConfigRequest,
+  AnnouncementPostInfo
 } from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
@@ -184,6 +185,18 @@ class ApiClient {
     return this.fetch<BotChannelConfig>('/api/discord/config', {
       method: 'PUT',
       body: JSON.stringify(data)
+    });
+  }
+
+  // Announcements: a mirror of the linked channel's Discord messages
+  // (replaces the old event-RSVP-tracking view).
+  async getAnnouncements(): Promise<AnnouncementPostInfo[]> {
+    return this.fetch<AnnouncementPostInfo[]>('/api/announcements');
+  }
+
+  async syncAnnouncements(): Promise<AnnouncementPostInfo[]> {
+    return this.fetch<AnnouncementPostInfo[]>('/api/announcements/sync', {
+      method: 'POST'
     });
   }
 

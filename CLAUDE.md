@@ -88,33 +88,42 @@ backend/
     ├── error.rs                 # AppError -> HTTP response mapping
     ├── handlers/
     │   ├── mod.rs
+    │   ├── announcements.rs     # list/sync the Discord channel message mirror
     │   ├── auth.rs              # Discord OAuth2 login/callback/me/logout, verify_jwt(), generate_jwt() (pub(crate), reused by functional tests)
     │   ├── availability.rs      # friends-now, week
     │   ├── calendar.rs          # CRUD for events + participants + link_discord_message
     │   ├── discord.rs           # get_linked_server — which Discord server this app is linked to
+    │   ├── discord_config.rs    # get/update DB-backed bot channel config
     │   ├── friend_requests.rs   # send/list/accept/decline + missing-members/post-invite
     │   ├── friends.rs           # list/sync friends
-    │   └── notifications.rs     # list/mark-read/mark-all-read/unread-count
+    │   ├── notifications.rs     # list/mark-read/mark-all-read/unread-count
+    │   └── profile.rs           # update profile/preferences, delete account
     ├── middleware/
     │   ├── mod.rs
     │   └── auth.rs              # Claims extractor (FromRequestParts) backing JWT auth
     ├── models/
     │   ├── mod.rs
-    │   ├── user.rs               # User, DiscordUser
-    │   ├── calendar_event.rs     # CalendarEvent, CreateEventRequest, UpdateEventRequest, Visibility, ParticipationStatus, etc.
-    │   ├── friendship.rs         # FriendInfo, SyncFriendsResult
-    │   ├── discord_guild.rs      # LinkedServerInfo
-    │   ├── notification.rs       # NotificationInfo
-    │   └── friend_request.rs     # FriendRequestInfo
+    │   ├── user.rs                 # User, DiscordUser, UpdateProfileRequest, DeleteAccountRequest
+    │   ├── calendar_event.rs       # CalendarEvent, CreateEventRequest, UpdateEventRequest, Visibility, ParticipationStatus, etc.
+    │   ├── friendship.rs           # FriendInfo, SyncFriendsResult
+    │   ├── discord_guild.rs        # LinkedServerInfo
+    │   ├── discord_bot_config.rs   # BotChannelConfig, UpdateBotChannelConfigRequest
+    │   ├── notification.rs         # NotificationInfo
+    │   ├── friend_request.rs       # FriendRequestInfo
+    │   └── announcement.rs         # AnnouncementPostRow (DB), AnnouncementPostInfo (API)
     └── services/
         ├── mod.rs
         ├── auth.rs
         ├── availability.rs           # pure interval free/busy logic + free_users_now/week_availability
         ├── calendar.rs               # also owns the event_invite/rsvp_change notification triggers, see below
+        ├── digest.rs                  # weekly announcements digest: is_due + maybe_send_weekly_digest + spawn_digest_loop
+        ├── discord_announcement.rs   # posts event announcements + creates discussion threads
+        ├── discord_config.rs          # DB-backed bot channel config, resolve_announcement_channel_id
+        ├── discord_feed.rs            # sync/list Discord channel messages into announcement_posts
         ├── friends.rs                # Discord guild member fetch + friendship sync + get_linked_server_info
         ├── friend_requests.rs        # send/list/respond + friend_request/friend_accepted notification triggers + missing-members/post-invite
-        ├── discord_announcement.rs   # posts event announcements + creates discussion threads
-        └── notifications.rs          # create/list/mark-read/mark-all-read/unread-count
+        ├── notifications.rs          # create/list/mark-read/mark-all-read/unread-count
+        └── profile.rs                 # update_profile, delete_account (with confirm-username guard)
 ```
 
 Runs on `axum = "0.7"`, `sqlx` (Postgres, runtime-tokio-native-tls),
@@ -187,6 +196,11 @@ GET    /api/availability/week                      handlers::availability::week
 # Discord bot channel config (DB-backed, see Settings/Server pages below)
 GET    /api/discord/config                         handlers::discord_config::get_config
 PUT    /api/discord/config                         handlers::discord_config::update_config
+
+# Announcements (Discord channel message mirror, see below - replaced the
+# old event-RSVP-tracking /announcements)
+GET    /api/announcements                          handlers::announcements::list_announcements
+POST   /api/announcements/sync                      handlers::announcements::sync_announcements
 ```
 
 Frontend (`desktop/src/lib/api.ts`) targets `http://localhost:8080` by
@@ -207,6 +221,9 @@ default (`VITE_API_URL` override), which matches the backend's bind address.
 008_add_profile_and_bot_config.sql    profile/preference columns on users (display_name,
                                        timezone, default_visibility, notify_* booleans) +
                                        discord_bot_config table (see Settings/Server below)
+009_add_announcement_feed.sql         announcement_posts table (cached Discord channel
+                                       messages) + digest_enabled/last_digest_sent_at on
+                                       discord_bot_config (see Announcements page below)
 ```
 
 `004`/`005` originated on `feat(DiscordBot)` as its own `003`/`004` (see
@@ -346,47 +363,92 @@ just this UI.
   overridable via `DISCORD_API_BASE` — mainly for tests) is unchanged from
   before — this endpoint and `services::friends` still share it.
 
-### Announcements page (`/announcements`) — events posted to Discord + RSVPs
+### Announcements page (`/announcements`) — Discord channel message mirror
 
-Second sidebar item, previously dead: `Frame.svelte`'s `navItems` (Calendars
-/ Announcement) has existed since early on, but `currentView` was local
-component state nothing outside `Frame` could read or change — clicking
-"Announcement" did nothing observable. Fixed by switching the sidebar to
-real routing (`$app/stores`'s `page.url.pathname` for highlighting,
-`$app/navigation`'s `goto` for clicking) instead of local state, and adding
-the second route to navigate to.
+Replaced 2026-09-15 (`mockup-announcements-feed`, after the user explicitly
+confirmed "replace" over "keep alongside") — this used to show *calendar
+events that got RSVP-announced to Discord*; it now shows the linked
+channel's actual Discord messages, a real mirror rather than a
+calendar-events filter. See below for what happened to the old view.
 
-- No backend change needed — `GET /api/events` (already
-  `EventWithParticipants[]`, includes `discord_message_id`, `my_status`,
-  and full `participants[]`) has everything this page shows. It filters to
-  `discord_message_id != null` client-side in
-  `desktop/src/routes/announcements/+page.svelte` (fetched with
-  `include_declined: true`, since a declined event should still show up in
-  "what got announced", just not in the calendar view's default list).
-- `AnnouncementCard.svelte` (new, presentational, in `molecules/`) renders
-  each one: title/description/date/location/price/link, a read-only "you
-  accepted/declined/said maybe/haven't responded" badge, and everyone
-  else's response via the already-existing `EventCardParticipant.svelte`
-  atom. Deliberately **read-only** — changing your own RSVP already exists
-  via `EventDetailsModal.svelte` (opened from the calendar view, calls
-  `api.updateParticipation`); didn't duplicate that flow here since nothing
-  asked for it and a second code path for the same mutation is how they
-  drift out of sync.
-- Found but did **not** reuse: `atoms/event/EventCard.svelte` (+
-  `EventCardStatusBar.svelte`) is a more fully-featured card that already
-  exists in the repo and looks built for exactly this — but it was (and
-  still is) completely unused anywhere in the app, and its status bar
-  dispatches `accepted`/`maybe`/`declined` events that nothing listens for,
-  so clicking those buttons changes local UI state without ever calling
-  the API. Wiring that up properly (mirroring `EventDetailsModal`'s
-  `handleStatusChange`) would make interactive RSVP-from-the-announcements-
-  page a small follow-up, but it's a separate decision from what was asked
-  here (viewing, not editing) — flagging it rather than fixing it blind.
+- `009_add_announcement_feed.sql`: `announcement_posts` (one row per synced
+  Discord message: author, title/body, tag, reaction/reply counts, pinned,
+  posted_at) + `digest_enabled`/`last_digest_sent_at` on `discord_bot_config`.
+- `services::discord_feed` — `sync_channel` (`GET /channels/{id}/messages`,
+  base_url as a parameter so it's `wiremock`-testable, same pattern as
+  `services::friends`) upserts by `discord_message_id` (`ON CONFLICT DO
+  UPDATE` — a re-sync picks up edits, doesn't duplicate); `list_posts`
+  (pinned first, then newest); `count_posts_since` (feeds the digest, see
+  below); `send_channel_message` (shared HTTP-POST helper, also used by the
+  digest job). No "drop rows no longer confirmed" pass like friend sync has
+  — a deleted Discord message just becomes a harmless stale local row
+  rather than costing a second API call per sync to detect deletions.
+  - **Tag** (`event`/`general`): inferred, not stored in Discord. A message
+    tags `event` iff its `discord_message_id` matches an existing
+    `calendar_events` row (i.e. it's the exact message
+    `services::calendar::create_event`'s auto-announce posted); everything
+    else defaults to `general`. The mockup's third tag, "Poll", was dropped
+    entirely rather than guessed at — there's no real signal for it in a
+    plain message fetch.
+  - **Title**: Discord messages don't have one. If the content has more
+    than one line, the first line becomes the title and the rest the body;
+    a single-line message has no title, just body text.
+  - **Reactions/replies**: `reaction_count` sums `message.reactions[].count`;
+    `reply_count` reads `message.thread.message_count` (0 if the message
+    has no thread) — both are Discord's own numbers, not recomputed here.
+  - **Pinned**: read straight from the message object's own `pinned` field
+    (Discord already tracks this via `GET /channels/{id}/pins`-backed
+    state) — no app-side pinning concept was invented.
+- `handlers::announcements` — `GET /api/announcements` (list from the local
+  cache), `POST /api/announcements/sync` (fetch + upsert, then return the
+  fresh list). Both resolve the channel the same DB-config-first,
+  env-var-fallback way `create_event`'s auto-announce does
+  (`services::discord_config::resolve_announcement_channel_id`), so the
+  feed always mirrors whatever channel events actually get announced to.
+  Single channel only — matches this app's single-guild scope, not the
+  mockup's multi-channel sidebar.
+- `desktop/src/routes/announcements/+page.svelte` — "Sync now" button
+  (`POST /api/announcements/sync`) plus the cached list
+  (`GET /api/announcements` on mount). A sync failure shows an error
+  *without* clearing whatever posts already loaded (the error and the list
+  are independent conditionals, not an `{#if error}...{:else}` pair — the
+  first draft of this page got that wrong and a failed sync briefly wiped
+  the visible feed, caught by `page.test.ts`'s
+  `shows a sync error without clearing the existing posts` test).
+  `AnnouncementPostCard.svelte` (new, presentational, `molecules/`) renders
+  each post: author/avatar, title/body, tag badge, pinned badge, reaction
+  and reply counts. Read-only, like the page it replaced.
+- **Weekly digest** — a real scheduled job, not just a toggle that does
+  nothing (the skill explicitly warned against that). `services::digest`:
+  `is_due(now, last_sent)` (pure, unit-tested — due on Monday at/after
+  9:00 UTC, and either nothing's ever been sent or it's been ≥6 days since
+  the last one, the 6-day floor guarding against re-firing on every hourly
+  poll through the same Monday morning) and `maybe_send_weekly_digest`
+  (checks the guild's `discord_bot_config.digest_enabled`, posts a
+  one-line "N new posts this week" message via `discord_feed::send_channel_message`,
+  stamps `last_digest_sent_at`). `spawn_digest_loop` is spawned from
+  `main.rs` (same conditional-spawn-if-bot-token-and-guild-id-configured
+  shape as the Discord bot itself) on an hourly `tokio::time::interval` —
+  polling hourly rather than trying to wake exactly at 9:00 costs nothing
+  given `is_due`'s tolerance. The toggle lives on the `/server` page (a
+  **guild-level** setting on `discord_bot_config`), deliberately separate
+  from the per-user `notify_weekly_digest` preference added in
+  `008_add_profile_and_bot_config.sql` — that one is still stored-but-unread
+  (see Settings page above), since digests post to one shared channel, not
+  per-user, so a guild-level switch is what actually needed a mechanism.
 
-⚠️ **Real limitation surfaced while building this — half-fixed since:**
-`GET /api/events` (`services::calendar::list_user_events`) only returns
-events where you're already a row in `event_participants` — it does not
-consult `visibility` at all for listing (unlike the single-event `GET
+**What happened to the old event-RSVP view**: `AnnouncementCard.svelte` (the
+component, not the page) is still real and still used — renamed to
+`EventRsvpCard.svelte` since "Announcement" now means something else, and
+kept wired into `/friends/[id]`'s "Shared events" section, the one other
+place in the app that shows calendar events with a read-only RSVP badge.
+Nothing about *that* feature changed; only its old top-level page and
+component name did.
+
+⚠️ **Real limitation surfaced while building the old view — half-fixed
+since:** `GET /api/events` (`services::calendar::list_user_events`) only
+returns events where you're already a row in `event_participants` — it does
+not consult `visibility` at all for listing (unlike the single-event `GET
 /api/events/:id`, which does check `OR e.visibility = 'public'`).
 `CreateEventModal.svelte` didn't send `participant_ids` either — there was
 no UI for inviting anyone at creation time. **The invite-picker half of
@@ -397,7 +459,10 @@ open: `visibility: 'friends' | 'public'` still doesn't make an event
 appear for anyone who wasn't explicitly invited, even though the field
 implies it should. That's still a real backend feature (a listing query
 that also matches on visibility, not just direct participancy), not
-something to bolt on silently.
+something to bolt on silently. (This limitation is about `GET /api/events`,
+used by `/friends/[id]`'s shared-events section and the calendar itself —
+it no longer has anything to do with `/announcements`, which now reads
+from `announcement_posts` instead.)
 
 ## Testing
 
@@ -457,16 +522,16 @@ A Claude Design project (`Friends Calendar Mockups.dc.html`, project id
 was imported 2026-09-15 as the design for this app's next stage. It's
 close to a full redesign — 9 screens, several needing backend subsystems
 that don't exist yet — so it was split into one skill per feature area
-rather than attempted as one change. 5 of 6 executed as of 2026-09-15
+rather than attempted as one change. All 6 executed as of 2026-09-15
 (friends-directory, notifications, friend-requests, availability,
-settings-and-server), the first four run autonomously back-to-back while
-the user was away, each on its own branch, merged and pushed once its own
-tests/build were green. `mockup-settings-and-server` (including its live
-account-deletion endpoint) ran after the user explicitly authorized
-continuing. `mockup-announcements-feed` remains **not** run: it has an
-explicit product-scope question only the user can answer (replace vs.
-keep the existing `/announcements`) that a general "go ahead" doesn't
-resolve. Status per skill:
+settings-and-server, announcements-feed), each on its own branch, merged
+and pushed once its own tests/build were green. The first four ran
+autonomously back-to-back while the user was away; `mockup-settings-and-server`
+(including its live account-deletion endpoint) and `mockup-announcements-feed`
+(including replacing the old `/announcements` view entirely) each ran
+after the user explicitly answered the open question blocking it — a
+general "go ahead" was deliberately *not* treated as answering either
+question on its own. Status per skill:
 
 - `.claude/skills/mockup-friends-directory/SKILL.md` — **done.** Friends
   directory (`/friends`), friend detail (`/friends/[id]`), and the
@@ -505,12 +570,22 @@ resolve. Status per skill:
   announcement-posting trigger is intentionally **not** wired (the skill
   flags it as ambiguous — who should be notified on a post? - pending
   `mockup-announcements-feed`).
-- `.claude/skills/mockup-announcements-feed/SKILL.md` — not started, and
-  has open design questions (see the skill) rather than being fully
-  shovel-ready. Would **replace** the current `/announcements` (event-RSVP
-  tracking, see above) with a real Discord-channel message mirror — these
-  are two different features that happen to share a name; read the skill
-  before starting, it flags a scope decision that needs the user's input.
+- `.claude/skills/mockup-announcements-feed/SKILL.md` — **done.** The user
+  confirmed "replace" over "keep alongside" for the scope question the
+  skill flagged. See "Announcements page" above for the full picture:
+  `announcement_posts` cache table, `services::discord_feed` (sync/list,
+  tag inference, title-splitting), `handlers::announcements`
+  (`GET`/`POST .../sync`), the rebuilt `/announcements` page, and a real
+  weekly-digest scheduled job (`services::digest`, gated by a new
+  guild-level `discord_bot_config.digest_enabled` toggle on `/server`) so
+  that setting isn't a no-op switch. The old event-RSVP card survives as
+  `EventRsvpCard.svelte`, still used by `/friends/[id]`'s shared-events
+  section — only the top-level `/announcements` page and the component's
+  name changed. `notifications`'s announcement-posting trigger (flagged
+  above as pending this skill) is still **not** wired — deciding who
+  should be notified on a synced post, and whether "sync" should even be
+  the trigger point vs. Discord posting in real time, is a separate call
+  from what this skill's scope question actually asked.
 - `.claude/skills/mockup-settings-and-server/SKILL.md` — **done.** Split
   the old `/settings` (linked server + friends) into a real
   profile/preferences page (`/settings` — display name, timezone, default
@@ -561,7 +636,7 @@ desktop/
 │   │   ├── +layout.svelte, +page.svelte    # root: login screen or CalendarView
 │   │   ├── settings/+page.svelte           # profile/preferences + account deletion, see above
 │   │   ├── server/+page.svelte             # linked Discord server + bot channel config, see above
-│   │   ├── announcements/+page.svelte      # events posted to Discord + RSVPs, see above
+│   │   ├── announcements/+page.svelte      # Discord channel message mirror, see above
 │   │   ├── friends/                        # directory (+page.svelte, incl. "Sync friends") + detail ([id]/+page.svelte) + add/+page.svelte (requests), see mockup roadmap below
 │   │   └── notifications/+page.svelte      # see mockup roadmap below
 │   ├── lib/
@@ -578,7 +653,7 @@ desktop/
 │   │       │                   # EventCard, CompactEvent, DetailedEvent, ...)
 │   │       ├── molecules/      # CalendarHeader, EventList, EventTooltip,
 │   │       │                   # ModalContainer, ProfileMenu/, TimedEvent,
-│   │       │                   # LinkedServerCard, AnnouncementCard
+│   │       │                   # LinkedServerCard, EventRsvpCard, AnnouncementPostCard
 │   │       ├── organisms/      # DayView, WeekView, MonthView, Header,
 │   │       │                   # EventDetailsModal, BlurModal
 │   │       └── templates/      # Calendar, Frame, ViewButton
