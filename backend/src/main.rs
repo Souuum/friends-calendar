@@ -69,6 +69,9 @@ pub(crate) fn build_router(state: AppState) -> Router {
         .route("/api/friend-requests/:id/decline", post(handlers::friend_requests::decline_request))
         .route("/api/friend-requests/missing-members", get(handlers::friend_requests::missing_members))
         .route("/api/friend-requests/post-invite", post(handlers::friend_requests::post_invite))
+        // Availability
+        .route("/api/availability/friends-now", get(handlers::availability::friends_now))
+        .route("/api/availability/week", get(handlers::availability::week))
         .layer(cors)
         .with_state(state)
 }
