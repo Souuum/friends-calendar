@@ -49,7 +49,7 @@
       tabindex="0"
       class="bg-white rounded-lg shadow-xl w-full {sizeClasses[
         size
-      ]} max-h-[90vh] overflow-hidden animate-in zoom-in-95 duration-200"
+      ]} max-h-[90vh] overflow-hidden anim-pop"
       on:click={(e) => e.stopPropagation()}
     >
       <slot />

@@ -707,6 +707,54 @@ speculatively.
   genuine product-scope decisions baked into their skill files already, not
   open questions left for whoever runs them next.
 
+## Motion system (`desktop/src/app.css`)
+
+2026-09-15, same pass as the mockup work above: the mockup's own `<style>`
+block (identical in both `Friends Calendar Mockups.dc.html` and
+`Friends Calendar Mobile.dc.html`) defines a full motion system - named
+`@keyframes` (`om-fade-up`, `om-fade`, `om-pop`, `om-slide-left`,
+`om-pulse`, `om-grow`, `om-scrim`, `om-sheet`), a global
+`button, a, [role="button"] { transition: ... }` rule, a `button:active`
+press-scale, and a `prefers-reduced-motion` override - that had never been
+carried over into the app. `app.css` now has all of it, verbatim (same
+keyframe names/durations/easings as the mockup, not approximated), plus a
+matching set of `.anim-*` utility classes (`anim-fade-up`,
+`anim-fade-up-stagger`, `anim-fade`, `anim-pop`, `anim-slide-left`,
+`anim-grow`, `anim-pulse-dot`, `anim-scrim`, `anim-sheet`) so components
+reference it by name instead of writing raw `animation:` declarations.
+`om-sheet`/`anim-sheet` (the mobile bottom-sheet slide-up) has no caller
+yet - it's there for whichever `mockup-responsive-*` skill ends up reusing
+`EventDetailsModal.svelte` as a mobile sheet, not wired to anything today.
+
+Applied to:
+- Per-screen entrance: `Calendar.svelte`'s whole body, and the main
+  content wrapper on `/friends`, `/friends/[id]`, `/friends/add`,
+  `/announcements`, `/notifications`, `/settings`, `/server` all get
+  `anim-fade-up` - plays once when the route mounts, mirroring the
+  mockup's per-`sc-if`-block fade-up.
+- Staggered lists: friend cards (`/friends`) and `AnnouncementPostCard`
+  get `anim-fade-up-stagger` with an inline `animation-delay` keyed to
+  list index (matches the mockup's `animation-delay:{{ p.delay }}`
+  pattern); notification rows get `anim-slide-left` the same way.
+- `EventPeekPanel.svelte`: wrapped in `{#key event.id}` so switching which
+  event is selected actually replays `anim-fade` (Svelte would otherwise
+  just patch text in place on the same DOM node) - plus `anim-grow` on the
+  colored status bar, matching the mockup's `barStyle` growth animation.
+- Unread notification dot: `anim-pulse-dot`.
+- Modals: `BlurOverlay.svelte`/`ModalContainer.svelte` (the `BlurModal`
+  stack `EventDetailsModal` sits on) and `CreateEventModal.svelte`'s own
+  hand-rolled backdrop now use `anim-scrim`/`anim-pop`. **What they had
+  before was dead code**, not a working-but-different transition: the
+  `animate-in`/`fade-in`/`zoom-in-95 duration-200` classes are from the
+  `tailwindcss-animate` plugin, which was never installed here (this repo
+  is on Tailwind v4's CSS-only `@import 'tailwindcss'` with no plugin
+  registered) - so those classes matched nothing and every modal open was
+  an instant snap. `EventTooltip.svelte` had the same shape of dead
+  transition (`transition-opacity` + `opacity-0`/`opacity-100` toggled on
+  an element that's only ever mounted while already visible, so the
+  "0" state never actually renders) - replaced with `anim-pop` on the
+  tooltip card.
+
 ## `desktop/` (SvelteKit + Tauri)
 
 ```

@@ -50,7 +50,16 @@
   {#if !event}
     <p class="text-sm text-gray-500">Select an event to see its details here.</p>
   {:else}
-    <div class="h-1 rounded-full mb-3.5" style="background:{statusOf(event.my_status).bar}"></div>
+    <!-- Keyed on the event id so switching which event is selected replays
+         the fade/grow entrance instead of silently patching the existing
+         DOM in place (Svelte would otherwise just update text nodes) -
+         matches the mockup's peek panel animating in fresh per selection. -->
+    {#key event.id}
+    <div class="anim-fade">
+    <div
+      class="h-1 rounded-full mb-3.5 anim-grow"
+      style="background:{statusOf(event.my_status).bar}"
+    ></div>
 
     <div class="flex items-center gap-2 mb-2">
       <span class="font-mono text-[11px] text-muted">{formatDate(event.start_time)}</span>
@@ -151,5 +160,7 @@
         </div>
       {/each}
     </div>
+    </div>
+    {/key}
   {/if}
 </aside>

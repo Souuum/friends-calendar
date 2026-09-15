@@ -19,11 +19,7 @@
 {#if visible}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div
-    class="fixed inset-0 z-40 transition-all duration-200 {blurClasses[blurAmount]} {opacityClasses[
-      opacity
-    ]}"
-    class:animate-in={visible}
-    class:fade-in={visible}
+    class="fixed inset-0 z-40 anim-scrim {blurClasses[blurAmount]} {opacityClasses[opacity]}"
     on:click
     role="button"
     tabindex="-1"

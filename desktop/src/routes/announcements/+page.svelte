@@ -42,7 +42,7 @@
 </svelte:head>
 
 <Frame>
-  <div class="max-w-2xl mx-auto py-6 px-4 space-y-4">
+  <div class="max-w-2xl mx-auto py-6 px-4 space-y-4 anim-fade-up">
     <div class="flex items-center justify-between">
       <h1 class="text-xl font-semibold m-0">Announcements</h1>
       <button
@@ -65,8 +65,8 @@
     {#if loading}
       <p class="text-sm text-gray-500">Loading…</p>
     {:else if posts.length > 0}
-      {#each posts as post (post.id)}
-        <AnnouncementPostCard {post} />
+      {#each posts as post, i (post.id)}
+        <AnnouncementPostCard {post} index={i} />
       {/each}
     {:else if !error}
       <p class="text-sm text-gray-500">

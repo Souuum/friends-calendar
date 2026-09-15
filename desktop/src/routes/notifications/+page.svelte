@@ -63,7 +63,7 @@
 </svelte:head>
 
 <Frame>
-  <div class="max-w-2xl mx-auto py-6 px-4">
+  <div class="max-w-2xl mx-auto py-6 px-4 anim-fade-up">
     <div class="flex items-end gap-4 flex-wrap mb-5">
       <div>
         <h1 class="text-2xl font-semibold m-0">Notifications</h1>
@@ -87,10 +87,11 @@
       <p class="text-sm text-gray-500">Nothing yet.</p>
     {:else}
       <div class="bg-white border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100">
-        {#each notifications as notification (notification.id)}
+        {#each notifications as notification, i (notification.id)}
           <button
             on:click={() => markRead(notification.id)}
-            class="w-full text-left flex items-center gap-3 p-4 {notification.read
+            style="animation-delay: {i * 45}ms"
+            class="w-full text-left flex items-center gap-3 p-4 anim-slide-left {notification.read
               ? 'bg-white'
               : 'bg-indigo-50'}"
           >
@@ -104,7 +105,7 @@
               <p class="text-xs text-gray-500 m-0 mt-1 font-mono">{formatTime(notification.created_at)}</p>
             </div>
             {#if !notification.read}
-              <span class="w-2 h-2 rounded-full bg-red-500 flex-shrink-0"></span>
+              <span class="w-2 h-2 rounded-full bg-red-500 flex-shrink-0 anim-pulse-dot"></span>
             {/if}
           </button>
         {/each}

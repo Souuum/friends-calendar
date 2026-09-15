@@ -7,6 +7,10 @@
   // services::discord_feed on the backend. Read-only: this is a mirror of
   // what's already in Discord, not a second place to post from.
   export let post: AnnouncementPostInfo;
+  // Position in the feed, purely for the staggered entrance delay - mirrors
+  // the mockup's `posts` list, where each card's fade-up animation-delay is
+  // offset from the one before it rather than firing all at once.
+  export let index = 0;
 
   function tagLabel(tag: string): string {
     return tag === 'event' ? '📅 Event' : '💬 General';
@@ -17,7 +21,10 @@
   }
 </script>
 
-<div class="bg-white rounded-lg shadow p-5 space-y-3">
+<div
+  class="bg-white rounded-lg shadow p-5 space-y-3 anim-fade-up-stagger"
+  style="animation-delay: {index * 60}ms"
+>
   <div class="flex justify-between items-start gap-3">
     <div class="flex items-center gap-2 min-w-0">
       <Avatar src={post.author_avatar_url ?? ''} size={32} />

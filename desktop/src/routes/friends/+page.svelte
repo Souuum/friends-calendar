@@ -77,7 +77,7 @@
 </svelte:head>
 
 <Frame>
-  <div class="max-w-4xl mx-auto py-6 px-4">
+  <div class="max-w-4xl mx-auto py-6 px-4 anim-fade-up">
     <div class="flex items-end gap-4 flex-wrap mb-5">
       <div>
         <h1 class="text-2xl font-semibold m-0">Friends</h1>
@@ -119,10 +119,11 @@
       </p>
     {:else}
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {#each visibleFriends as friend (friend.user_id)}
+        {#each visibleFriends as friend, i (friend.user_id)}
           <a
             href={`/friends/${friend.user_id}`}
-            class="block text-left bg-white border border-gray-200 rounded-xl p-4 hover:border-primary transition no-underline"
+            style="animation-delay: {i * 45}ms"
+            class="block text-left bg-white border border-gray-200 rounded-xl p-4 transition no-underline anim-fade-up-stagger hover:border-primary hover:shadow-[0_6px_18px_rgba(80,48,229,0.12)] hover:-translate-y-0.5"
           >
             <div class="flex items-center gap-3 mb-3">
               {#if friend.avatar_url}
