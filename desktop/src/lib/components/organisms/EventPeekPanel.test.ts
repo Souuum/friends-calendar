@@ -58,6 +58,34 @@ describe('EventPeekPanel', () => {
     expect(screen.queryByRole('button', { name: 'Going' })).not.toBeInTheDocument();
   });
 
+  it('shows Edit/Nudge instead of RSVP buttons for your own event', () => {
+    render(EventPeekPanel, { event: makeEvent({ is_creator: true }) });
+
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Nudge no-answers' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Maybe' })).not.toBeInTheDocument();
+  });
+
+  it('shows the mockup status labels, not the raw enum values', () => {
+    render(
+      EventPeekPanel,
+      {
+        event: makeEvent({
+          my_status: 'pending',
+          participants: [
+            { user_id: 'me-id', username: 'me', status: 'pending' },
+            { user_id: 'bob-id', username: 'bob', status: 'accepted' }
+          ]
+        })
+      }
+    );
+
+    expect(screen.getAllByText('No answer').length).toBeGreaterThan(0);
+    expect(screen.getByText('Going', { selector: 'span' })).toBeInTheDocument();
+    expect(screen.queryByText('pending')).not.toBeInTheDocument();
+    expect(screen.queryByText('accepted')).not.toBeInTheDocument();
+  });
+
   it('updates participation on RSVP click', async () => {
     updateParticipation.mockResolvedValue(undefined);
     render(EventPeekPanel, { event: makeEvent() });

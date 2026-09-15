@@ -24,4 +24,12 @@ body {
   --color-white: #ffffff;
   --color-black: #000000;
   --color-primary-hover: rgba(238, 232, 255, 0.45);
+  /* Mockup design tokens (Friends Calendar Mockups.dc.html's own :root block) -
+     added so mockup-driven components have a real token to use instead of
+     falling back to a nearby-but-not-identical Tailwind stock color. */
+  --color-tint: #eee8ff;
+  --color-line: #ebebeb;
+  --color-muted: #7c7c83;
+  --color-body: #5c5c61;
+  --font-mono: 'JetBrains Mono', monospace;
 }

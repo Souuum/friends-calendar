@@ -14,26 +14,26 @@
   export let onNewEvent: () => void;
 </script>
 
-<div class="flex items-center justify-between p-6">
-  <div class="flex justify-between w-[290px]">
+<div class="flex items-center gap-3.5 flex-wrap px-6 pt-6 pb-3.5">
+  <div class="flex items-center gap-2">
     <IconButton on:click={onPrev} label="Previous" direction="left" />
-    <h2 class="text-2xl font-bold text-center">{title}</h2>
     <IconButton on:click={onNext} label="Next" direction="right" />
   </div>
+  <h2 class="text-2xl tracking-[-0.02em] font-bold">{title}</h2>
+  <button
+    on:click={onToday}
+    class="border border-line bg-white rounded-lg px-3 py-[7px] text-xs font-semibold hover:bg-gray-50 transition-colors"
+  >
+    Today
+  </button>
 
-  <div class="flex items-center gap-3">
+  <div class="flex items-center gap-3 ml-auto">
+    <ViewSwitcher {view} on:view-change />
     <button
       on:click={onNewEvent}
-      class="bg-secondary text-white px-4 py-2 rounded-lg font-medium transition"
+      class="bg-primary text-white px-3.5 py-[9px] rounded-[9px] text-[13px] font-semibold transition hover:bg-[#3b1fc4]"
     >
       + New Event
     </button>
-    <button
-      on:click={onToday}
-      class="px-4 py-2 text-sm font-medium hover:bg-primary-hover rounded-lg transition-colors"
-    >
-      Today
-    </button>
-    <ViewSwitcher {view} on:view-change />
   </div>
 </div>
