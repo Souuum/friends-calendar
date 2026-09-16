@@ -199,6 +199,21 @@ which will silently bite again if undone:
 - **`desktop/package-lock.json` deleted.** Both lockfiles were committed;
   Pages picks its package manager by sniffing lockfiles, and the npm one
   was stale. `yarn.lock` is authoritative here.
+- **`desktop/wrangler.jsonc`.** Created as a *Workers* project (Cloudflare's
+  dashboard now steers framework projects there rather than to Pages), the
+  deploy step runs `npx wrangler deploy`. With no wrangler config, wrangler
+  detects SvelteKit, assumes `@sveltejs/adapter-cloudflare`, and tries to
+  **convert the project** via `sv add` - which shells out to `yarn dlx`, a
+  Yarn 2+ command absent from Yarn 1:
+  ```
+  🛠️  Configuring project for SvelteKit with "sv add"
+  ✘ [ERROR] error Command "dlx" not found.
+  ```
+  That conversion is unwanted anyway. `adapter-static` is correct here: the
+  Tauri desktop app needs a plain static build, there is no SSR, and every
+  route is a SPA behind a JWT. The config declares an **assets-only**
+  deployment (no `main`), so Cloudflare serves `build/` from the edge and
+  stops trying to detect anything.
 
 `VITE_API_URL` being build-time matters: a Pages build without it points
 the deployed frontend at `http://localhost:8080`, i.e. each visitor's own

@@ -1,0 +1,31 @@
+{
+  // Why this file exists at all:
+  //
+  // `wrangler deploy` with no config detects SvelteKit, assumes you want
+  // @sveltejs/adapter-cloudflare, and tries to convert the project via
+  // `sv add` - which shells out to `yarn dlx`, a Yarn 2+ command that does
+  // not exist in Yarn 1. The deploy died on `Command "dlx" not found`.
+  //
+  // We don't want that conversion regardless. adapter-static is the right
+  // adapter here: the Tauri desktop app needs a plain static build, there
+  // is no SSR, and every route is a SPA behind a JWT. Declaring the config
+  // explicitly stops the auto-detection and just publishes what
+  // `yarn build` already produced.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "friends-calendar",
+  "compatibility_date": "2026-09-16",
+
+  // No "main": this is an assets-only deployment. Without a Worker script
+  // Cloudflare serves the directory directly from its edge, which is all a
+  // static SPA needs.
+  "assets": {
+    "directory": "./build",
+
+    // Nothing is prerendered - `build/` holds exactly one HTML file - so
+    // unknown paths must fall back to it or every route except `/` 404s on
+    // a direct link or refresh. This is the platform-native equivalent of
+    // the `_redirects` rule in static/, which is kept as well: it costs
+    // nothing and still applies if this ever moves to Pages.
+    "not_found_handling": "single-page-application"
+  }
+}
