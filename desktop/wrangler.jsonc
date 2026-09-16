@@ -23,9 +23,22 @@
 
     // Nothing is prerendered - `build/` holds exactly one HTML file - so
     // unknown paths must fall back to it or every route except `/` 404s on
-    // a direct link or refresh. This is the platform-native equivalent of
-    // the `_redirects` rule in static/, which is kept as well: it costs
-    // nothing and still applies if this ever moves to Pages.
+    // a direct link or refresh.
+    //
+    // This is the ONLY mechanism to use here. A `_redirects` file with the
+    // usual Pages SPA rule (`/*  /index.html  200`) is *rejected* by
+    // Workers Assets, which fails the whole deploy:
+    //
+    //   Invalid _redirects configuration:
+    //   Line 10: Infinite loop detected in this rule. This would cause a
+    //   redirect to strip `.html` or `/index` and end up triggering this
+    //   rule again. [code: 100324]
+    //
+    // Workers Assets normalises `/index.html` back to `/`, which re-matches
+    // `/*`. That rule is canonical on Pages and invalid here, so the two
+    // cannot be kept side by side "just in case" - static/_redirects was
+    // deleted for exactly this reason. If this ever moves to Pages, add it
+    // back then.
     "not_found_handling": "single-page-application"
   }
 }

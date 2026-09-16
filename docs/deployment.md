@@ -192,10 +192,22 @@ which will silently bite again if undone:
   takes an "Already up-to-date" fast path whenever `node_modules` exists
   and never re-validates. That fast path is exactly why the Node-version
   bug stayed invisible locally for so long.
-- **`desktop/_redirects`** (committed as `desktop/static/_redirects`,
-  copied verbatim into `build/`). Nothing is prerendered - `build/`
-  contains exactly one HTML file - so without `/* /index.html 200` every
-  route except `/` returns Pages' own 404 on a direct link or refresh.
+- **SPA fallback comes from `not_found_handling`, NOT from `_redirects`.**
+  Nothing is prerendered - `build/` contains exactly one HTML file - so
+  unknown paths must fall back to it or every route except `/` 404s on a
+  direct link or refresh. On **Pages** the way to do that is a `_redirects`
+  file containing `/* /index.html 200`. On **Workers Assets** that exact
+  rule is rejected and fails the deploy:
+  ```
+  Invalid _redirects configuration:
+  Line 10: Infinite loop detected in this rule. This would cause a redirect
+  to strip `.html` or `/index` and end up triggering this rule again.
+  ```
+  Workers Assets normalises `/index.html` back to `/`, which re-matches
+  `/*`. `static/_redirects` existed here briefly (added while targeting
+  Pages, then kept "just in case" when the Workers config landed) and had
+  to be deleted - the two mechanisms cannot coexist. Re-add it only if this
+  moves to Pages.
 - **`desktop/package-lock.json` deleted.** Both lockfiles were committed;
   Pages picks its package manager by sniffing lockfiles, and the npm one
   was stale. `yarn.lock` is authoritative here.
