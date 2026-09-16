@@ -381,6 +381,7 @@ mod tests {
                 participant_ids: Some(vec![invitee.id]),
                 price: None,
                 link: None,
+                reminder_lead_minutes: None,
             },
         )
         .await

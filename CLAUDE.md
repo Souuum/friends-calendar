@@ -914,8 +914,19 @@ reminded about it".
      id is stored. If thread creation failed when the event was announced
      (`discord_announcement` tolerates that with a warning), this POST 404s
      — it's logged and skipped, not fatal.
-   - Fixed 1-hour lead, polled every 5 minutes. Polling hourly for a
-     one-hour lead would let "starts in an hour" land up to an hour out.
+   - **Lead time is per event, chosen by the creator** (migration 011,
+     `calendar_events.reminder_lead_minutes`, default 60) - a picker in
+     `CreateEventModal` offering none / 1h / 3h / 1 day / 2 days / 1 week.
+     **0 means "no reminder", and needs no special case anywhere**: the
+     window is `start_time > now AND start_time <= now + lead`, which is
+     unsatisfiable at 0. The due-events query computes the bound per row
+     with `make_interval(mins => reminder_lead_minutes)`.
+   - Polled every 5 minutes, which has to stay well under the shortest
+     offered lead - polling hourly for a one-hour lead would let "starts in
+     an hour" land up to an hour out.
+   - **Rescheduling clears `reminder_sent_at`**, so moving an event lets the
+     reminder fire again for the new time; editing anything else doesn't,
+     so a rename can't re-notify everyone.
    - Reminds **accepted + maybe**; declined and never-answered are skipped.
    - Idempotent via `calendar_events.reminder_sent_at` (migration 010,
      with a partial index on the un-reminded rows). `is_due` also refuses

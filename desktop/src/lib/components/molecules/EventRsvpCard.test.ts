@@ -17,6 +17,7 @@ const baseEvent: EventWithParticipants = {
   discord_message_id: 'msg1',
   price: '5€',
   link: 'https://example.com/event',
+  reminder_lead_minutes: 60,
   is_participant: true,
   is_creator: true,
   my_status: 'accepted',

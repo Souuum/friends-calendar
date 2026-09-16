@@ -51,6 +51,8 @@ export interface CalendarEvent {
   end_time: string;
   location?: string;
   visibility: Visibility;
+  /** Minutes before start_time that the reminder fires. 0 = no reminder. */
+  reminder_lead_minutes: number;
   created_at: string;
   updated_at: string;
   discord_message_id?: string;

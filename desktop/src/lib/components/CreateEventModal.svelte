@@ -24,6 +24,20 @@
   // actually happen. The backend applies the same default when the field
   // is omitted (services::calendar::create_event), so the two agree.
   let visibility: Visibility = $user?.default_visibility ?? 'friends';
+
+  // Minutes before the start time that everyone going gets reminded.
+  // 0 = no reminder; the backend needs no special case for it (see
+  // services::reminders::is_due). Must stay in step with
+  // services::reminders::LEAD_TIME_CHOICES.
+  const REMINDER_CHOICES: { value: number; label: string }[] = [
+    { value: 0, label: 'No reminder' },
+    { value: 60, label: '1 hour before' },
+    { value: 180, label: '3 hours before' },
+    { value: 1440, label: '1 day before' },
+    { value: 2880, label: '2 days before' },
+    { value: 10080, label: '1 week before' }
+  ];
+  let reminderLeadMinutes = 60;
   let loading = false;
   let error = '';
   let price = '';
@@ -41,6 +55,7 @@
     endTime = dateUtils.toDatetimeLocalValue(event.end_time);
     location = event.location ?? '';
     visibility = event.visibility;
+    reminderLeadMinutes = event.reminder_lead_minutes;
     price = event.price ?? '';
     link = event.link ?? '';
   }
@@ -93,7 +108,8 @@
           location: location || undefined,
           visibility,
           price: price || undefined,
-          link: link || undefined
+          link: link || undefined,
+          reminder_lead_minutes: reminderLeadMinutes
         });
       } else {
         await api.createEvent({
@@ -105,6 +121,7 @@
           visibility,
           price: price || undefined,
           link: link || undefined,
+          reminder_lead_minutes: reminderLeadMinutes,
           participant_ids: selectedFriendIds.size > 0 ? Array.from(selectedFriendIds) : undefined
         });
       }
@@ -249,6 +266,31 @@
             <option value="friends">Friends</option>
             <option value="public">Public</option>
           </select>
+        </div>
+
+        <div>
+          <label for="reminder" class="block text-sm font-medium text-gray-700 mb-1">
+            Remind everyone going
+          </label>
+          <!-- Explicit on:change rather than bind:value. The two-way binding
+               resolves the selected option through Svelte's internal
+               `__value`, which is fragile to drive from a test and was
+               silently snapping the select back to the first option. Reading
+               the string off the DOM and converting once is both clearer and
+               testable. -->
+          <select
+            id="reminder"
+            value={String(reminderLeadMinutes)}
+            on:change={(e) => (reminderLeadMinutes = Number(e.currentTarget.value))}
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
+          >
+            {#each REMINDER_CHOICES as choice (choice.value)}
+              <option value={String(choice.value)}>{choice.label}</option>
+            {/each}
+          </select>
+          <p class="text-xs text-gray-500 mt-1">
+            Sent in the app, and in this event's Discord thread.
+          </p>
         </div>
 
         <!-- Invite picker is create-only: PUT /api/events/:id doesn't touch

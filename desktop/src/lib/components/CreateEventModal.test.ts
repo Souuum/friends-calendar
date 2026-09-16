@@ -56,6 +56,7 @@ function makeEvent(overrides: Partial<EventWithParticipants> = {}): EventWithPar
     link: 'https://example.com',
     created_at: '2026-02-01T00:00:00Z',
     updated_at: '2026-02-01T00:00:00Z',
+    reminder_lead_minutes: 60,
     is_participant: true,
     is_creator: true,
     my_status: 'accepted',
@@ -172,6 +173,48 @@ describe('CreateEventModal edit mode', () => {
       dateUtils.toDatetimeLocalValue(event.start_time)
     );
     expect(screen.getByLabelText('Start Time *')).not.toHaveValue('');
+  });
+
+  // Picks by visible label and drives selectedIndex rather than passing
+  // `target: { value }` to fireEvent: happy-dom doesn't match an option by
+  // value that way and silently falls back to index 0, which makes every
+  // such assertion pass-by-accident on the first option.
+  async function chooseReminder(label: string) {
+    const select = screen.getByLabelText(/Remind everyone going/) as HTMLSelectElement;
+    const option = Array.from(select.options).find((o) => o.textContent?.trim() === label);
+    if (!option) throw new Error(`no reminder option labelled "${label}"`);
+    select.selectedIndex = option.index;
+    await fireEvent.change(select);
+  }
+
+  it('sends the creator-chosen reminder lead time on create', async () => {
+    render(CreateEventModal, { props: { event: null } });
+
+    await fillRequiredFields();
+    await chooseReminder('1 week before');
+    await fireEvent.click(screen.getByRole('button', { name: 'Create Event' }));
+
+    await waitFor(() => expect(createEvent).toHaveBeenCalled());
+    expect(createEvent.mock.calls[0][0].reminder_lead_minutes).toBe(10080);
+  });
+
+  it('offers "No reminder", which the backend reads as never due', async () => {
+    render(CreateEventModal, { props: { event: null } });
+
+    await fillRequiredFields();
+    await chooseReminder('No reminder');
+    await fireEvent.click(screen.getByRole('button', { name: 'Create Event' }));
+
+    await waitFor(() => expect(createEvent).toHaveBeenCalled());
+    // Distinct from the 60 default, so this proves the choice was applied
+    // rather than reading back an untouched initial value.
+    expect(createEvent.mock.calls[0][0].reminder_lead_minutes).toBe(0);
+  });
+
+  it('prefills the reminder choice when editing', () => {
+    render(CreateEventModal, { props: { event: makeEvent({ reminder_lead_minutes: 2880 }) } });
+
+    expect(screen.getByLabelText(/Remind everyone going/)).toHaveValue('2880');
   });
 
   it('updates rather than creates when editing, and sends the event id', async () => {

@@ -51,6 +51,10 @@ pub struct CalendarEvent {
     /// out. `SELECT *` queries map it through FromRow, so this field has to
     /// exist here or every event read breaks after migration 010.
     pub reminder_sent_at: Option<DateTime<Utc>>,
+    /// Minutes before `start_time` that the reminder fires. 0 = no
+    /// reminder (see services::reminders::is_due for why that needs no
+    /// special case).
+    pub reminder_lead_minutes: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -101,6 +105,9 @@ pub struct CreateEventRequest {
     pub participant_ids: Option<Vec<Uuid>>, // Invite users by ID
     pub price: Option<String>,
     pub link: Option<String>,
+    /// Omitted = the column default (services::reminders::DEFAULT_LEAD_MINUTES).
+    /// 0 = no reminder.
+    pub reminder_lead_minutes: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,6 +120,7 @@ pub struct UpdateEventRequest {
     pub visibility: Option<Visibility>,
     pub price: Option<String>,
     pub link: Option<String>,
+    pub reminder_lead_minutes: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]

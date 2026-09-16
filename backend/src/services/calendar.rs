@@ -31,8 +31,8 @@ pub async fn create_event(
     let event = sqlx::query_as::<_, CalendarEvent>(
         r#"
         INSERT INTO calendar_events 
-            (id, creator_id, title, description, start_time, end_time, location, visibility, price, link, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            (id, creator_id, title, description, start_time, end_time, location, visibility, price, link, created_at, updated_at, reminder_lead_minutes)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING *
         "#,
     )
@@ -48,6 +48,10 @@ pub async fn create_event(
     .bind(&req.link)
     .bind(Utc::now())
     .bind(Utc::now())
+    .bind(
+        req.reminder_lead_minutes
+            .unwrap_or(crate::services::reminders::DEFAULT_LEAD_MINUTES),
+    )
     .fetch_one(db)
     .await?;
 
@@ -331,6 +335,7 @@ pub async fn update_event(
     let Some(mut event) = existing else {
         return Ok(None);
     };
+    let original_start = event.start_time;
 
     // Update fields if provided
     if let Some(title) = req.title {
@@ -357,14 +362,27 @@ pub async fn update_event(
     if let Some(link) = req.link {
         event.link = Some(link);
     }
+    if let Some(lead) = req.reminder_lead_minutes {
+        event.reminder_lead_minutes = lead.max(0);
+    }
+
+    // Rescheduling invalidates a reminder that already went out - it was
+    // about the old time. Clearing the marker lets the reminder fire again
+    // for the new one; without this, moving an event a week later would
+    // silently leave everyone un-reminded.
+    let rescheduled = req.start_time.is_some_and(|new| new != original_start);
+    if rescheduled {
+        event.reminder_sent_at = None;
+    }
 
     // Save updated event
     let updated = sqlx::query_as::<_, CalendarEvent>(
         r#"
         UPDATE calendar_events
         SET title = $1, description = $2, start_time = $3, end_time = $4,
-            location = $5, visibility = $6, price = $7, link = $8, updated_at = $9
-        WHERE id = $10 AND creator_id = $11
+            location = $5, visibility = $6, price = $7, link = $8, updated_at = $9,
+            reminder_lead_minutes = $10, reminder_sent_at = $11
+        WHERE id = $12 AND creator_id = $13
         RETURNING *
         "#,
     )
@@ -377,6 +395,8 @@ pub async fn update_event(
     .bind(&event.price)
     .bind(&event.link)
     .bind(Utc::now())
+    .bind(event.reminder_lead_minutes)
+    .bind(event.reminder_sent_at)
     .bind(event_id)
     .bind(creator_id)
     .fetch_one(db)
@@ -781,6 +801,7 @@ mod tests {
             participant_ids,
             price: None,
             link: None,
+            reminder_lead_minutes: None,
         }
     }
 
