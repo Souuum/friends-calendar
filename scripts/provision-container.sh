@@ -25,8 +25,10 @@ set -euo pipefail
 # both hard-code the same paths.
 APP_DIR="${APP_DIR:-/opt/friends-calendar}"
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
+SUDOERS_DIR="${SUDOERS_DIR:-/etc/sudoers.d}"
 DB_NAME=friends_calendar
 DB_USER=friends_calendar
+RUNNER_USER=github-runner
 ENV_FILE="$APP_DIR/.env"
 
 log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -43,7 +45,10 @@ apt-get update -qq
 # ca-certificates is not optional: every Discord API call is HTTPS, and a
 # minimal container image has no root store, which fails at runtime rather
 # than at install time.
-apt-get install -y -qq postgresql ca-certificates curl >/dev/null
+# sudo is not installed on a minimal Debian container, and the deploy needs
+# it: the GitHub runner cannot run as root, so restarting the unit goes
+# through a single-command sudoers rule set up below.
+apt-get install -y -qq postgresql ca-certificates curl sudo >/dev/null
 
 log "Starting PostgreSQL"
 systemctl enable --now postgresql
@@ -129,6 +134,39 @@ EOF
   umask "$previous_umask"
 fi
 
+log "Setting up the deploy user for the GitHub Actions runner"
+# The runner cannot be configured as root - config.sh refuses outright - so
+# it runs as this user and is granted exactly the two privileges the deploy
+# needs: write the binary, restart the unit. Nothing else.
+if id -u "$RUNNER_USER" >/dev/null 2>&1; then
+  warn "User $RUNNER_USER already exists - leaving it alone."
+else
+  useradd --create-home --shell /bin/bash "$RUNNER_USER"
+fi
+
+# Only the release directory, not all of $APP_DIR: .env lives at the top
+# level and holds the DB password and JWT signing key. The runner has no
+# reason to read it, and a compromised workflow would.
+chown -R "$RUNNER_USER:$RUNNER_USER" "$APP_DIR/target"
+
+# A single command, fully qualified. `systemctl restart friends-calendar`
+# and nothing else - not `systemctl *`, which would let the runner stop
+# anything on the box, and not ALL.
+cat > "$SUDOERS_DIR/friends-calendar-deploy" <<EOF
+$RUNNER_USER ALL=(root) NOPASSWD: /usr/bin/systemctl restart friends-calendar
+$RUNNER_USER ALL=(root) NOPASSWD: /usr/bin/journalctl -u friends-calendar *
+EOF
+chmod 440 "$SUDOERS_DIR/friends-calendar-deploy"
+# A malformed sudoers file can lock the box out of sudo entirely, so refuse
+# to leave one behind.
+if command -v visudo >/dev/null 2>&1; then
+  visudo -cf "$SUDOERS_DIR/friends-calendar-deploy" >/dev/null || {
+    rm -f "$SUDOERS_DIR/friends-calendar-deploy"
+    echo "Generated sudoers file was invalid and has been removed." >&2
+    exit 1
+  }
+fi
+
 log "Installing the systemd unit"
 cat > "$SYSTEMD_DIR/friends-calendar.service" <<'EOF'
 [Unit]
@@ -168,8 +206,21 @@ Next steps, in order:
   1. Fill in the Discord values and FRONTEND_URL in:
          $ENV_FILE
 
-  2. Add this container's SSH key access for the deploy runner, then push
-     to master - CI builds the binary and the runner ships it here.
+  2. Install the GitHub Actions runner AS $RUNNER_USER (not root - the
+     runner refuses to configure itself as root):
+
+         su - $RUNNER_USER
+         # then follow the commands from
+         # repo Settings -> Actions -> Runners -> New self-hosted runner
+
+     Then, back as root, install it as a service so it survives reboots:
+
+         cd /home/$RUNNER_USER/actions-runner
+         ./svc.sh install $RUNNER_USER
+         ./svc.sh start
+
+     $RUNNER_USER already owns $APP_DIR/target and may run exactly
+     'sudo systemctl restart friends-calendar' - nothing else.
 
   3. The service is enabled but NOT started: there is no binary yet, so
      starting now would only crash-loop. The first deploy starts it.

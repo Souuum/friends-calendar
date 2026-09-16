@@ -1542,13 +1542,20 @@ its contents.
 4. ~~`bot.rs`/`discord_announcement.rs` have no automated tests~~ — **done
    2026-09-16**, see the Discord bot section above. The only Discord surface
    still uncovered is the gateway socket itself.
-5. CI/CD is now fixed and real (see the Terraform/GitHub Actions section
-   above and `docs/deployment.md`), but the pipeline can't deploy anything
-   until a person does the one-time manual setup `docs/deployment.md`
-   describes (create the `production` GitHub Environment, generate a
-   deploy SSH key, add the four `DEPLOY_*`/`PROD_DOMAIN` repo secrets, and
-   confirm what's actually running on the Proxmox host today via `pct
-   list` before pointing a deploy pipeline at it).
+5. CI/CD is real, and `docs/deployment.md` now describes the **actual**
+   topology (2026-09-16/17): home Proxmox behind NAT, published through an
+   existing Cloudflare tunnel, with the GitHub Actions runner installed **on
+   the app container** so the deploy is a local `mv` + `systemctl restart`.
+   Proven by probe: 443 through the tunnel is open, 22 and 8006 are
+   filtered, so a GitHub-hosted runner has no SSH route in and `cd.yml`'s
+   original `scp`/`ssh` shape could never have worked. That collapse means
+   `PROD_DOMAIN` is the **only** secret the deploy needs — the three
+   `DEPLOY_SSH_*` ones are gone. Remaining manual setup: create the
+   `production` Environment, run `scripts/provision-container.sh` on the
+   container, register the runner as the `github-runner` user it creates,
+   and add the tunnel route. ⚠️ The trade taken deliberately: a runner
+   inside a down container can't deploy its own fix, so recovery is a manual
+   SSH from the LAN.
 6. `serenity` is stuck on a dependency chain (tokio-tungstenite 0.21 →
    rustls 0.22 → rustls-webpki 0.102) with four open RUSTSEC advisories and
    no fixed release available — 0.12.5 is the newest published version.

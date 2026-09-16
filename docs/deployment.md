@@ -7,17 +7,18 @@
     ┌──────────────────────┐        ┌──────────────────────────────┐
     │ CI: test + build     │        │  Proxmox host                │
     │ Deploy: build binary │        │   └── LXC: friends-calendar  │
-    └──────────┬───────────┘        │         ├── PostgreSQL       │
-               │ artifact           │         └── API :8080        │
-               ▼                    │                              │
-    ┌──────────────────────┐  scp   │  self-hosted Actions runner  │
-    │ self-hosted runner ──┼────────┼─▶ (same LAN)                 │
-    └──────────────────────┘        └──────────────┬───────────────┘
-                                                   │ cloudflared
-                                                   ▼
-                                          Cloudflare edge (TLS)
-                                                   │
-                                          api.<your-domain>
+    └──────────┬───────────┘        │        ├── PostgreSQL        │
+               │ artifact           │        ├── API :8080         │
+               │                    │        └── Actions runner ───┼─┐
+               └────────────────────┼──────────▶ (polls outbound)  │ │
+                                    │                              │ │
+                                    └──────────────┬───────────────┘ │
+                                                   │ cloudflared     │
+                                                   ▼                 │
+                                          Cloudflare edge (TLS)      │
+                                                   │        local mv │
+                                          api.<your-domain>  + restart
+                                                             ◀───────┘
 ```
 
 Two facts drive every decision below:
@@ -28,9 +29,24 @@ Two facts drive every decision below:
    GitHub-hosted runner has no route to the container at all - verified:
    port 443 to the tunnel hostname connects, 22 and 8006 are filtered.
 
-Hence a **self-hosted runner on the LAN**: it connects *outbound* to
-GitHub, so nothing needs exposing, and it can reach the container directly
-over the local network.
+Hence a **self-hosted runner**: it connects *outbound* to GitHub, so
+nothing needs exposing.
+
+The runner is installed **on the app container itself**, which makes the
+deploy a local file move - no SSH, no keys, and no `DEPLOY_SSH_*` secrets
+at all. `PROD_DOMAIN` is the only secret this workflow needs.
+
+⚠️ **The trade:** a runner inside a container that is down or crash-looping
+cannot run the deploy that would fix it. Recovery is a manual SSH from the
+LAN - replace the binary and `systemctl restart` by hand. A runner on a
+*separate* box would not have that limitation, and is worth revisiting if
+this ever bites; the only thing that changes is `runs-on` and adding back
+an SSH step.
+
+Two other consequences worth knowing, neither fatal at this scale: the
+runner competes with PostgreSQL and the API for the container's 2GB, and a
+compromised workflow has code execution on the production box rather than
+on a machine whose only privilege is one SSH key.
 
 ### Why not Terraform
 
@@ -172,46 +188,51 @@ The Tauri desktop app keeps working alongside this: it is allowed through
 CORS by its own origin, and its login flow can still use the
 paste-the-token box.
 
-### 4. Install the self-hosted runner
+### 4. Install the self-hosted runner on the container
 
-Repo → Settings → Actions → Runners → New self-hosted runner, and follow
-the shown commands on whichever LAN machine will host it (the Proxmox host,
-or a small separate container - **not** the app container, so a bad deploy
-can't take the runner down with it).
+`provision-container.sh` already created the `github-runner` user, gave it
+ownership of `/opt/friends-calendar/target`, and granted it exactly two
+sudo commands (restart the unit, read its logs) via
+`/etc/sudoers.d/friends-calendar-deploy`. Nothing else.
 
-Install it as a service so it survives reboots:
-
-```
-sudo ./svc.sh install && sudo ./svc.sh start
-```
-
-It needs `ssh`, `scp` and `curl` on PATH. A deploy only happens while it is
-online - that is the trade for not exposing anything.
-
-### 5. Give the runner SSH access to the container
-
-On the runner:
+Repo → Settings → Actions → Runners → **New self-hosted runner** (Linux
+x64), then on the container:
 
 ```
-ssh-keygen -t ed25519 -f ~/.ssh/friends_calendar_deploy -C "actions-deploy" -N ""
-ssh-copy-id -i ~/.ssh/friends_calendar_deploy.pub root@<container-ip>
+su - github-runner
+# paste the download + ./config.sh commands GitHub shows
 ```
 
-`root` because the deploy writes to `/opt/friends-calendar` and runs
-`systemctl restart`. A non-root user needs passwordless sudo for exactly
-those two commands.
+**Run `config.sh` as `github-runner`, not root** - the runner refuses to
+configure itself as root and will stop with an error.
 
-### 6. Create the GitHub Environment and secrets
+Then, back as root, install it as a service so it survives reboots:
+
+```
+cd /home/github-runner/actions-runner
+./svc.sh install github-runner
+./svc.sh start
+```
+
+It needs `curl` on PATH (installed already). A deploy only happens while
+the runner is online.
+
+> Why `target/` and not all of `/opt/friends-calendar`: `.env` sits at the
+> top level and holds the database password and JWT signing key. The runner
+> has no reason to read it, and a compromised workflow would.
+
+### 5. Create the GitHub Environment and secret
 
 Settings → Environments → **`production`** (the name is referenced by
 `cd.yml`).
 
 | Secret | Value |
 |---|---|
-| `DEPLOY_SSH_HOST` | the container's **LAN** IP - the runner is local, so never the public hostname |
-| `DEPLOY_SSH_USER` | `root` |
-| `DEPLOY_SSH_KEY` | contents of `~/.ssh/friends_calendar_deploy` (the **private** half, including the BEGIN/END lines) |
 | `PROD_DOMAIN` | `api.<your-domain>`, no scheme - the workflow adds `https://` |
+
+That is the only one. Because the runner is on the container, the deploy is
+a local file move and there is nothing left to authenticate - no
+`DEPLOY_SSH_HOST`, `DEPLOY_SSH_USER` or `DEPLOY_SSH_KEY`.
 
 ## What a deploy does
 
@@ -222,17 +243,19 @@ layout tests, audit). If it passes, `cd.yml`:
    - glibc-matched to Debian 12, so the binary actually runs on the
    container. Building on plain `ubuntu-latest` produces
    `GLIBC_x.y not found`.
-2. The **self-hosted** runner downloads that artifact, `scp`s it in as
-   `.new`, then over one SSH connection renames it into place and restarts
-   the unit. The rename is atomic, so a failed transfer can never leave a
-   half-written binary in the live path.
-3. Health-checks `https://$PROD_DOMAIN/` with backoff - that goes out to
-   Cloudflare and back through the tunnel, so it exercises the whole path,
-   not just the local port.
-
-SSH material is written to `$RUNNER_TEMP`, never `~/.ssh`, and removed
-afterwards. On a persistent runner the old `>> ~/.ssh/known_hosts` would
-have appended the same host key on every deploy forever.
+2. The **self-hosted** runner, on the container, downloads that artifact,
+   writes it beside the live binary as `.new`, then `mv`s it into place and
+   `sudo systemctl restart friends-calendar`. `mv` within one filesystem is
+   atomic, so an interrupted copy can never leave a half-written binary in
+   the live path - and the running process keeps its handle on the old inode
+   until the restart.
+3. Health-checks twice, because the two failures mean different things:
+   - **local** (`http://127.0.0.1:8080/`) proves the binary started and the
+     migrations ran. On failure it dumps the last 50 journal lines into the
+     job log, so the reason is visible without SSH-ing in.
+   - **public** (`https://$PROD_DOMAIN/`) proves the tunnel still routes to
+     it. Local passing but public failing points at Cloudflare or
+     `cloudflared`, not at the app.
 
 `.env` on the container is never touched by a deploy. A change needing a
 new variable means editing `/opt/friends-calendar/.env` and restarting by
