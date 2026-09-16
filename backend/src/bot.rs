@@ -335,6 +335,7 @@ mod tests {
                 participant_ids: None,
                 price: None,
                 link: None,
+                guild_ids: None,
                 reminder_leads: None,
             },
         )

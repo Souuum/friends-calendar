@@ -166,3 +166,17 @@ export interface ReplyInfo {
   body: string;
   posted_at: string;
 }
+
+/** A Discord server the bot is in. */
+export interface GuildInfo {
+  id: string;
+  discord_guild_id: string;
+  /** Null until the bot's gateway has seen the server (it fills this in on connect). */
+  name?: string;
+  icon_url?: string;
+}
+
+export interface ServersResponse {
+  guilds: GuildInfo[];
+  invite_url: string;
+}

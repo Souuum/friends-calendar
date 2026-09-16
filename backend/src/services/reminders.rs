@@ -376,6 +376,7 @@ mod tests {
                 participant_ids: Some(invitees.to_vec()),
                 price: None,
                 link: None,
+                guild_ids: None,
                 reminder_leads: None,
             },
         )
@@ -408,6 +409,7 @@ mod tests {
             participant_ids: None,
             price: None,
             link: None,
+            guild_ids: None,
             reminder_leads: None,
         }
     }
@@ -931,6 +933,7 @@ mod tests {
                     participant_ids: None,
                     price: None,
                     link: None,
+                    guild_ids: None,
                     reminder_leads: None,
                 },
             )

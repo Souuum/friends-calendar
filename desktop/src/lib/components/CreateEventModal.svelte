@@ -3,7 +3,7 @@
   import { api } from '$lib/api';
   import { user } from '$lib/stores';
   import { dateUtils } from '$lib/utils/dateUtils';
-  import type { EventWithParticipants, FriendInfo, Visibility } from '$lib/types';
+  import type { EventWithParticipants, FriendInfo, GuildInfo, Visibility } from '$lib/types';
 
   // Null = create a new event, an event = edit that one. One nullable
   // prop rather than a separate `isEditing` boolean, so the two can't
@@ -37,6 +37,23 @@
     { value: 10080, label: '1 week' }
   ];
   let reminderLeads: number[] = [60];
+
+  // Which servers to announce in. Nothing selected by default: publishing is
+  // opt-in, so an event stays with its guest list unless you say otherwise.
+  let servers: GuildInfo[] = [];
+  let selectedGuildIds: string[] = [];
+
+  function toggleServer(id: string) {
+    selectedGuildIds = selectedGuildIds.includes(id)
+      ? selectedGuildIds.filter((g) => g !== id)
+      : [...selectedGuildIds, id];
+  }
+
+  // Picking no servers while asking for a non-private visibility is a
+  // contradiction worth surfacing: reach is scoped to where an event was
+  // published, so "public" plus "nowhere" means nobody outside the guest
+  // list sees it.
+  $: publishedNowhereButShared = !isEditing && selectedGuildIds.length === 0 && visibility !== 'private';
 
   function toggleReminder(value: number) {
     reminderLeads = reminderLeads.includes(value)
@@ -137,6 +154,14 @@
     } catch (err) {
       friendsError = err instanceof Error ? err.message : 'Failed to load friends';
     }
+
+    try {
+      servers = (await api.getServers()).guilds;
+    } catch {
+      // Best-effort, like the friend list: not being able to offer servers
+      // shouldn't block creating an event that simply isn't announced.
+      servers = [];
+    }
   });
 
   function toggleFriend(userId: string) {
@@ -185,6 +210,7 @@
           price: price || undefined,
           link: link || undefined,
           reminder_leads: reminderLeads,
+          guild_ids: selectedGuildIds,
           participant_ids: selectedFriendIds.size > 0 ? Array.from(selectedFriendIds) : undefined
         });
       }
@@ -402,6 +428,40 @@
         </div>
 
         {#if !isEditing}
+          <fieldset class="border-0 p-0 m-0">
+            <legend class="block text-sm font-medium text-gray-700 mb-1">Announce in</legend>
+            {#if servers.length === 0}
+              <p class="text-sm text-gray-500">
+                The bot isn't in any server yet, so this event won't be announced.
+              </p>
+            {:else}
+              <div class="flex flex-wrap gap-2">
+                {#each servers as server (server.id)}
+                  {@const selected = selectedGuildIds.includes(server.id)}
+                  <button
+                    type="button"
+                    on:click={() => toggleServer(server.id)}
+                    aria-pressed={selected}
+                    class="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium border transition {selected
+                      ? 'bg-primary text-white border-primary'
+                      : 'bg-gray-100 text-gray-700 border-transparent hover:bg-gray-200'}"
+                  >
+                    {#if server.icon_url}
+                      <img src={server.icon_url} alt="" class="w-5 h-5 rounded" />
+                    {/if}
+                    {server.name ?? server.discord_guild_id}
+                  </button>
+                {/each}
+              </div>
+              {#if publishedNowhereButShared}
+                <p class="text-xs text-gray-500 mt-1">
+                  Not announcing anywhere — only people you invite will see this, even though
+                  it's set to {visibility}.
+                </p>
+              {/if}
+            {/if}
+          </fieldset>
+
           <div>
             <span class="block text-sm font-medium text-gray-700 mb-1">Discord preview</span>
             {#if previewError}

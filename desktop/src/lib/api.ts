@@ -14,7 +14,8 @@ import type {
   BotChannelConfig,
   UpdateBotChannelConfigRequest,
   AnnouncementPostInfo,
-  ReplyInfo
+  ReplyInfo,
+  ServersResponse
 } from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
@@ -96,6 +97,7 @@ class ApiClient {
     price?: string;
     link?: string;
     reminder_leads?: number[];
+    guild_ids?: string[];
   }): Promise<CalendarEvent> {
     return this.fetch<CalendarEvent>('/api/events', {
       method: 'POST',
@@ -180,6 +182,11 @@ class ApiClient {
       method: 'PUT',
       body: JSON.stringify({ status })
     });
+  }
+
+  /** The servers the bot is in, plus the URL for adding another. */
+  async getServers(): Promise<ServersResponse> {
+    return this.fetch<ServersResponse>('/api/guilds');
   }
 
   // Friends

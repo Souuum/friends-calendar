@@ -37,6 +37,9 @@ pub async fn create_event(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?
         .ok_or(AppError::Unauthorized)?;
 
+    // Taken before `req` is consumed below.
+    let guild_ids = req.guild_ids.clone().unwrap_or_default();
+
     let event = calendar::create_event(&state.db, user.id, req)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -47,82 +50,11 @@ pub async fn create_event(
         user.username
     );
 
-    // Auto-announce to Discord if configured. The channel comes from
-    // services::discord_config first (live-editable from /server), falling
-    // back to AppState.discord_announcement_channel_id (env var) if no DB
-    // config has been set yet - see discord_config's own docs for why this
-    // fallback exists and what it doesn't cover.
-    let resolved_channel_id = match &state.discord_guild_id {
-        Some(guild_id) => crate::services::discord_config::resolve_announcement_channel_id(
-            &state.db,
-            guild_id,
-            state.discord_announcement_channel_id,
-        )
-        .await
-        .unwrap_or(state.discord_announcement_channel_id),
-        None => state.discord_announcement_channel_id,
-    };
-
-    if let (Some(bot_token), Some(channel_id), Some(guild_id)) = (
-        &state.discord_bot_token,
-        resolved_channel_id,
-        &state.discord_guild_id,
-    ) {
-        // Recorded before posting, so a Discord failure loses the message but
-        // not the fact that this event was meant to go to this server. Still
-        // exactly one server today - see .claude/skills/multi-server/SKILL.md
-        // for the selection UI that makes it a list.
-        let publication = async {
-            let guild = crate::services::guilds::ensure_guild(&state.db, guild_id).await?;
-            crate::services::guilds::add_publication(
-                &state.db,
-                event.id,
-                guild,
-                &channel_id.to_string(),
-            )
-            .await
-        }
-        .await;
-
-        match publication {
-            Ok(publication_id) => {
-                match discord_announcement::announce_event(
-                    &state.discord_api_base,
-                    &state.http_client,
-                    bot_token,
-                    &channel_id.to_string(),
-                    &event,
-                )
-                .await
-                {
-                    Ok(message_id) => {
-                        if let Err(e) = crate::services::guilds::mark_published(
-                            &state.db,
-                            publication_id,
-                            &message_id,
-                        )
-                        .await
-                        {
-                            // The announcement is out but unrecorded, so
-                            // reactions on it won't resolve. Worth shouting
-                            // about; not worth failing the event creation the
-                            // user already completed.
-                            tracing::error!(
-                                "❌ Announced but failed to record publication: {:?}",
-                                e
-                            );
-                        } else {
-                            tracing::info!("✅ Event announced as Discord message {}", message_id);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("⚠️  Failed to announce event to Discord: {:?}", e);
-                    }
-                }
-            }
-            Err(e) => tracing::warn!("⚠️  Failed to record publication: {:?}", e),
-        }
-    }
+    // Announce to each server the creator chose. Publishing is opt-in: no
+    // selection means no announcement, which combined with publication-scoped
+    // visibility means the event stays with its guest list. That's the
+    // intended default - see .claude/skills/multi-server/SKILL.md.
+    announce_to_selected_servers(&state, &event, guild_ids).await;
 
     Ok(Json(event))
 }
@@ -161,6 +93,102 @@ pub async fn preview_announcement(
     Ok(Json(serde_json::json!({
         "message": crate::services::discord_announcement::format_event_message(&preview)
     })))
+}
+
+/// Publishes an event to each selected server: record the intent, post, then
+/// stamp the resulting message id.
+///
+/// Every failure here is logged rather than returned. The event exists and
+/// the user's request succeeded; one server's Discord being unreachable
+/// shouldn't fail that, and the publication row survives so it's visible
+/// which server didn't get its message.
+async fn announce_to_selected_servers(
+    state: &AppState,
+    event: &CalendarEvent,
+    guild_ids: Vec<Uuid>,
+) {
+    let Some(bot_token) = &state.discord_bot_token else {
+        return;
+    };
+
+    for guild_id in guild_ids {
+        let Ok(Some(discord_guild_id)) =
+            crate::services::guilds::discord_id_of(&state.db, guild_id).await
+        else {
+            tracing::warn!("⚠️  Unknown server {} - skipping", guild_id);
+            continue;
+        };
+
+        // Per server, not per process: each guild has its own configured
+        // announcements channel, falling back to the env var for the original
+        // single-server deployment.
+        let channel_id = crate::services::discord_config::resolve_announcement_channel_id(
+            &state.db,
+            &discord_guild_id,
+            state.discord_announcement_channel_id,
+        )
+        .await
+        .unwrap_or(state.discord_announcement_channel_id);
+
+        let Some(channel_id) = channel_id else {
+            tracing::warn!(
+                "⚠️  No announcements channel configured for server {} - skipping",
+                discord_guild_id
+            );
+            continue;
+        };
+        let channel_id = channel_id.to_string();
+
+        // Recorded before posting, so a Discord failure loses the message but
+        // not the fact that this event was meant to reach this server.
+        let publication_id = match crate::services::guilds::add_publication(
+            &state.db,
+            event.id,
+            guild_id,
+            &channel_id,
+        )
+        .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!("⚠️  Failed to record publication: {:?}", e);
+                continue;
+            }
+        };
+
+        match discord_announcement::announce_event(
+            &state.discord_api_base,
+            &state.http_client,
+            bot_token,
+            &channel_id,
+            event,
+        )
+        .await
+        {
+            Ok(message_id) => {
+                if let Err(e) =
+                    crate::services::guilds::mark_published(&state.db, publication_id, &message_id)
+                        .await
+                {
+                    // Posted but unrecorded, so reactions on it won't resolve
+                    // back to the event. Worth shouting about.
+                    tracing::error!("❌ Announced but failed to record publication: {:?}", e);
+                } else {
+                    tracing::info!(
+                        "✅ Announced event {} in server {} as message {}",
+                        event.id,
+                        discord_guild_id,
+                        message_id
+                    );
+                }
+            }
+            Err(e) => tracing::warn!(
+                "⚠️  Failed to announce in server {}: {:?}",
+                discord_guild_id,
+                e
+            ),
+        }
+    }
 }
 
 // Get a specific event by ID with participants
@@ -446,6 +474,7 @@ mod tests {
                 participant_ids: Some(vec![invitee.id]),
                 price: None,
                 link: None,
+                guild_ids: None,
                 reminder_leads: None,
             },
         )

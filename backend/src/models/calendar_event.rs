@@ -98,6 +98,10 @@ pub struct CreateEventRequest {
     pub participant_ids: Option<Vec<Uuid>>, // Invite users by ID
     pub price: Option<String>,
     pub link: Option<String>,
+    /// Servers to announce this event in, by `guilds.id`. Absent or empty
+    /// means **don't announce it anywhere** - publishing is opt-in, so an
+    /// event is private to its guest list until someone chooses otherwise.
+    pub guild_ids: Option<Vec<Uuid>>,
     /// Minutes-before-start at which to remind everyone going, one entry
     /// per reminder. Omitted = a single default reminder; an empty vec =
     /// none at all. Duplicates and non-positive values are discarded by

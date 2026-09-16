@@ -4,15 +4,18 @@ import { writable } from 'svelte/store';
 import { dateUtils } from '$lib/utils/dateUtils';
 import type { EventWithParticipants, FriendInfo } from '$lib/types';
 
-const { getFriends, createEvent, updateEvent, previewAnnouncement } = vi.hoisted(() => ({
-  getFriends: vi.fn(),
-  createEvent: vi.fn(),
-  updateEvent: vi.fn(),
-  previewAnnouncement: vi.fn()
-}));
+const { getFriends, createEvent, updateEvent, previewAnnouncement, getServers } = vi.hoisted(
+  () => ({
+    getFriends: vi.fn(),
+    createEvent: vi.fn(),
+    updateEvent: vi.fn(),
+    previewAnnouncement: vi.fn(),
+    getServers: vi.fn()
+  })
+);
 
 vi.mock('$lib/api', () => ({
-  api: { getFriends, createEvent, updateEvent, previewAnnouncement }
+  api: { getFriends, createEvent, updateEvent, previewAnnouncement, getServers }
 }));
 
 // The component reads $user for the default-visibility preselect. Mocked
@@ -73,6 +76,7 @@ describe('CreateEventModal invite picker', () => {
     updateEvent.mockReset();
     createEvent.mockResolvedValue({});
     updateEvent.mockResolvedValue({});
+    getServers.mockReset().mockResolvedValue({ guilds: [], invite_url: 'https://invite' });
   });
 
   it('renders a chip per synced friend', async () => {
@@ -143,6 +147,7 @@ describe('CreateEventModal edit mode', () => {
     getFriends.mockReset().mockResolvedValue([]);
     createEvent.mockReset().mockResolvedValue({});
     updateEvent.mockReset().mockResolvedValue({});
+    getServers.mockReset().mockResolvedValue({ guilds: [], invite_url: 'https://invite' });
   });
 
   it('creates rather than updates when given no event', async () => {
@@ -354,5 +359,76 @@ describe('CreateEventModal mobile wizard', () => {
 
     expect(screen.queryByRole('button', { name: /Next · invite friends/ })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeInTheDocument();
+  });
+});
+
+// Publishing is opt-in: an event goes nowhere unless a server is chosen.
+describe('CreateEventModal server picker', () => {
+  const hangout = { id: 'g1', discord_guild_id: '111', name: 'The Hangout' };
+  const boardClub = { id: 'g2', discord_guild_id: '222', name: 'Board Club' };
+
+  beforeEach(() => {
+    getFriends.mockReset().mockResolvedValue([]);
+    createEvent.mockReset().mockResolvedValue({});
+    updateEvent.mockReset().mockResolvedValue({});
+    previewAnnouncement.mockReset().mockResolvedValue('preview');
+    getServers
+      .mockReset()
+      .mockResolvedValue({ guilds: [hangout, boardClub], invite_url: 'https://invite' });
+  });
+
+  it('announces nowhere unless a server is picked', async () => {
+    render(CreateEventModal, { props: { event: null } });
+    await waitFor(() => expect(getServers).toHaveBeenCalled());
+
+    await fillRequiredFields();
+    await fireEvent.click(screen.getByRole('button', { name: 'Create Event' }));
+
+    await waitFor(() => expect(createEvent).toHaveBeenCalled());
+    expect(createEvent.mock.calls[0][0].guild_ids).toEqual([]);
+  });
+
+  it('sends every server the creator picked', async () => {
+    render(CreateEventModal, { props: { event: null } });
+    await waitFor(() => expect(screen.getByRole('button', { name: /The Hangout/ })).toBeInTheDocument());
+
+    await fireEvent.click(screen.getByRole('button', { name: /The Hangout/ }));
+    await fireEvent.click(screen.getByRole('button', { name: /Board Club/ }));
+    await fillRequiredFields();
+    await fireEvent.click(screen.getByRole('button', { name: 'Create Event' }));
+
+    await waitFor(() => expect(createEvent).toHaveBeenCalled());
+    expect(createEvent.mock.calls[0][0].guild_ids).toEqual(['g1', 'g2']);
+  });
+
+  it('deselects on a second click', async () => {
+    render(CreateEventModal, { props: { event: null } });
+    const chip = await screen.findByRole('button', { name: /The Hangout/ });
+
+    await fireEvent.click(chip);
+    expect(chip).toHaveAttribute('aria-pressed', 'true');
+    await fireEvent.click(chip);
+    expect(chip).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  // Reach is scoped to publications, so "public" plus "nowhere" means nobody
+  // outside the guest list sees it. Saying so beats letting someone wonder.
+  it('warns when a shared event is going nowhere', async () => {
+    render(CreateEventModal, { props: { event: null } });
+    await waitFor(() => expect(getServers).toHaveBeenCalled());
+
+    expect(screen.getByText(/only people you invite will see this/i)).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole('button', { name: /The Hangout/ }));
+    expect(screen.queryByText(/only people you invite will see this/i)).not.toBeInTheDocument();
+  });
+
+  it('says so when the bot is in no servers at all', async () => {
+    getServers.mockResolvedValue({ guilds: [], invite_url: 'https://invite' });
+    render(CreateEventModal, { props: { event: null } });
+
+    await waitFor(() =>
+      expect(screen.getByText(/bot isn't in any server yet/i)).toBeInTheDocument()
+    );
   });
 });

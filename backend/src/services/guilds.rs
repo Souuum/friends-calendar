@@ -102,6 +102,16 @@ pub async fn list_guilds(db: &PgPool) -> Result<Vec<GuildInfo>> {
         .collect())
 }
 
+/// The Discord snowflake for a guild row.
+pub async fn discord_id_of(db: &PgPool, guild_id: Uuid) -> Result<Option<String>> {
+    let id = sqlx::query_scalar("SELECT discord_guild_id FROM guilds WHERE id = $1")
+        .bind(guild_id)
+        .fetch_optional(db)
+        .await?;
+
+    Ok(id)
+}
+
 /// Records that an event is to be announced in a server, before anything is
 /// posted. Idempotent, so re-publishing to the same server is a no-op rather
 /// than a duplicate.
@@ -248,6 +258,7 @@ mod tests {
                 participant_ids: None,
                 price: None,
                 link: None,
+                guild_ids: None,
                 reminder_leads: Some(vec![]),
             },
         )

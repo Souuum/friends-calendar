@@ -362,9 +362,10 @@ three places. What's left is genuinely account-scoped:
 
 Split out of the old `/settings` so "which Discord server, and which
 channels does the bot use" has its own page, separate from personal
-profile/preferences. Single-server only — `DISCORD_GUILD_ID` is one guild,
-not a list; multi-server support would need a real data model change, not
-just this UI.
+profile/preferences. ⚠️ **Superseded in part by `/servers`** (plural — see
+the multi-server section below). This page still shows the one guild named
+by `DISCORD_GUILD_ID` and owns the digest toggle; `/servers` is the one that
+lists every server the bot is actually in and hands out the invite link.
 
 - `GET /api/discord/server` (`handlers::discord::get_linked_server`,
   `services::friends::get_linked_server_info`) — unchanged from before,
@@ -570,6 +571,17 @@ rather than re-deriving the patterns. Summary:
   the settable-store mock pattern (`__setPathname`), or
   `routes/friends/[id]/page.test.ts` for a version that also supplies
   `$page.params` for a dynamic route.
+  - ⚠️ **Always give `beforeEach` a block body**, never the concise arrow
+    `beforeEach(() => someMock.mockReset())`. Vitest treats a function
+    *returned* from `beforeEach` as a teardown hook, and `mockReset()`
+    returns the mock — so the concise form makes vitest **call the mock**
+    after every test in that file. It's invisible while the mock resolves,
+    and shows up as a bogus unhandled rejection the moment one test makes it
+    reject: `servers/page.test.ts`'s failing-load test failed with the right
+    error for entirely the wrong reason, and the page code it accused was
+    correct. Found by logging `new Error().stack` from inside
+    `mockImplementation` and seeing a second call whose stack came straight
+    out of `callCleanupHooks` with no Svelte frames in it.
 ⚠️ **Test across the JSON boundary, not just up to it.** Both `Visibility`
 and `ParticipationStatus` shipped with `#[sqlx(rename_all = "lowercase")]`
 and no serde rename, so their JSON form was `"Friends"`/`"Accepted"` while
@@ -927,7 +939,7 @@ Applied to:
   "0" state never actually renders) - replaced with `anim-pop` on the
   tooltip card.
 
-## Multi-server — planned, not started
+## Multi-server — done (steps 1-5, 2026-09-16)
 
 `.claude/skills/multi-server/SKILL.md` (written 2026-09-16). The user
 confirmed the shape: **one `calendar_events` row published to N servers**,
@@ -1037,8 +1049,38 @@ Consequences:
 whether `guild_create` fires as expected, both need real Discord. The DB half
 is tested; the gateway half is not.
 
-Remaining: the server picker (step 5) - `/servers` and choosing where an
-event publishes.
+**Step 5 is done (2026-09-16)** — the picker, and the feature is now usable
+end to end:
+
+- `CreateEventRequest.guild_ids: Option<Vec<Uuid>>`, and
+  `handlers::calendar::announce_to_selected_servers` loops the announce,
+  resolving the channel per guild. One `calendar_events` row, N
+  `event_publications` rows, N Discord messages — the shape the user asked
+  for, not mirrored events.
+- `/servers` (`desktop/src/routes/servers/+page.svelte`) lists what the bot
+  is in and links out to the invite URL. The invite is an `<a>`, not a
+  button with a handler — authorising happens on Discord, there's nothing to
+  submit.
+- `CreateEventModal.svelte` grew server chips. **Nothing is selected by
+  default** (the user chose this over pre-selecting every server): publishing
+  to a server is a broadcast, and a default that broadcasts everywhere is the
+  kind of default you only notice after it's wrong. The cost is that a
+  `friends`/`public` event with no server chosen reaches nobody but its
+  invitees, so the modal shows a `publishedNowhereButShared` warning rather
+  than letting that happen silently.
+- A server registered by id but never seen by the gateway has no name yet;
+  both the page and the picker render the id with a "name appears once the
+  bot reconnects" note instead of blank.
+
+**Deliberately not done: editing publications after creation** (agreed with
+the user). Un-publishing means deleting a Discord message that people may
+have already reacted to — reactions *are* the RSVP record, so deleting one
+destroys data. Adding a server later is the easy half, but shipping only
+that reads as "publications are editable" when they're half-editable.
+
+⚠️ **Still not verifiable here**: the invite link, `guild_create`, and the
+per-guild announce all need real Discord. Everything DB-side is tested; the
+gateway and REST halves are not.
 
 ## Feature backlog — 2026-09-16 triage
 
