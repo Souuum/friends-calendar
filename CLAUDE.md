@@ -775,6 +775,63 @@ Applied to:
   "0" state never actually renders) - replaced with `anim-pop` on the
   tooltip card.
 
+## Feature backlog — 2026-09-16 triage
+
+Triaged against the working tree (every claim below was verified by
+grep/probe, not carried over from an earlier session's notes). The theme:
+**most of what's missing isn't missing UI, it's controls that already
+exist and silently do nothing.** Fix those before adding features — a
+settings page that can't save undermines trust in every other control.
+
+Run order matters twice: `settings-integrity` builds the preference gate
+that `event-reminders` plugs into, and `event-visibility-listing` settles
+"who can see this event", which is the same question as "who should be
+reminded about it".
+
+1. `.claude/skills/settings-integrity/SKILL.md` — **P0, contains a live
+   bug.** `Visibility` derives `#[sqlx(rename_all = "lowercase")]` but no
+   serde rename, so JSON is `"Friends"`; `/settings` sends `"friends"`
+   (and `types.ts` types it lowercase), so **`PATCH /api/auth/me` has
+   never succeeded** — the page cannot save anything, and the `<select>`
+   can't display the loaded value either. `CreateEventModal` gets it right,
+   which is why event creation works and the two pages disagree. Verified
+   by probe: `to_string(Visibility::Friends)` => `"Friends"`, and
+   `from_str("\"friends\"")` is an `Err`. Nothing caught it because the
+   `services::profile` tests construct `Visibility::Public` in Rust and
+   bypass serde entirely — the fix needs a *functional* test through the
+   real router. Same skill then makes `default_visibility` apply at event
+   creation and gates the four `notify_*` toggles (today: written by
+   `services::profile`, read by nobody) inside
+   `services::notifications::create`.
+2. `.claude/skills/event-visibility-listing/SKILL.md` — `visibility` has no
+   effect on listing. `list_user_events` is participant-only, so a `public`
+   event reaches exactly the people who'd see it if it were `private`.
+   Note `GET /api/events/:id` *does* check `OR e.visibility = 'public'`, so
+   the two endpoints already disagree. Carries real privacy decisions
+   (does `friends` mean guild-synced friends or only accepted requests?) —
+   the skill flags them rather than guessing.
+3. `.claude/skills/event-edit-flow/SKILL.md` — cheapest real win.
+   `PUT /api/events/:id` and `api.updateEvent()` both exist with **zero
+   callers**, and `EventPeekPanel` ships a permanently `disabled` "Edit"
+   button. Also settles the orphaned `EventDetailsModal` (kept alive only
+   because `mockup-responsive-calendar` plans to reuse it as the mobile
+   sheet) and the currently-unreachable delete path.
+4. `.claude/skills/event-reminders/SKILL.md` — the one genuinely new
+   feature. `discord_bot_config.reminders_channel_id` has been configurable
+   on `/server` since migration 008 and is used by nothing. Model it on
+   `services::digest` (pure `is_due` + `maybe_send_*` + `spawn_*_loop`),
+   not on a new pattern.
+
+Still open, not worth a skill file yet:
+- `bot.rs` / `discord_announcement.rs` have no tests — see the Discord bot
+  section below for why, and `.claude/skills/add-tests/SKILL.md` for the
+  `wiremock` pattern that would work for the HTTP half.
+- `users.timezone` is stored and never used for rendering; everything goes
+  through `toLocaleDateString` on the browser's zone.
+- The 8 written-but-unexecuted `mockup-responsive-*` /
+  `mockup-announcement-thread` skills (see the roadmap above) are still
+  valid and independent of all of the above.
+
 ## `desktop/` (SvelteKit + Tauri)
 
 ```
