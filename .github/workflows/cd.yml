@@ -109,13 +109,39 @@ jobs:
 
       - name: Health check (through the tunnel)
         run: |
+          DOMAIN="${{ secrets.PROD_DOMAIN }}"
+          if [ -z "$DOMAIN" ]; then
+            echo "::error::PROD_DOMAIN is empty. Set it on the production environment to e.g. api.example.com (no scheme)."
+            exit 1
+          fi
+
           for i in 1 2 3 4 5; do
-            if curl -fsS "https://${{ secrets.PROD_DOMAIN }}/"; then
+            if curl -fsS "https://$DOMAIN/"; then
               echo "✅ Health check passed"
               exit 0
             fi
             echo "⏳ Waiting for service... ($i/5)"
             sleep 10
           done
-          echo "❌ Health check failed - service did not come back up after deploy"
+
+          # The local check already passed, so the binary is running and the
+          # migrations ran. Everything below is about the path *to* it, and
+          # saying so beats "the service did not come back up" - which would
+          # be simply untrue here and sends people to read app logs.
+          echo "::error::The service is up locally but unreachable at https://$DOMAIN/"
+          echo ""
+          echo "The app itself is fine - the local health check passed. Check, in order:"
+          if ! getent hosts "$DOMAIN" >/dev/null 2>&1; then
+            echo "  1. $DOMAIN does NOT resolve. The tunnel's public hostname is"
+            echo "     probably missing: Zero Trust -> Networks -> Tunnels -> your"
+            echo "     tunnel -> Public Hostname -> Add, pointing at this container:8080."
+          else
+            echo "  1. $DOMAIN resolves, so DNS is fine - the tunnel route or its"
+            echo "     origin address is likely wrong."
+          fi
+          echo "  2. If cloudflared runs OUTSIDE this container, BIND_ADDR must be"
+          echo "     0.0.0.0:8080 in /opt/friends-calendar/.env - the default"
+          echo "     127.0.0.1:8080 is reachable from in here (which is why the"
+          echo "     local check passed) but not from another machine."
+          echo "  3. PROD_DOMAIN should have no scheme - the workflow adds https://."
           exit 1
