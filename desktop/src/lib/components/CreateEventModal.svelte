@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from 'svelte';
   import { api } from '$lib/api';
-  import type { FriendInfo } from '$lib/types';
+  import type { FriendInfo, Visibility } from '$lib/types';
 
   const dispatch = createEventDispatcher();
 
@@ -10,7 +10,7 @@
   let startTime = '';
   let endTime = '';
   let location = '';
-  let visibility: 'Private' | 'Friends' | 'Public' = 'Friends';
+  let visibility: Visibility = 'friends';
   let loading = false;
   let error = '';
   let price = '';
@@ -196,9 +196,9 @@
             bind:value={visibility}
             class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
           >
-            <option value="Private">Private (only you)</option>
-            <option value="Friends">Friends</option>
-            <option value="Public">Public</option>
+            <option value="private">Private (only you)</option>
+            <option value="friends">Friends</option>
+            <option value="public">Public</option>
           </select>
         </div>
 

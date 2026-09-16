@@ -4,8 +4,15 @@ use sqlx::FromRow;
 use sqlx::Type;
 use uuid::Uuid;
 
+// Two separate rename_alls, and they are not redundant: the `sqlx` one
+// controls the Postgres enum representation, the `serde` one controls the
+// JSON wire format. Without the serde one, JSON used the Rust variant
+// names ("Friends"), while the entire frontend sends and compares
+// lowercase - so PATCH /api/auth/me and PUT /api/events/:id/participation
+// both 422'd on every request the app actually made. Keep them in sync.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Type, PartialEq)]
 #[sqlx(type_name = "visibility", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum Visibility {
     #[default]
     Private,
@@ -13,8 +20,10 @@ pub enum Visibility {
     Public,
 }
 
+// See the note on Visibility above - same split, same reason.
 #[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq)]
 #[sqlx(type_name = "participation_status", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum ParticipationStatus {
     Pending,
     Accepted,

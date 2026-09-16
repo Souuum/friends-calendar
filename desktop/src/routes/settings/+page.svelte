@@ -4,7 +4,7 @@
   import { api } from '$lib/api';
   import { user as userStore } from '$lib/stores';
   import Frame from '$lib/components/templates/Frame.svelte';
-  import type { User } from '$lib/types';
+  import type { User, Visibility } from '$lib/types';
 
   let profile: User | null = null;
   let loading = true;
@@ -12,7 +12,7 @@
 
   let displayName = '';
   let timezone = 'UTC';
-  let defaultVisibility: 'private' | 'friends' | 'public' = 'friends';
+  let defaultVisibility: Visibility = 'friends';
   let notifyEventInvites = true;
   let notifyRsvpChanges = true;
   let notifyAnnouncements = false;

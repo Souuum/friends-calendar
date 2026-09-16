@@ -326,3 +326,124 @@ pub async fn link_discord_message(
 
     Ok(Json(event))
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use chrono::{Duration, Utc};
+    use serde_json::Value;
+    use sqlx::PgPool;
+    use tower::ServiceExt;
+
+    use crate::config::AppState;
+    use crate::handlers::auth::generate_jwt;
+    use crate::models::CreateEventRequest;
+    use crate::services::auth::create_or_update_user;
+
+    async fn seed_user(db: &PgPool, discord_id: &str, username: &str) -> crate::models::User {
+        create_or_update_user(
+            db,
+            crate::models::DiscordUser {
+                id: discord_id.to_string(),
+                username: username.to_string(),
+                discriminator: "0".to_string(),
+                avatar: None,
+                email: None,
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    // Companion to handlers::profile's casing regression test. The RSVP
+    // path was the worse half of the same bug: the frontend's
+    // api.updateParticipation sends {"status":"accepted"} (types.ts
+    // `Status` is lowercase throughout), and ParticipationStatus rejected
+    // it, so every Going/Maybe/Can't click failed. The component tests
+    // didn't catch it because they build fixtures in TypeScript and never
+    // cross the JSON boundary.
+    #[sqlx::test]
+    async fn update_participation_accepts_the_lowercase_status_the_client_sends(db: PgPool) {
+        let creator = seed_user(&db, "creator-discord", "creator").await;
+        let invitee = seed_user(&db, "invitee-discord", "invitee").await;
+
+        let event = crate::services::calendar::create_event(
+            &db,
+            creator.id,
+            CreateEventRequest {
+                title: "Board games".to_string(),
+                description: None,
+                start_time: Utc::now() + Duration::days(1),
+                end_time: Utc::now() + Duration::days(1) + Duration::hours(2),
+                location: None,
+                visibility: None,
+                participant_ids: Some(vec![invitee.id]),
+                price: None,
+                link: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let state = AppState::for_test(db, "http://unused.invalid".to_string());
+        let token = generate_jwt(&invitee.discord_id, &state.jwt_secret).unwrap();
+        let app = crate::build_router(state);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/api/events/{}/participation", event.id))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"status":"accepted"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "the exact body api.updateParticipation sends must be accepted"
+        );
+
+        // And it must read back in the same casing, or Calendar.svelte's
+        // `my_status === 'accepted'` filter and EventPeekPanel's STATUS
+        // lookup both silently miss.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/events/{}", event.id))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["my_status"], "accepted");
+        assert_eq!(json["visibility"], "private");
+
+        // Not indexed by position - participant order isn't guaranteed and
+        // isn't what this test is about. Every status must be one of the
+        // lowercase values types.ts declares in `Status`.
+        let participants = json["participants"].as_array().unwrap();
+        assert!(!participants.is_empty());
+        for p in participants {
+            let status = p["status"].as_str().unwrap();
+            assert!(
+                matches!(status, "pending" | "accepted" | "declined" | "maybe"),
+                "participant status {status:?} is not one of the lowercase values the client expects"
+            );
+        }
+    }
+}

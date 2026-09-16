@@ -7,7 +7,7 @@ export interface User {
   email?: string;
   display_name?: string;
   timezone: string;
-  default_visibility: 'private' | 'friends' | 'public';
+  default_visibility: Visibility;
   notify_event_invites: boolean;
   notify_rsvp_changes: boolean;
   notify_announcements: boolean;
@@ -17,7 +17,7 @@ export interface User {
 export interface UpdateProfileRequest {
   display_name?: string;
   timezone?: string;
-  default_visibility?: 'private' | 'friends' | 'public';
+  default_visibility?: Visibility;
   notify_event_invites?: boolean;
   notify_rsvp_changes?: boolean;
   notify_announcements?: boolean;
@@ -48,7 +48,7 @@ export interface CalendarEvent {
   start_time: string;
   end_time: string;
   location?: string;
-  visibility: 'private' | 'friends' | 'public';
+  visibility: Visibility;
   created_at: string;
   updated_at: string;
   discord_message_id?: string;
@@ -58,6 +58,12 @@ export interface CalendarEvent {
 }
 
 export type Status = 'pending' | 'accepted' | 'declined' | 'maybe';
+
+// Must stay lowercase and must match the backend's Visibility enum, which
+// carries #[serde(rename_all = "lowercase")] for exactly this reason. This
+// union used to be written out inline in four places; one of them drifted
+// to the capitalized form and silently 422'd every request that sent it.
+export type Visibility = 'private' | 'friends' | 'public';
 
 export interface ParticipantInfo {
   user_id: string;

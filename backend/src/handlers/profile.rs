@@ -107,6 +107,58 @@ mod tests {
         assert_eq!(json["display_name"], "Me!");
     }
 
+    // Regression guard for a bug that shipped undetected: every enum this
+    // API exposes is lowercase on the wire, because that is what the whole
+    // frontend uses (types.ts `Status`, the visibility unions, the
+    // settings <select> option values). The service-level tests in
+    // services::profile construct `Visibility::Public` in Rust and never
+    // cross the JSON boundary, and the functional test above only ever
+    // sent `display_name` - so nothing noticed that PATCH /api/auth/me
+    // rejected the real payload outright and the settings page could not
+    // save anything at all.
+    //
+    // The body below is exactly what settings/+page.svelte's handleSave
+    // sends. Don't "simplify" it to just the visibility field.
+    #[sqlx::test]
+    async fn patch_me_accepts_the_payload_the_settings_page_actually_sends(db: PgPool) {
+        let user = seed_user(&db, "me-discord", "me").await;
+
+        let state = AppState::for_test(db, "http://unused.invalid".to_string());
+        let token = generate_jwt(&user.discord_id, &state.jwt_secret).unwrap();
+        let app = crate::build_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri("/api/auth/me")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        r#"{"display_name":"Me!","timezone":"Europe/Paris","default_visibility":"public","notify_event_invites":true,"notify_rsvp_changes":false,"notify_announcements":true,"notify_weekly_digest":false}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "the settings page's own payload must be accepted"
+        );
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        // And it has to come back in the same casing, or the <select> on
+        // the settings page can't match it to an option.
+        assert_eq!(json["default_visibility"], "public");
+        assert_eq!(json["timezone"], "Europe/Paris");
+        assert_eq!(json["notify_rsvp_changes"], false);
+    }
+
     #[sqlx::test]
     async fn delete_account_400s_on_a_confirmation_mismatch_and_keeps_the_account(db: PgPool) {
         let user = seed_user(&db, "me-discord", "me").await;

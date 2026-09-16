@@ -1,5 +1,6 @@
 import type {
   User,
+  Visibility,
   CalendarEvent,
   EventWithParticipants,
   ParticipantInfo,
@@ -89,7 +90,7 @@ class ApiClient {
     start_time: string;
     end_time: string;
     location?: string;
-    visibility?: 'Private' | 'Friends' | 'Public';
+    visibility?: Visibility;
     participant_ids?: string[];
     price?: string;
     link?: string;
