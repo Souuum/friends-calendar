@@ -7,7 +7,7 @@ pub mod friendship;
 pub mod notification;
 pub mod user;
 
-pub use announcement::{AnnouncementPostInfo, AnnouncementPostRow};
+pub use announcement::{AnnouncementPostInfo, AnnouncementPostRow, ReplyInfo};
 pub use calendar_event::{
     CalendarEvent, CreateEventRequest, EventParticipant, EventWithParticipants,
     InviteParticipantsRequest, ListEventsQuery, ParticipantInfo, ParticipationStatus,

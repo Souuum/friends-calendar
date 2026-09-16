@@ -52,3 +52,16 @@ impl From<AnnouncementPostRow> for AnnouncementPostInfo {
         }
     }
 }
+
+/// A single reply in an announcement's Discord thread.
+///
+/// Serialize-only and fetched live from Discord rather than cached:
+/// `announcement_posts.reply_count` is whatever the last sync saw, which is
+/// stale the moment anyone replies.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReplyInfo {
+    pub author_username: String,
+    pub author_avatar_url: Option<String>,
+    pub body: String,
+    pub posted_at: DateTime<Utc>,
+}

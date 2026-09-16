@@ -18,6 +18,11 @@
    * dark feed, which defeats the point of singling one out.
    */
   export let featured = false;
+  /**
+   * Off on the thread page itself, where the card is the thread's own
+   * header - linking from there back to where you already are is noise.
+   */
+  export let linkToThread = true;
 
   function tagLabel(tag: string): string {
     return tag === 'event' ? '📅 Event' : '💬 General';
@@ -59,5 +64,13 @@
   <div class="flex items-center gap-4 text-sm border-t pt-2 {featured ? 'text-muted border-white/10' : 'text-gray-500 border-gray-100'}">
     <span>👍 {post.reaction_count}</span>
     <span>💬 {post.reply_count} {post.reply_count === 1 ? 'reply' : 'replies'}</span>
+    {#if linkToThread}
+      <a
+        href={`/announcements/${post.id}`}
+        class="ml-auto text-xs font-semibold {featured ? 'text-white' : 'text-discord-blurple'}"
+      >
+        Open thread
+      </a>
+    {/if}
   </div>
 </div>

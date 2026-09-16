@@ -830,6 +830,29 @@ speculatively.
     (`AnnouncementPostCard`'s `featured` prop), not every pinned one - a
     column of dark cards would defeat the point of singling one out. Tested
     both ways.
+- `.claude/skills/mockup-announcement-thread/SKILL.md` — **done
+  2026-09-16.** Real replies, posted back into the announcement's Discord
+  thread, not a read-only view.
+  - `services::discord_feed` gained `fetch_or_create_thread` and
+    `fetch_replies`, both `reqwest`-based with `base_url` as a parameter so
+    they stay wiremock-testable — deliberately *not* serenity, which would
+    have broken that (see the skill and `add-tests`).
+  - **A thread started from a message is addressed by that message's id.**
+    `fetch_or_create_thread` GETs the message first to see whether a thread
+    exists, and falls back to the message id when the payload doesn't spell
+    the thread id out. Same fact the reminder feature relies on.
+  - `GET /api/announcements/:id/replies` and `POST /api/announcements/:id/reply`.
+    Both resolve the local UUID to `discord_message_id`/`channel_id`
+    **server-side** — `AnnouncementPostInfo` still exposes neither, and a
+    test asserts that.
+  - Replies are always a **live fetch**, never
+    `announcement_posts.reply_count`, which is whatever the last sync saw.
+    Posting deliberately does *not* bump that column: a locally-incremented
+    count would be a second source of truth drifting from Discord. `POST`
+    returns the refreshed thread so the client needs no second round-trip
+    and no optimistic guess.
+  - New `/announcements/[id]` route, built mobile-first (docked composer
+    below `md:`, inline above). A failed send keeps the draft.
 - `.claude/skills/mockup-responsive-calendar/SKILL.md` (original entry),
   `mockup-responsive-friends/SKILL.md`,
   `mockup-responsive-add-friends/SKILL.md`,

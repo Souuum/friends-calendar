@@ -5,7 +5,7 @@ use serde::Deserialize;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::models::{AnnouncementPostInfo, AnnouncementPostRow};
+use crate::models::{AnnouncementPostInfo, AnnouncementPostRow, ReplyInfo, User};
 
 // Discord's own per-request cap on GET /channels/{id}/messages.
 const MESSAGES_PAGE_LIMIT: usize = 50;
@@ -24,6 +24,11 @@ struct DiscordReaction {
 
 #[derive(Debug, Deserialize)]
 struct DiscordThread {
+    /// Optional so existing message fixtures that only carry
+    /// `message_count` still parse. When absent we fall back to the message
+    /// id, which is what Discord uses for a thread started from a message.
+    #[serde(default)]
+    id: Option<String>,
     #[serde(default)]
     message_count: i32,
 }
@@ -202,6 +207,119 @@ pub async fn count_posts_since(db: &PgPool, channel_id: &str, since: DateTime<Ut
 /// Posts a plain text message to a channel via the bot token - shared by
 /// the digest job (services::digest) so it doesn't need its own HTTP
 /// plumbing or a second way of talking to Discord.
+/// Resolves the thread hanging off an announcement message, creating one if
+/// Discord doesn't have it yet. Returns the thread id.
+///
+/// A thread started *from a message* shares that message's id, so the happy
+/// path is usually "the id you already have" - but only once a thread
+/// exists. `GET`ting the message first tells us which case we're in without
+/// relying on create-returns-409 behaviour.
+///
+/// reqwest rather than serenity on purpose: everything in this module takes
+/// `base_url` as a parameter so it can be pointed at a wiremock server. See
+/// .claude/skills/add-tests/SKILL.md.
+pub async fn fetch_or_create_thread(
+    base_url: &str,
+    http: &Client,
+    bot_token: &str,
+    channel_id: &str,
+    message_id: &str,
+    thread_name: &str,
+) -> Result<String> {
+    let message: DiscordMessage = get_json(
+        http,
+        bot_token,
+        &format!("{base_url}/channels/{channel_id}/messages/{message_id}"),
+    )
+    .await?;
+
+    if let Some(thread) = message.thread {
+        // A thread started from a message is addressed by that message's id,
+        // so the fallback is exact rather than a guess.
+        return Ok(thread.id.unwrap_or_else(|| message_id.to_string()));
+    }
+
+    // Discord caps thread names at 100 chars; truncate on a char boundary,
+    // not a byte one, or a multi-byte character straddling the cut panics.
+    let name: String = thread_name.chars().take(90).collect();
+    let name = if name.trim().is_empty() {
+        "Thread".to_string()
+    } else {
+        name
+    };
+
+    let url = format!("{base_url}/channels/{channel_id}/messages/{message_id}/threads");
+    let response = http
+        .post(&url)
+        .header("Authorization", format!("Bot {bot_token}"))
+        .json(&serde_json::json!({ "name": name }))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(anyhow!("Discord API error ({status}): {body}"));
+    }
+
+    let created: DiscordThread = response.json().await?;
+    Ok(created.id.unwrap_or_else(|| message_id.to_string()))
+}
+
+/// The replies in a thread, oldest first.
+///
+/// Deliberately a live fetch rather than a read of `announcement_posts` -
+/// `reply_count` there is whatever the last sync saw, and a reply posted a
+/// second ago wouldn't be in it.
+pub async fn fetch_replies(
+    base_url: &str,
+    http: &Client,
+    bot_token: &str,
+    thread_id: &str,
+) -> Result<Vec<ReplyInfo>> {
+    let messages: Vec<DiscordMessage> = get_json(
+        http,
+        bot_token,
+        &format!("{base_url}/channels/{thread_id}/messages?limit=100"),
+    )
+    .await?;
+
+    let mut replies: Vec<ReplyInfo> = messages
+        .into_iter()
+        .filter(|m| !m.content.trim().is_empty())
+        .map(|m| ReplyInfo {
+            author_username: m.author.username,
+            author_avatar_url: User::build_avatar_url(&m.author.id, &m.author.avatar),
+            body: m.content,
+            posted_at: m.timestamp,
+        })
+        .collect();
+
+    // Discord returns newest-first; a thread reads oldest-first.
+    replies.reverse();
+    Ok(replies)
+}
+
+async fn get_json<T: serde::de::DeserializeOwned>(
+    http: &Client,
+    bot_token: &str,
+    url: &str,
+) -> Result<T> {
+    let response = http
+        .get(url)
+        .header("Authorization", format!("Bot {bot_token}"))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(anyhow!("Discord API error ({status}): {body}"));
+    }
+
+    Ok(response.json().await?)
+}
+
 pub async fn send_channel_message(
     base_url: &str,
     http: &Client,
@@ -490,5 +608,175 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("403"));
+    }
+
+    #[tokio::test]
+    async fn fetch_or_create_thread_reuses_an_existing_thread() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/channels/chan1/messages/msg1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "msg1",
+                "author": { "id": "1", "username": "alice", "avatar": null },
+                "content": "hello",
+                "timestamp": "2026-03-01T12:00:00Z",
+                "thread": { "id": "thread-9", "message_count": 3 }
+            })))
+            .mount(&server)
+            .await;
+
+        let thread = fetch_or_create_thread(
+            &server.uri(),
+            &Client::new(),
+            "token",
+            "chan1",
+            "msg1",
+            "Ski trip",
+        )
+        .await
+        .unwrap();
+
+        // No POST mock is registered - creating one would 404 here, which is
+        // the point: an existing thread must not be recreated.
+        assert_eq!(thread, "thread-9");
+    }
+
+    #[tokio::test]
+    async fn fetch_or_create_thread_falls_back_to_the_message_id() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/channels/chan1/messages/msg1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "msg1",
+                "author": { "id": "1", "username": "alice", "avatar": null },
+                "content": "hello",
+                "timestamp": "2026-03-01T12:00:00Z",
+                // A thread whose payload we only partially parse - Discord
+                // addresses a message-thread by the message id anyway.
+                "thread": { "message_count": 3 }
+            })))
+            .mount(&server)
+            .await;
+
+        let thread = fetch_or_create_thread(
+            &server.uri(),
+            &Client::new(),
+            "token",
+            "chan1",
+            "msg1",
+            "Ski trip",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(thread, "msg1");
+    }
+
+    #[tokio::test]
+    async fn fetch_or_create_thread_creates_one_when_the_message_has_none() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/channels/chan1/messages/msg1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "msg1",
+                "author": { "id": "1", "username": "alice", "avatar": null },
+                "content": "hello",
+                "timestamp": "2026-03-01T12:00:00Z"
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/channels/chan1/messages/msg1/threads"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "id": "new-thread" })))
+            .mount(&server)
+            .await;
+
+        let thread = fetch_or_create_thread(
+            &server.uri(),
+            &Client::new(),
+            "token",
+            "chan1",
+            "msg1",
+            "Ski trip",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(thread, "new-thread");
+    }
+
+    // Discord caps thread names at 100 chars. Truncating by bytes would
+    // panic on a multi-byte character straddling the cut.
+    #[tokio::test]
+    async fn fetch_or_create_thread_truncates_a_long_multibyte_name() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/channels/chan1/messages/msg1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "msg1",
+                "author": { "id": "1", "username": "alice", "avatar": null },
+                "content": "hello",
+                "timestamp": "2026-03-01T12:00:00Z"
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/channels/chan1/messages/msg1/threads"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "id": "t" })))
+            .mount(&server)
+            .await;
+
+        let name = "é".repeat(200);
+        let thread = fetch_or_create_thread(
+            &server.uri(),
+            &Client::new(),
+            "token",
+            "chan1",
+            "msg1",
+            &name,
+        )
+        .await
+        .unwrap();
+        assert_eq!(thread, "t");
+    }
+
+    #[tokio::test]
+    async fn fetch_replies_returns_oldest_first_and_skips_empty_messages() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/channels/thread-9/messages"))
+            // Discord returns newest-first.
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {
+                    "id": "m3",
+                    "author": { "id": "3", "username": "carol", "avatar": null },
+                    "content": "last",
+                    "timestamp": "2026-03-01T14:00:00Z"
+                },
+                {
+                    "id": "m2",
+                    "author": { "id": "2", "username": "bob", "avatar": null },
+                    "content": "   ",
+                    "timestamp": "2026-03-01T13:00:00Z"
+                },
+                {
+                    "id": "m1",
+                    "author": { "id": "1", "username": "alice", "avatar": null },
+                    "content": "first",
+                    "timestamp": "2026-03-01T12:00:00Z"
+                }
+            ])))
+            .mount(&server)
+            .await;
+
+        let replies = fetch_replies(&server.uri(), &Client::new(), "token", "thread-9")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            replies.iter().map(|r| r.body.as_str()).collect::<Vec<_>>(),
+            vec!["first", "last"],
+            "a thread reads oldest-first, and an attachment-only message has no body to show"
+        );
     }
 }

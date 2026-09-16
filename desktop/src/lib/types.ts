@@ -158,3 +158,11 @@ export type ButtonType = 'button' | 'submit' | 'reset';
  * at 402px, where a 7-column grid has ~55px per day.
  */
 export type ViewType = 'month' | 'week' | 'day' | 'list';
+
+/** A reply in an announcement's Discord thread. Fetched live, never cached. */
+export interface ReplyInfo {
+  author_username: string;
+  author_avatar_url?: string;
+  body: string;
+  posted_at: string;
+}

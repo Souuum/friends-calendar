@@ -13,7 +13,8 @@ import type {
   UpdateProfileRequest,
   BotChannelConfig,
   UpdateBotChannelConfigRequest,
-  AnnouncementPostInfo
+  AnnouncementPostInfo,
+  ReplyInfo
 } from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
@@ -221,6 +222,23 @@ class ApiClient {
   async syncAnnouncements(): Promise<AnnouncementPostInfo[]> {
     return this.fetch<AnnouncementPostInfo[]>('/api/announcements/sync', {
       method: 'POST'
+    });
+  }
+
+  /**
+   * Replies live in the post's Discord thread, so both of these hit Discord
+   * server-side rather than reading announcement_posts.reply_count - that
+   * count is whatever the last sync saw.
+   */
+  async getAnnouncementReplies(id: string): Promise<ReplyInfo[]> {
+    return this.fetch<ReplyInfo[]>(`/api/announcements/${id}/replies`);
+  }
+
+  /** Returns the refreshed thread, not just the sent reply. */
+  async postAnnouncementReply(id: string, body: string): Promise<ReplyInfo[]> {
+    return this.fetch<ReplyInfo[]>(`/api/announcements/${id}/reply`, {
+      method: 'POST',
+      body: JSON.stringify({ body })
     });
   }
 

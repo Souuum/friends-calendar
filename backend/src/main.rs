@@ -150,6 +150,14 @@ pub(crate) fn build_router(state: AppState) -> Router {
             "/api/announcements/sync",
             post(handlers::announcements::sync_announcements),
         )
+        .route(
+            "/api/announcements/:id/replies",
+            get(handlers::announcements::list_replies),
+        )
+        .route(
+            "/api/announcements/:id/reply",
+            post(handlers::announcements::post_reply),
+        )
         .layer(cors)
         .with_state(state)
 }
