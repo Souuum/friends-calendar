@@ -1020,6 +1020,38 @@ Applied to:
   "0" state never actually renders) - replaced with `anim-pop` on the
   tooltip card.
 
+## Two bugs the first real deployment surfaced (2026-09-17)
+
+Both pre-existing, both invisible locally because local dev always had
+seeded data and nobody read the compiled CSS.
+
+- ⚠️ **An empty calendar was a dead end.** `CalendarView.svelte` replaced
+  the whole calendar with a "No events yet" message when
+  `events.length === 0` - but `+ New Event` lives in `CalendarHeader`,
+  *inside* `Calendar`. So a fresh account had no way to create its first
+  event and stayed empty permanently, which is exactly the state a new
+  deployment starts in. The calendar now always renders and the hint sits
+  above it. `CalendarView` also carried a `showCreateModal` +
+  `CreateEventModal` that nothing ever set to true - dead since
+  `Calendar` took ownership of the modal; removed.
+- ⚠️ **`discord-blurple` was never defined**, in `@theme` or anywhere else,
+  yet 31 classes referenced it: 16 `focus:ring-`, 10 `text-`, 3 `bg-`,
+  2 `border-`. All compiled to **nothing**. `text-discord-blurple`
+  inherited and looked plausible, which is why it survived so long; but
+  `bg-discord-blurple` with `text-white` rendered white text on no
+  background - the announcements "Sync now" button was invisible until
+  hover, where a real `hover:bg-blue-600` took over. Now defined (`#5865f2`,
+  lifted in dark mode).
+
+`e2e/layout.spec.ts` gained **"no control is invisible against its own
+background"**, which generalises the second one: for every button and link
+it compares text luminance against the nearest ancestor that actually
+paints a background. ⚠️ Its first version *passed while the bug was still
+present* - the parser only understood `rgb()`, so the `oklch()` page ground
+returned null, the ancestor walk found nothing, and every element was
+skipped. Both this and `theme.spec.ts` now parse oklch; keep them in step.
+Validated by reintroducing the bug and confirming the check fails.
+
 ## Dark mode (2026-09-17)
 
 **Implemented by redefining Tailwind's colour variables under `.dark`, not

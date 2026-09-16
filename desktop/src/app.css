@@ -31,6 +31,14 @@ body {
   --color-line: #ebebeb;
   --color-muted: #7c7c83;
   --color-body: #5c5c61;
+  /* Discord's own brand blurple. 31 classes across the app referenced
+     `discord-blurple` - focus rings, links, the announcements "Sync now"
+     button - and it was never defined, so every one of them compiled to
+     nothing. `text-discord-blurple` silently inherited and looked
+     plausible; `bg-discord-blurple` with `text-white` rendered white text
+     on no background, i.e. an invisible button that only appeared on
+     hover, where a real `hover:bg-blue-600` took over. */
+  --color-discord-blurple: #5865f2;
   --font-mono: 'JetBrains Mono', monospace;
 }
 
@@ -107,6 +115,7 @@ body {
   --color-primary: oklch(62% 0.19 285);
   --color-primary-hover: oklch(35% 0.05 285 / 0.55);
   --color-secondary: oklch(60% 0.19 4);
+  --color-discord-blurple: oklch(65% 0.18 274);
   --color-red: oklch(65% 0.2 25);
   --color-yellow: oklch(80% 0.14 75);
 }

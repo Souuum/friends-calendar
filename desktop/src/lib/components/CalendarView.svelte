@@ -1,14 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib//api';
+  import { api } from '$lib/api';
   import type { EventWithParticipants } from '$lib/types';
   import Calendar from '$lib/components/templates/Calendar.svelte';
-  import CreateEventModal from '$lib/components/CreateEventModal.svelte';
 
   let events: EventWithParticipants[] = [];
   let loading = true;
   let error = '';
-  let showCreateModal = false;
 
   async function loadEvents() {
     try {
@@ -20,11 +18,6 @@
     } finally {
       loading = false;
     }
-  }
-
-  function handleEventCreated() {
-    showCreateModal = false;
-    loadEvents();
   }
 
   onMount(loadEvents);
@@ -42,18 +35,24 @@
     <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
       {error}
     </div>
-  {:else if events.length === 0}
-    <div class="text-center py-12">
-      <p class="text-gray-600 text-lg">No events yet</p>
-      <p class="text-gray-500 mt-2">Create your first event to get started!</p>
-    </div>
   {:else}
+    <!--
+      The calendar renders whether or not there are events. It used to be
+      replaced wholesale by an "No events yet" message, which was a dead
+      end: the "+ New Event" button lives in CalendarHeader, inside
+      Calendar - so an account with no events had no way to create one and
+      stayed empty permanently. A fresh deployment landed in exactly that
+      state.
+
+      The empty hint now sits above the grid instead of instead of it.
+    -->
+    {#if events.length === 0}
+      <p class="text-center text-sm text-gray-500 mb-2">
+        No events yet — create your first one with “+ New Event”.
+      </p>
+    {/if}
     <div class="bg-white rounded-lg shadow-sm relative">
       <Calendar {events} on:refresh={loadEvents} />
     </div>
   {/if}
 </main>
-
-{#if showCreateModal}
-  <CreateEventModal on:close={() => (showCreateModal = false)} on:created={handleEventCreated} />
-{/if}
