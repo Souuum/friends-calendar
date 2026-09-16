@@ -37,7 +37,7 @@ pub async fn create_event(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?
         .ok_or(AppError::Unauthorized)?;
 
-    let mut event = calendar::create_event(&state.db, user.id, req)
+    let event = calendar::create_event(&state.db, user.id, req)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
@@ -63,42 +63,64 @@ pub async fn create_event(
         None => state.discord_announcement_channel_id,
     };
 
-    if let (Some(bot_token), Some(channel_id)) = (&state.discord_bot_token, resolved_channel_id) {
-        match discord_announcement::announce_event(
-            &state.discord_api_base,
-            &state.http_client,
-            bot_token,
-            &channel_id.to_string(),
-            &event,
-        )
-        .await
-        {
-            Ok(message_id) => {
-                // Update event with Discord message ID
-                if let Ok(updated) = sqlx::query_as::<_, CalendarEvent>(
-                    r#"
-                    UPDATE calendar_events
-                    SET discord_message_id = $1, discord_channel_id = $2, updated_at = NOW()
-                    WHERE id = $3
-                    RETURNING *
-                    "#,
+    if let (Some(bot_token), Some(channel_id), Some(guild_id)) = (
+        &state.discord_bot_token,
+        resolved_channel_id,
+        &state.discord_guild_id,
+    ) {
+        // Recorded before posting, so a Discord failure loses the message but
+        // not the fact that this event was meant to go to this server. Still
+        // exactly one server today - see .claude/skills/multi-server/SKILL.md
+        // for the selection UI that makes it a list.
+        let publication = async {
+            let guild = crate::services::guilds::ensure_guild(&state.db, guild_id).await?;
+            crate::services::guilds::add_publication(
+                &state.db,
+                event.id,
+                guild,
+                &channel_id.to_string(),
+            )
+            .await
+        }
+        .await;
+
+        match publication {
+            Ok(publication_id) => {
+                match discord_announcement::announce_event(
+                    &state.discord_api_base,
+                    &state.http_client,
+                    bot_token,
+                    &channel_id.to_string(),
+                    &event,
                 )
-                .bind(&message_id)
-                .bind(channel_id.to_string())
-                .bind(event.id)
-                .fetch_one(&state.db)
                 .await
                 {
-                    event = updated;
-                    tracing::info!(
-                        "✅ Event announced and linked to Discord message {}",
-                        message_id
-                    );
+                    Ok(message_id) => {
+                        if let Err(e) = crate::services::guilds::mark_published(
+                            &state.db,
+                            publication_id,
+                            &message_id,
+                        )
+                        .await
+                        {
+                            // The announcement is out but unrecorded, so
+                            // reactions on it won't resolve. Worth shouting
+                            // about; not worth failing the event creation the
+                            // user already completed.
+                            tracing::error!(
+                                "❌ Announced but failed to record publication: {:?}",
+                                e
+                            );
+                        } else {
+                            tracing::info!("✅ Event announced as Discord message {}", message_id);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("⚠️  Failed to announce event to Discord: {:?}", e);
+                    }
                 }
             }
-            Err(e) => {
-                tracing::warn!("⚠️  Failed to announce event to Discord: {:?}", e);
-            }
+            Err(e) => tracing::warn!("⚠️  Failed to record publication: {:?}", e),
         }
     }
 
@@ -132,8 +154,6 @@ pub async fn preview_announcement(
         visibility: req.visibility.unwrap_or_default(),
         created_at: req.start_time,
         updated_at: req.start_time,
-        discord_message_id: None,
-        discord_channel_id: None,
         price: req.price,
         link: req.link,
     };
@@ -554,8 +574,6 @@ mod tests {
                 visibility: crate::models::Visibility::default(),
                 created_at: start,
                 updated_at: start,
-                discord_message_id: None,
-                discord_channel_id: None,
                 price: Some("15".to_string()),
                 link: None,
             },

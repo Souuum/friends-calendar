@@ -950,8 +950,39 @@ Also new: `user_guilds`. Membership is *derived* into friendships today and
 never stored, so there's currently no way to answer "which servers can this
 person publish to?".
 
-Start with the data model alone (step 1 in the skill) - mechanical, no UI,
-and everything else is easy afterwards.
+**Step 1 is done (2026-09-16, migration 014)**: `guilds`, `user_guilds` and
+`event_publications` exist, and `calendar_events.discord_message_id`/
+`discord_channel_id` are **gone** - the message id now lives on the
+publication. `bot.rs` (reaction → RSVP), `services::discord_feed` (event-tag
+inference) and `services::reminders` (which thread to post into) all resolve
+through `services::guilds` instead. Reminders already post to *every*
+publication's thread, so they need no further change when a second server
+arrives. Nothing yet chooses more than one server - that's step 5.
+
+⚠️ **Migration 014 can refuse to apply, on purpose.** It backfills the guild
+from `discord_bot_config` (the only place the database records it -
+`DISCORD_GUILD_ID` is an env var a migration can't read), and if any
+announced event still has no publication row afterwards it raises rather
+than dropping the columns. Losing a `discord_message_id` is silent and nasty:
+RSVP-by-reaction stops resolving and reminders lose their thread. Before
+deploying, check the target database has a config row:
+
+```sql
+SELECT count(*) FROM discord_bot_config;   -- must be >= 1 if any event has been announced
+```
+
+If it's 0 and events have been announced, insert a `guilds` row for the
+deployment's `DISCORD_GUILD_ID` first. `main.rs` also calls
+`services::guilds::ensure_guild` at startup, but that runs *after*
+migrations, so it can't rescue this particular case.
+
+Verified by hand on two scratch databases (the `#[sqlx::test]` harness only
+ever migrates empty ones): one seeded with a config row and an announced
+event, where everything carried across; and one without, where the migration
+refused, rolled back all three tables, and left the message id intact.
+
+Remaining steps: visibility scoping, per-guild bot channels, the bot-invite
+flow, then the server picker.
 
 ## Feature backlog — 2026-09-16 triage
 

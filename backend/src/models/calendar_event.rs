@@ -43,8 +43,6 @@ pub struct CalendarEvent {
     pub visibility: Visibility,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    pub discord_message_id: Option<String>,
-    pub discord_channel_id: Option<String>,
     pub price: Option<String>,
     pub link: Option<String>,
 }

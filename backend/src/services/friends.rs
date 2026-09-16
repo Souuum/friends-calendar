@@ -132,6 +132,22 @@ pub async fn sync_friends(
         .fetch_all(db)
         .await?;
 
+    // Record who is actually in this server while we have the answer. Friend
+    // sync has always derived friendships from guild membership and then
+    // thrown the membership away; publishing to a chosen set of servers needs
+    // it kept. Best-effort: failing to record membership shouldn't fail the
+    // friend sync the user asked for.
+    match crate::services::guilds::ensure_guild(db, guild_id).await {
+        Ok(guild) => {
+            let mut members: Vec<Uuid> = matched_users.iter().map(|u| u.id).collect();
+            members.push(user_id); // the syncing user is a member too
+            if let Err(e) = crate::services::guilds::set_guild_members(db, guild, &members).await {
+                tracing::warn!("Failed to record guild membership: {:?}", e);
+            }
+        }
+        Err(e) => tracing::warn!("Failed to register guild {}: {:?}", guild_id, e),
+    }
+
     let now = Utc::now();
     let mut synced_ids = Vec::with_capacity(matched_users.len());
 

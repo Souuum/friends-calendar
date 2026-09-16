@@ -68,7 +68,7 @@ fn split_title(content: &str) -> (Option<String>, String) {
 /// dropped entirely rather than guessed at.
 async fn infer_tag(db: &PgPool, discord_message_id: &str) -> Result<&'static str> {
     let matched: Option<String> = sqlx::query_scalar(
-        "SELECT discord_message_id FROM calendar_events WHERE discord_message_id = $1",
+        "SELECT discord_message_id FROM event_publications WHERE discord_message_id = $1",
     )
     .bind(discord_message_id)
     .fetch_optional(db)
@@ -459,19 +459,31 @@ mod tests {
         let creator_id = seed_user(&db, "author-1", "alice").await;
 
         // A calendar event already announced with this exact Discord
-        // message id - should tag as "event", not "general".
+        // message id - should tag as "event", not "general". The message id
+        // lives on the publication now, not the event.
+        let event_id = Uuid::new_v4();
         sqlx::query(
             r#"
             INSERT INTO calendar_events
-                (id, creator_id, title, start_time, end_time, visibility, created_at, updated_at, discord_message_id)
-            VALUES ($1, $2, 'Board Game Night', now(), now() + interval '1 hour', 'friends', now(), now(), 'msg-event')
+                (id, creator_id, title, start_time, end_time, visibility, created_at, updated_at)
+            VALUES ($1, $2, 'Board Game Night', now(), now() + interval '1 hour', 'friends', now(), now())
             "#,
         )
-        .bind(Uuid::new_v4())
+        .bind(event_id)
         .bind(creator_id)
         .execute(&db)
         .await
         .unwrap();
+
+        let guild = crate::services::guilds::ensure_guild(&db, "test-guild")
+            .await
+            .unwrap();
+        let publication = crate::services::guilds::add_publication(&db, event_id, guild, "chan1")
+            .await
+            .unwrap();
+        crate::services::guilds::mark_published(&db, publication, "msg-event")
+            .await
+            .unwrap();
 
         let server = MockServer::start().await;
         Mock::given(method("GET"))

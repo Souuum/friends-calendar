@@ -143,8 +143,6 @@ mod tests {
             visibility: Visibility::Friends,
             created_at: now,
             updated_at: now,
-            discord_message_id: None,
-            discord_channel_id: None,
             price: Some("15".to_string()),
             link: None,
         }

@@ -274,27 +274,32 @@ pub async fn send_due_reminders(
             }
         }
 
-        // A thread started from a message has the same id as that message,
-        // so discord_message_id addresses the thread directly - no separate
-        // thread id is stored. If thread creation failed back when the
-        // event was announced (discord_announcement tolerates that with a
-        // warning), this POST 404s; log and carry on rather than letting one
-        // event's missing thread stop the whole pass.
-        if let (Some(bot_token), Some(thread_id)) = (bot_token, &event.discord_message_id)
-            && let Err(e) = discord_feed::send_channel_message(
-                base_url,
-                http,
-                bot_token,
-                thread_id,
-                &format_reminder_message(event, item.lead_minutes),
-            )
-            .await
-        {
-            tracing::warn!(
-                "Failed to post reminder in thread for event {}: {:?}",
-                event.id,
-                e
-            );
+        // One reminder post per place the event was announced. A thread is
+        // addressed by the message that started it, so each publication has
+        // its own thread - with a single server this is the same one message
+        // it always was.
+        //
+        // A publication with no message id never posted (Discord failed at
+        // announce time), and one whose thread creation failed 404s here;
+        // both are logged and skipped rather than stopping the pass.
+        if let Some(bot_token) = bot_token {
+            for thread_id in crate::services::guilds::published_message_ids(db, event.id).await? {
+                if let Err(e) = discord_feed::send_channel_message(
+                    base_url,
+                    http,
+                    bot_token,
+                    &thread_id,
+                    &format_reminder_message(event, item.lead_minutes),
+                )
+                .await
+                {
+                    tracing::warn!(
+                        "Failed to post reminder in thread for event {}: {:?}",
+                        event.id,
+                        e
+                    );
+                }
+            }
         }
 
         // Stamped even if Discord failed above: the in-app reminders did go
@@ -377,10 +382,15 @@ mod tests {
         .await
         .unwrap();
 
-        sqlx::query("UPDATE calendar_events SET discord_message_id = $1 WHERE id = $2")
-            .bind("thread-123")
-            .bind(event.id)
-            .execute(db)
+        // The publication is what carries the message id now, and its
+        // message id is the thread reminders post into.
+        let guild = crate::services::guilds::ensure_guild(db, "test-guild")
+            .await
+            .unwrap();
+        let publication = crate::services::guilds::add_publication(db, event.id, guild, "chan1")
+            .await
+            .unwrap();
+        crate::services::guilds::mark_published(db, publication, "thread-123")
             .await
             .unwrap();
 
@@ -947,8 +957,6 @@ mod tests {
             visibility: crate::models::Visibility::Friends,
             created_at: Utc::now(),
             updated_at: Utc::now(),
-            discord_message_id: None,
-            discord_channel_id: None,
             price: Some("15".to_string()),
             link: None,
         };

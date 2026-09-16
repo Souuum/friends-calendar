@@ -204,13 +204,11 @@ pub async fn record_attendance(
     discord_id: &str,
     username: &str,
 ) -> anyhow::Result<ReactionOutcome> {
-    let event: Option<(Uuid, Uuid)> =
-        sqlx::query_as("SELECT id, creator_id FROM calendar_events WHERE discord_message_id = $1")
-            .bind(discord_message_id)
-            .fetch_optional(db)
-            .await?;
-
-    let Some((event_id, _creator_id)) = event else {
+    // Via event_publications, not calendar_events: one event can now be
+    // announced in several servers, so the message id lives on the
+    // publication rather than the event.
+    let Some(event_id) = crate::services::guilds::event_for_message(db, discord_message_id).await?
+    else {
         return Ok(ReactionOutcome::UnknownEvent);
     };
 
@@ -243,13 +241,8 @@ pub async fn withdraw_attendance(
     discord_message_id: &str,
     discord_id: &str,
 ) -> anyhow::Result<ReactionOutcome> {
-    let event_id: Option<Uuid> =
-        sqlx::query_scalar("SELECT id FROM calendar_events WHERE discord_message_id = $1")
-            .bind(discord_message_id)
-            .fetch_optional(db)
-            .await?;
-
-    let Some(event_id) = event_id else {
+    let Some(event_id) = crate::services::guilds::event_for_message(db, discord_message_id).await?
+    else {
         return Ok(ReactionOutcome::UnknownEvent);
     };
 
@@ -351,14 +344,22 @@ mod tests {
         .await
         .unwrap();
 
-        sqlx::query("UPDATE calendar_events SET discord_message_id = $1 WHERE id = $2")
-            .bind(message_id)
-            .bind(event.id)
-            .execute(db)
+        announce_in_test(db, event.id, message_id).await;
+        event.id
+    }
+
+    /// Stands in for handlers::calendar's announce path: a guild and a
+    /// publication carrying the Discord message id.
+    async fn announce_in_test(db: &PgPool, event_id: Uuid, message_id: &str) {
+        let guild = crate::services::guilds::ensure_guild(db, "test-guild")
             .await
             .unwrap();
-
-        event.id
+        let publication = crate::services::guilds::add_publication(db, event_id, guild, "chan1")
+            .await
+            .unwrap();
+        crate::services::guilds::mark_published(db, publication, message_id)
+            .await
+            .unwrap();
     }
 
     async fn status_of(db: &PgPool, event_id: Uuid, user_id: Uuid) -> Option<ParticipationStatus> {

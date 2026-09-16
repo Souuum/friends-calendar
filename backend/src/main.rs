@@ -173,6 +173,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize application state
     let state = AppState::new().await?;
 
+    // Make sure this deployment's guild has a row before anything tries to
+    // attach a publication to it. Migration 014 can only seed from
+    // discord_bot_config - a migration can't read DISCORD_GUILD_ID - so a
+    // deployment that never saved channel config on /server would otherwise
+    // have no guild at all. Idempotent.
+    if let Some(guild_id) = &state.discord_guild_id {
+        match services::guilds::ensure_guild(&state.db, guild_id).await {
+            Ok(_) => tracing::info!("🏠 Guild {} registered", guild_id),
+            Err(e) => tracing::error!("❌ Failed to register guild {}: {:?}", guild_id, e),
+        }
+    }
+
     // Start the Discord bot in the background if it's configured. Unlike
     // this branch's original .expect()-based setup, missing config here
     // doesn't take down the whole backend — same reasoning as friend sync
