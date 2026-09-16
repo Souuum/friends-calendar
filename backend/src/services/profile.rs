@@ -40,14 +40,18 @@ pub async fn update_profile(
     if let Some(v) = req.notify_weekly_digest {
         user.notify_weekly_digest = v;
     }
+    if let Some(v) = req.notify_event_reminders {
+        user.notify_event_reminders = v;
+    }
 
     let updated = sqlx::query_as::<_, User>(
         r#"
         UPDATE users
         SET display_name = $1, timezone = $2, default_visibility = $3,
             notify_event_invites = $4, notify_rsvp_changes = $5,
-            notify_announcements = $6, notify_weekly_digest = $7, updated_at = $8
-        WHERE id = $9
+            notify_announcements = $6, notify_weekly_digest = $7,
+            notify_event_reminders = $8, updated_at = $9
+        WHERE id = $10
         RETURNING *
         "#,
     )
@@ -58,6 +62,7 @@ pub async fn update_profile(
     .bind(user.notify_rsvp_changes)
     .bind(user.notify_announcements)
     .bind(user.notify_weekly_digest)
+    .bind(user.notify_event_reminders)
     .bind(Utc::now())
     .bind(user_id)
     .fetch_one(db)
@@ -141,6 +146,7 @@ mod tests {
                 notify_rsvp_changes: None,
                 notify_announcements: None,
                 notify_weekly_digest: None,
+                notify_event_reminders: None,
             },
         )
         .await
@@ -166,6 +172,7 @@ mod tests {
                 notify_rsvp_changes: None,
                 notify_announcements: None,
                 notify_weekly_digest: None,
+                notify_event_reminders: None,
             },
         )
         .await

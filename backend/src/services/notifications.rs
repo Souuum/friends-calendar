@@ -24,6 +24,7 @@ fn preference_column_for(kind: &str) -> Option<&'static str> {
         "event_invite" => Some("notify_event_invites"),
         "rsvp_change" => Some("notify_rsvp_changes"),
         "announcement" => Some("notify_announcements"),
+        "event_reminder" => Some("notify_event_reminders"),
         _ => None,
     }
 }

@@ -47,6 +47,10 @@ pub struct CalendarEvent {
     pub discord_channel_id: Option<String>,
     pub price: Option<String>,
     pub link: Option<String>,
+    /// Set by services::reminders once the reminder for this event has gone
+    /// out. `SELECT *` queries map it through FromRow, so this field has to
+    /// exist here or every event read breaks after migration 010.
+    pub reminder_sent_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

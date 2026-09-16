@@ -22,6 +22,7 @@ pub struct User {
     pub notify_rsvp_changes: bool,
     pub notify_announcements: bool,
     pub notify_weekly_digest: bool,
+    pub notify_event_reminders: bool,
 }
 
 impl User {
@@ -55,6 +56,7 @@ pub struct UpdateProfileRequest {
     pub notify_rsvp_changes: Option<bool>,
     pub notify_announcements: Option<bool>,
     pub notify_weekly_digest: Option<bool>,
+    pub notify_event_reminders: Option<bool>,
 }
 
 /// Deleting an account is real and immediate - this app has no "soft

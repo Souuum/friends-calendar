@@ -9,3 +9,4 @@ pub mod friend_requests;
 pub mod friends;
 pub mod notifications;
 pub mod profile;
+pub mod reminders;

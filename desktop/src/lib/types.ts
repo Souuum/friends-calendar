@@ -12,6 +12,7 @@ export interface User {
   notify_rsvp_changes: boolean;
   notify_announcements: boolean;
   notify_weekly_digest: boolean;
+  notify_event_reminders: boolean;
 }
 
 export interface UpdateProfileRequest {
@@ -22,6 +23,7 @@ export interface UpdateProfileRequest {
   notify_rsvp_changes?: boolean;
   notify_announcements?: boolean;
   notify_weekly_digest?: boolean;
+  notify_event_reminders?: boolean;
 }
 
 export interface BotChannelConfig {

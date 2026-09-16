@@ -49,6 +49,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     notify_rsvp_changes: true,
     notify_announcements: false,
     notify_weekly_digest: true,
+    notify_event_reminders: true,
     ...overrides
   };
 }
@@ -67,6 +68,25 @@ describe('settings page', () => {
 
     await waitFor(() => expect(screen.getByLabelText('Display name')).toHaveValue('Me!'));
     expect(screen.getByLabelText('Timezone')).toHaveValue('UTC');
+  });
+
+  it('round-trips the event-reminder preference', async () => {
+    getCurrentUser.mockResolvedValue(makeUser({ notify_event_reminders: true }));
+    updateProfile.mockResolvedValue(makeUser({ notify_event_reminders: false }));
+
+    render(SettingsPage);
+
+    const toggle = await waitFor(() => screen.getByLabelText(/Event reminders/));
+    expect(toggle).toBeChecked();
+
+    await fireEvent.click(toggle);
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() =>
+      expect(updateProfile).toHaveBeenCalledWith(
+        expect.objectContaining({ notify_event_reminders: false })
+      )
+    );
   });
 
   it('shows an error if the profile fails to load', async () => {

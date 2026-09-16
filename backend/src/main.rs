@@ -204,6 +204,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ));
     }
 
+    // Reminders need a bot token (to post in the event's thread) but no
+    // guild id - unlike the digest, they're addressed per event and per
+    // user, not per guild.
+    if let Some(bot_token) = &state.discord_bot_token {
+        tokio::spawn(services::reminders::spawn_reminder_loop(
+            state.discord_api_base.clone(),
+            state.db.clone(),
+            state.http_client.clone(),
+            bot_token.clone(),
+        ));
+    }
+
     let app = build_router(state);
 
     // Start server

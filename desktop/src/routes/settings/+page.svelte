@@ -17,6 +17,7 @@
   let notifyRsvpChanges = true;
   let notifyAnnouncements = false;
   let notifyWeeklyDigest = true;
+  let notifyEventReminders = true;
 
   let saving = false;
   let saveError = '';
@@ -38,6 +39,7 @@
       notifyRsvpChanges = profile.notify_rsvp_changes;
       notifyAnnouncements = profile.notify_announcements;
       notifyWeeklyDigest = profile.notify_weekly_digest;
+      notifyEventReminders = profile.notify_event_reminders;
     } catch (err) {
       loadError = err instanceof Error ? err.message : 'Failed to load profile';
     } finally {
@@ -57,7 +59,8 @@
         notify_event_invites: notifyEventInvites,
         notify_rsvp_changes: notifyRsvpChanges,
         notify_announcements: notifyAnnouncements,
-        notify_weekly_digest: notifyWeeklyDigest
+        notify_weekly_digest: notifyWeeklyDigest,
+        notify_event_reminders: notifyEventReminders
       });
       profile = updated;
       userStore.set(updated);
@@ -159,6 +162,11 @@
         <label class="flex items-center gap-2 text-sm">
           <input type="checkbox" bind:checked={notifyAnnouncements} />
           Announcements
+        </label>
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" bind:checked={notifyEventReminders} />
+          Event reminders
+          <span class="text-gray-500">— an hour before an event you're going to</span>
         </label>
         <!-- No per-user "Weekly digest" toggle here on purpose. The digest
              is a single message posted to one shared Discord channel

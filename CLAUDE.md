@@ -903,13 +903,46 @@ reminded about it".
    button. Also settles the orphaned `EventDetailsModal` (kept alive only
    because `mockup-responsive-calendar` plans to reuse it as the mobile
    sheet) and the currently-unreachable delete path.
-4. `.claude/skills/event-reminders/SKILL.md` — the one genuinely new
-   feature. `discord_bot_config.reminders_channel_id` has been configurable
+4. `.claude/skills/event-reminders/SKILL.md` — **done 2026-09-16.**
+   `services::reminders`, modelled on `services::digest` (pure `is_due` +
+   `send_due_reminders` + `spawn_reminder_loop`, spawned from `main.rs`).
+   Decisions taken with the user: delivered **in-app and into the event's
+   existing Discord thread** — *not* to `reminders_channel_id`, which
+   therefore remains configurable-but-unused on `/server`.
+   - **The thread is addressed by `discord_message_id`.** A Discord thread
+     started from a message shares that message's id, so no separate thread
+     id is stored. If thread creation failed when the event was announced
+     (`discord_announcement` tolerates that with a warning), this POST 404s
+     — it's logged and skipped, not fatal.
+   - Fixed 1-hour lead, polled every 5 minutes. Polling hourly for a
+     one-hour lead would let "starts in an hour" land up to an hour out.
+   - Reminds **accepted + maybe**; declined and never-answered are skipped.
+   - Idempotent via `calendar_events.reminder_sent_at` (migration 010,
+     with a partial index on the un-reminded rows). `is_due` also refuses
+     events that already started, so an outage doesn't fire a batch of
+     reminders for things already underway on restart.
+   - `reminder_sent_at` is stamped even if the Discord post fails: the
+     in-app reminders did go out, and retrying the event would re-notify
+     everyone to chase one Discord message.
+   - New `notify_event_reminders` preference (migration 010, default on,
+     toggle on `/settings`) wired into `preference_column_for` — so the
+     gate built by `settings-integrity` covers this new kind for free,
+     which is exactly why that skill was sequenced first.
+   - The thread message is **French**, matching
+     `discord_announcement`'s existing format, and uses Discord's
+     `<t:…:R>` timestamps so each reader sees their own timezone (which is
+     also why it doesn't consult the unused `users.timezone`). The in-app
+     notification stays English, like every other notification.
+   Original entry: the one genuinely new feature. `discord_bot_config.reminders_channel_id` has been configurable
    on `/server` since migration 008 and is used by nothing. Model it on
    `services::digest` (pure `is_due` + `maybe_send_*` + `spawn_*_loop`),
    not on a new pattern.
 
 Still open, not worth a skill file yet:
+- `discord_bot_config.reminders_channel_id` is *still* configurable on
+  `/server` and used by nothing: reminders go to the event's own thread
+  instead. Either wire it up as an additional destination or drop the
+  field from the form.
 - `bot.rs` / `discord_announcement.rs` have no tests — see the Discord bot
   section below for why, and `.claude/skills/add-tests/SKILL.md` for the
   `wiremock` pattern that would work for the HTTP half.
