@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from '$lib/components/atoms/Icon.svelte';
   import type { EventWithParticipants } from '$lib/types';
   import EventCardParticipant from '$lib/components/atoms/event/EventCardParticipant.svelte';
   import { formatDate } from '$lib/utils/dateUtils';
@@ -25,14 +26,25 @@
     }
   }
 
+  // Icon separate from text, so it can be sized and themed. 'maybe' and
+  // 'no response' intentionally have no icon: there is no glyph that reads
+  // as "undecided" without inventing one, and the words already say it.
+  function statusIcon(status?: string): 'accept' | 'decline' | undefined {
+    if (status === 'accepted') return 'accept';
+    if (status === 'declined') return 'decline';
+    return undefined;
+  }
+
+  $: myStatusIcon = statusIcon(event.my_status);
+
   function statusLabel(status?: string) {
     switch (status) {
       case 'accepted':
-        return '✓ You accepted';
+        return 'You accepted';
       case 'declined':
-        return '✗ You declined';
+        return 'You declined';
       case 'maybe':
-        return '? You said maybe';
+        return 'You said maybe';
       default:
         return 'No response yet';
     }
@@ -42,7 +54,14 @@
 <div class="bg-white rounded-lg shadow p-5 space-y-3">
   <div class="flex justify-between items-start gap-3">
     <h3 class="font-bold text-lg text-gray-900">{event.title}</h3>
-    <span class="shrink-0 text-xs px-2 py-1 rounded {statusColor(event.my_status)}">
+    <span
+      class="shrink-0 inline-flex items-center gap-1 text-xs px-2 py-1 rounded {statusColor(
+        event.my_status
+      )}"
+    >
+      {#if myStatusIcon}
+        <Icon name={myStatusIcon} size={12} />
+      {/if}
       {statusLabel(event.my_status)}
     </span>
   </div>
@@ -53,18 +72,18 @@
 
   <div class="space-y-1 text-sm text-gray-500">
     <div class="flex items-center gap-2">
-      <span>🕐</span>
+      <Icon name="time" size={16} />
       <span>{formatDate(event.start_time)}</span>
     </div>
     {#if event.location}
       <div class="flex items-center gap-2">
-        <span>📍</span>
+        <Icon name="location" size={16} />
         <span>{event.location}</span>
       </div>
     {/if}
     {#if event.price}
       <div class="flex items-center gap-2">
-        <span>💶</span>
+        <Icon name="price" size={16} />
         <span>{event.price}</span>
       </div>
     {/if}
@@ -73,7 +92,7 @@
            flex child's default min-width:auto refuses to shrink below its
            content. Without both, a long link widened the whole page. -->
       <div class="flex items-center gap-2 min-w-0">
-        <span class="shrink-0">🔗</span>
+        <Icon name="link" size={16} class="shrink-0" />
         <a
           href={event.link}
           target="_blank"

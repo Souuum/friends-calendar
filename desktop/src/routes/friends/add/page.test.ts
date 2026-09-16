@@ -87,7 +87,9 @@ describe('add friends page', () => {
     await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'bob' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
 
-    await waitFor(() => expect(screen.getByText('You and bob are now friends!')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText('You and bob are now friends!')).toBeInTheDocument()
+    );
   });
 
   it('surfaces an error from the backend (e.g. already pending)', async () => {
@@ -97,7 +99,9 @@ describe('add friends page', () => {
     await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'bob' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
 
-    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('A request is already pending'));
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('A request is already pending')
+    );
   });
 
   it('lists incoming requests and accepts one', async () => {
@@ -132,7 +136,9 @@ describe('add friends page', () => {
 
     render(AddFriendPage);
     await waitFor(() =>
-      expect(screen.getByText("5 members of your server aren't on Friends Calendar yet")).toBeInTheDocument()
+      expect(
+        screen.getByText("5 members of your server aren't on Friends Calendar yet")
+      ).toBeInTheDocument()
     );
 
     await fireEvent.click(screen.getByRole('button', { name: 'Post invite' }));
@@ -153,7 +159,7 @@ describe('add friends page', () => {
     render(AddFriendPage);
     await waitFor(() => expect(screen.getByText('No pending requests.')).toBeInTheDocument());
 
-    await fireEvent.click(screen.getByText('← Back to friends'));
+    await fireEvent.click(screen.getByText('Back to friends'));
 
     expect(goto).toHaveBeenCalledWith('/friends');
   });

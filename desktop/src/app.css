@@ -39,6 +39,10 @@ body {
      on no background, i.e. an invisible button that only appeared on
      hover, where a real `hover:bg-blue-600` took over. */
   --color-discord-blurple: #5865f2;
+  /* Same story: referenced once, by the login screen's gradient
+     (`from-discord-blurple to-discord-fuchsia`), and never defined - so
+     half that gradient silently resolved to nothing. */
+  --color-discord-fuchsia: #eb459e;
   --font-mono: 'JetBrains Mono', monospace;
 }
 

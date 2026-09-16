@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from '$lib/components/atoms/Icon.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { api } from '$lib/api';
@@ -51,7 +52,8 @@
       sendError = '';
       sendStatus = '';
       const result = await api.sendFriendRequest(target);
-      sendStatus = result.status === 'auto_accepted' ? `You and ${target} are now friends!` : 'Request sent.';
+      sendStatus =
+        result.status === 'auto_accepted' ? `You and ${target} are now friends!` : 'Request sent.';
       username = '';
     } catch (err) {
       sendError = err instanceof Error ? err.message : 'Failed to send request';
@@ -96,10 +98,10 @@
 <Frame>
   <div class="max-w-2xl mx-auto py-6 px-3 sm:px-4 space-y-5 anim-fade-up">
     <button
-      class="text-sm text-discord-blurple hover:underline bg-transparent border-none cursor-pointer p-0"
+      class="inline-flex items-center gap-1 text-sm text-discord-blurple hover:underline bg-transparent border-none cursor-pointer p-0"
       on:click={() => goto('/friends')}
     >
-      ← Back to friends
+      <Icon name="back" size={14} /> Back to friends
     </button>
 
     <div>
@@ -135,7 +137,8 @@
 
     <section class="bg-white border border-gray-200 rounded-xl p-5">
       <h2 class="text-sm font-semibold mb-3">
-        Pending requests {#if requests.length > 0}<span class="text-gray-400 font-normal">{requests.length}</span
+        Pending requests {#if requests.length > 0}<span class="text-gray-400 font-normal"
+            >{requests.length}</span
           >{/if}
       </h2>
       {#if requestsError}
@@ -178,7 +181,8 @@
       <section class="bg-indigo-50 rounded-xl p-5 flex items-center gap-4 flex-wrap">
         <div class="flex-1 min-w-[200px]">
           <p class="text-sm font-semibold m-0">
-            {missingCount} member{missingCount === 1 ? '' : 's'} of your server aren't on Friends Calendar yet
+            {missingCount} member{missingCount === 1 ? '' : 's'} of your server aren't on Friends Calendar
+            yet
           </p>
           {#if inviteError}
             <p class="text-sm text-red-600 mt-1" role="alert">{inviteError}</p>

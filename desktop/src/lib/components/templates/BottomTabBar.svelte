@@ -2,18 +2,27 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { unreadNotificationCount } from '$lib/stores';
+  import Icon, { type IconName } from '$lib/components/atoms/Icon.svelte';
 
   // Mirrors MobileTabBar.dc.html's 5 tabs. Distinct from Frame.svelte's
   // sidebar navItems: the mobile mockup folds "Discord server" under this
   // "Me" tab (reached from within /settings) instead of giving it its own
   // tab, so this list isn't just navItems with different labels - see
   // .claude/skills/mockup-responsive-shell/SKILL.md.
+  type Tab = { label: string; icon: IconName; view: string; badge?: number };
+
+  let tabs: Tab[];
   $: tabs = [
-    { label: 'Calendar', icon: '📅', view: '/' },
-    { label: 'Friends', icon: '👥', view: '/friends' },
-    { label: 'Hub', icon: '🔔', view: '/announcements' },
-    { label: 'Alerts', icon: '🔔', view: '/notifications', badge: $unreadNotificationCount },
-    { label: 'Me', icon: '⚙️', view: '/settings' }
+    { label: 'Calendar', icon: 'calendar', view: '/' },
+    { label: 'Friends', icon: 'friends', view: '/friends' },
+    { label: 'Hub', icon: 'announcements', view: '/announcements' },
+    {
+      label: 'Alerts',
+      icon: 'notifications',
+      view: '/notifications',
+      badge: $unreadNotificationCount
+    },
+    { label: 'Me', icon: 'settings', view: '/settings' }
   ];
 </script>
 
@@ -31,7 +40,7 @@
       on:click={() => goto(tab.view)}
       class="flex-1 min-w-0 flex flex-col items-center gap-1 relative pt-0.5 pb-[26px]"
     >
-      <span class="text-lg leading-none">{tab.icon}</span>
+      <Icon name={tab.icon} size={20} />
       <span
         class="text-[11px] leading-none {current
           ? 'font-bold text-primary'

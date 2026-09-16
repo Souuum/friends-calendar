@@ -67,7 +67,11 @@ describe('announcement thread page', () => {
 
     await waitFor(() => expect(screen.getByText('Ski trip')).toBeInTheDocument());
     expect(screen.getByText("I'm in")).toBeInTheDocument();
-    expect(screen.getByText('1 reply')).toBeInTheDocument();
+    // Twice on this page, and that is the real markup: the card's own
+    // footer stats and the replies section heading both show the count.
+    // It only became ambiguous once the icon was split out of the string -
+    // the card used to render "💬 1 reply", which didn't match this.
+    expect(screen.getAllByText(/1\s+reply/)).toHaveLength(2);
   });
 
   it('invites a first reply when the thread is empty', async () => {

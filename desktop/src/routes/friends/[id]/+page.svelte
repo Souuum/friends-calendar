@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from '$lib/components/atoms/Icon.svelte';
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
@@ -77,10 +78,10 @@
 <Frame>
   <div class="max-w-2xl mx-auto py-6 px-3 sm:px-4 anim-fade-up">
     <button
-      class="text-sm text-discord-blurple hover:underline mb-4 bg-transparent border-none cursor-pointer p-0"
+      class="inline-flex items-center gap-1 text-sm text-discord-blurple hover:underline mb-4 bg-transparent border-none cursor-pointer p-0"
       on:click={() => goto('/friends')}
     >
-      ← Back to friends
+      <Icon name="back" size={14} /> Back to friends
     </button>
 
     {#if error}

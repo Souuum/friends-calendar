@@ -1,7 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
+  import Icon, { type IconName } from '$lib/components/atoms/Icon.svelte';
 
-  export let item: { label: string; icon: string; view: string; badge?: number };
+  export let item: { label: string; icon: IconName; view: string; badge?: number };
   export let current: boolean = false;
 
   const dispatch = createEventDispatcher();
@@ -12,7 +13,7 @@
   class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-primary-hover text-left
         {current ? 'bg-primary-hover font-semibold  text-primary' : ''}"
 >
-  <span>{item.icon}</span>
+  <Icon name={item.icon} />
   <span class="flex-1">{item.label}</span>
   {#if item.badge}
     <span

@@ -41,7 +41,7 @@ describe('EventRsvpCard', () => {
   it("shows whether the current user accepted, and everyone else's response", () => {
     render(EventRsvpCard, { event: baseEvent });
 
-    expect(screen.getByText('✓ You accepted')).toBeInTheDocument();
+    expect(screen.getByText('You accepted')).toBeInTheDocument();
     expect(screen.getByText('bob')).toBeInTheDocument();
     expect(screen.getByText('zoe')).toBeInTheDocument();
     expect(screen.getByText('3 participants')).toBeInTheDocument();
@@ -51,7 +51,7 @@ describe('EventRsvpCard', () => {
     const { rerender } = render(EventRsvpCard, {
       event: { ...baseEvent, my_status: 'declined' }
     });
-    expect(screen.getByText('✗ You declined')).toBeInTheDocument();
+    expect(screen.getByText('You declined')).toBeInTheDocument();
 
     rerender({ event: { ...baseEvent, my_status: undefined } });
     expect(screen.getByText('No response yet')).toBeInTheDocument();

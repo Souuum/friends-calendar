@@ -94,6 +94,10 @@
         <h2 class="text-lg font-semibold">Bot permissions</h2>
         <ul class="text-sm text-gray-600 list-disc list-inside space-y-1">
           <li>Read and send messages in the announcement channel, and in event threads</li>
+          <!-- This ✅ stays an emoji on purpose. It is not a UI icon: it
+               names the literal Discord character people react with to
+               RSVP, which bot.rs matches on. An SVG here would describe
+               the wrong thing. -->
           <li>Add reactions (the ✅ people RSVP with)</li>
           <li>Create threads for event discussion</li>
           <li>View server members (used for friend sync)</li>

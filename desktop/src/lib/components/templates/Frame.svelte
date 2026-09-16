@@ -7,6 +7,7 @@
   import Header from '$lib/components/organisms/Header.svelte';
   import ViewButton from '$lib/components/templates/ViewButton.svelte';
   import BottomTabBar from '$lib/components/templates/BottomTabBar.svelte';
+  import Icon, { type IconName } from '$lib/components/atoms/Icon.svelte';
 
   // `$:`, not `let`: this used to be computed once at init, when $user is
   // still null because the root route only populates it in onMount. It
@@ -40,12 +41,20 @@
   // (and highlight correctly on direct navigation/refresh, via $page).
   // Reactive (not `const`) so the Notifications badge updates once
   // Header.svelte's onMount populates $unreadNotificationCount.
+  type NavItem = { label: string; icon: IconName; view: string; badge?: number };
+
+  let navItems: NavItem[];
   $: navItems = [
-    { label: 'Calendars', icon: '📅', view: '/' },
-    { label: 'Friends', icon: '👥', view: '/friends' },
-    { label: 'Announcement', icon: '🔔', view: '/announcements' },
-    { label: 'Notifications', icon: '🔔', view: '/notifications', badge: $unreadNotificationCount },
-    { label: 'Discord server', icon: '🤖', view: '/server' }
+    { label: 'Calendars', icon: 'calendar', view: '/' },
+    { label: 'Friends', icon: 'friends', view: '/friends' },
+    { label: 'Announcement', icon: 'announcements', view: '/announcements' },
+    {
+      label: 'Notifications',
+      icon: 'notifications',
+      view: '/notifications',
+      badge: $unreadNotificationCount
+    },
+    { label: 'Discord server', icon: 'bot', view: '/server' }
   ];
 
   function handleLogout() {

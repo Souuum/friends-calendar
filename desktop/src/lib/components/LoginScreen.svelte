@@ -68,7 +68,7 @@
 >
   <div class="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4">
     <div class="text-center mb-8">
-      <h1 class="text-4xl font-bold text-discord-blurple mb-2">📅 Friends Calendar</h1>
+      <h1 class="text-4xl font-bold text-discord-blurple mb-2">Friends Calendar</h1>
       <p class="text-gray-600">Sync your schedule with friends</p>
     </div>
 

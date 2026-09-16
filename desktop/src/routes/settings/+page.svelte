@@ -5,6 +5,7 @@
   import { user as userStore } from '$lib/stores';
   import Frame from '$lib/components/templates/Frame.svelte';
   import { theme, setTheme, type Theme } from '$lib/theme';
+  import Icon from '$lib/components/atoms/Icon.svelte';
   import type { User, Visibility } from '$lib/types';
 
   let profile: User | null = null;
@@ -97,8 +98,11 @@
 
 <Frame>
   <div class="max-w-2xl mx-auto py-6 px-3 sm:px-4 space-y-6 md:space-y-8 anim-fade-up">
-    <button class="text-sm text-discord-blurple hover:underline" on:click={() => goto('/')}>
-      ← Back to calendar
+    <button
+      class="inline-flex items-center gap-1 text-sm text-discord-blurple hover:underline"
+      on:click={() => goto('/')}
+    >
+      <Icon name="back" size={14} /> Back to calendar
     </button>
 
     <h1 class="text-2xl font-semibold m-0">Settings</h1>
@@ -189,12 +193,12 @@
         href="/server"
         class="flex items-center gap-3 bg-white border border-line rounded-xl px-4 py-3 no-underline hover:bg-gray-50"
       >
-        <span class="text-lg">🤖</span>
+        <Icon name="bot" size={20} />
         <span class="flex-1 min-w-0">
           <span class="block text-sm font-semibold text-gray-900">Discord server</span>
           <span class="block text-xs text-muted">Linked server, bot channels, weekly digest</span>
         </span>
-        <span class="text-muted" aria-hidden="true">›</span>
+        <Icon name="chevron-right" size={16} class="text-muted" />
       </a>
 
       <section class="space-y-3">

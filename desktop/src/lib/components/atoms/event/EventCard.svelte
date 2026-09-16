@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from '$lib/components/atoms/Icon.svelte';
   import { createEventDispatcher } from 'svelte';
   import type { EventWithParticipants } from '$lib/types';
   import EventCardStatusBar from './EventCardStatusBar.svelte';
@@ -8,7 +9,6 @@
   export let event: EventWithParticipants;
 
   const dispatch = createEventDispatcher();
-
 </script>
 
 <div class="bg-white rounded-lg shadow hover:shadow-lg transition p-5">
@@ -25,26 +25,26 @@
 
   <div class="space-y-2 text-sm text-gray-500 mb-4">
     <div class="flex items-center gap-2">
-      <span>🕐</span>
+      <Icon name="time" size={16} />
       <span>{formatDate(event.start_time)}</span>
     </div>
     {#if event.location}
       <div class="flex items-center gap-2">
-        <span>📍</span>
+        <Icon name="location" size={16} />
         <span>{event.location}</span>
       </div>
     {/if}
   </div>
 
-  <EventCardParticipant participants={event.participants}/>
+  <EventCardParticipant participants={event.participants} />
 
   {#if !event.is_creator && event.my_status}
-    <EventCardStatusBar bind:status={event.my_status}/>
+    <EventCardStatusBar bind:status={event.my_status} />
   {/if}
 
   {#if event.is_creator}
     <button
-      on:click={() => dispatch("deleted", event)}
+      on:click={() => dispatch('deleted', event)}
       class="w-full mt-2 text-xs py-2 rounded bg-red-100 text-red-700 hover:bg-red-200 cursor-pointer"
     >
       Delete Event

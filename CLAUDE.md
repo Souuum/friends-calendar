@@ -1052,6 +1052,38 @@ returned null, the ancestor walk found nothing, and every element was
 skipped. Both this and `theme.spec.ts` now parse oklch; keep them in step.
 Validated by reintroducing the bug and confirming the check fails.
 
+## Icons (2026-09-17)
+
+**`atoms/Icon.svelte` replaced every emoji in the UI with outline SVGs** -
+24x24, 2px strokes, `currentColor`. The emoji were full-colour bitmaps the
+theme had no say over, which mattered once dark mode landed; they also
+render differently per platform and can't be sized reliably.
+
+- Names describe **meaning, not shape** (`price`, not `euro-sign`), so a
+  call site reads as what it is and the glyph can change without every
+  usage lying.
+- `shrink-0` is applied unconditionally in the component. The Notifications
+  sidebar row proved why: it's the only nav item with a badge, and its icon
+  collapsed to a sliver while every other row looked fine.
+- Icons are `aria-hidden` by default - nearly all sit beside their own text
+  label, and announcing both is just repetition. Pass `label` for the cases
+  where the icon *is* the content.
+- **Hub and Alerts both used 🔔**, so two different tabs were
+  indistinguishable. They're now a megaphone and a bell.
+- ⚠️ **One emoji stays on purpose**: the ✅ in `/servers`' permissions list.
+  It isn't a UI icon - it names the literal Discord character people react
+  with to RSVP, which `bot.rs` matches on. An SVG there would describe the
+  wrong thing, and there's a comment saying so.
+- Splitting glyphs out of strings (`'✓ You accepted'` → icon + `'You
+  accepted'`) changed what tests can match on. One assertion became
+  genuinely ambiguous: the thread page renders the reply count twice (card
+  footer *and* section heading), which `💬 1 reply` had accidentally
+  disambiguated.
+
+⚠️ **`discord-fuchsia` was undefined too**, alongside `discord-blurple` -
+used once, by the login screen's gradient, so half of it silently resolved
+to nothing. Both are defined now.
+
 ## Dark mode (2026-09-17)
 
 **Implemented by redefining Tailwind's colour variables under `.dark`, not

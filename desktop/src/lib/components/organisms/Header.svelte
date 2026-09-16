@@ -8,6 +8,7 @@
   import { goto } from '$app/navigation';
   import { unreadNotificationCount } from '$lib/stores';
   import { resolvedTheme, toggleTheme } from '$lib/theme';
+  import Icon from '$lib/components/atoms/Icon.svelte';
 
   export let user;
   export let avatarUrl: string;
@@ -60,7 +61,7 @@
         title={$resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         class="w-9 h-9 flex items-center justify-center border border-gray-200 rounded-lg hover:bg-gray-50"
       >
-        {$resolvedTheme === 'dark' ? '☀️' : '🌙'}
+        <Icon name={$resolvedTheme === 'dark' ? 'light-mode' : 'dark-mode'} />
       </button>
 
       <button
@@ -68,7 +69,7 @@
         aria-label="Notifications"
         class="relative w-9 h-9 flex items-center justify-center border border-gray-200 rounded-lg hover:bg-gray-50"
       >
-        🔔
+        <Icon name="notifications" />
         {#if $unreadNotificationCount > 0}
           <span
             data-testid="unread-dot"

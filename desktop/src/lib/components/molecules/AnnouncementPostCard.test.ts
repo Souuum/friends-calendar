@@ -25,13 +25,13 @@ describe('AnnouncementPostCard', () => {
 
     expect(screen.getByText('alice')).toBeInTheDocument();
     expect(screen.getByText('Hello everyone')).toBeInTheDocument();
-    expect(screen.getByText('👍 3')).toBeInTheDocument();
-    expect(screen.getByText('💬 1 reply')).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
+    expect(screen.getByText(/1\s+reply/)).toBeInTheDocument();
   });
 
   it('uses plural "replies" for anything other than exactly one', () => {
     render(AnnouncementPostCard, { post: makePost({ reply_count: 0 }) });
-    expect(screen.getByText('💬 0 replies')).toBeInTheDocument();
+    expect(screen.getByText(/0\s+replies/)).toBeInTheDocument();
   });
 
   it('shows a title when present', () => {
@@ -41,14 +41,14 @@ describe('AnnouncementPostCard', () => {
 
   it('shows a pinned badge only when pinned', () => {
     const { rerender } = render(AnnouncementPostCard, { post: makePost({ pinned: false }) });
-    expect(screen.queryByText('📌 Pinned')).not.toBeInTheDocument();
+    expect(screen.queryByText('Pinned')).not.toBeInTheDocument();
 
     rerender({ post: makePost({ pinned: true }) });
-    expect(screen.getByText('📌 Pinned')).toBeInTheDocument();
+    expect(screen.getByText('Pinned')).toBeInTheDocument();
   });
 
   it('labels the event tag distinctly from general', () => {
     render(AnnouncementPostCard, { post: makePost({ tag: 'event' }) });
-    expect(screen.getByText('📅 Event')).toBeInTheDocument();
+    expect(screen.getByText('Event')).toBeInTheDocument();
   });
 });
