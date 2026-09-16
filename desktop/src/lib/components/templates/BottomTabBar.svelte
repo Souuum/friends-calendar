@@ -18,16 +18,25 @@
 </script>
 
 <nav
-  class="md:hidden fixed bottom-0 inset-x-0 z-30 flex items-start gap-0.5 bg-white border-t border-gray-200 px-2 pt-2 pb-6"
+  data-testid="bottom-tab-bar"
+  class="md:hidden fixed bottom-0 inset-x-0 z-30 flex items-start gap-0.5 bg-white border-t border-gray-200 px-2 pt-2"
 >
   {#each tabs as tab}
     {@const current = $page.url.pathname === tab.view}
+    <!-- The bar's bottom safe-area padding lives on the buttons, not on the
+         nav: identical pixels either way, but this way it counts toward the
+         tap target. On the nav it was dead space and the buttons were 37px,
+         under the 44px floor. -->
     <button
       on:click={() => goto(tab.view)}
-      class="flex-1 min-w-0 flex flex-col items-center gap-1 relative py-0.5"
+      class="flex-1 min-w-0 flex flex-col items-center gap-1 relative pt-0.5 pb-[26px]"
     >
       <span class="text-lg leading-none">{tab.icon}</span>
-      <span class="text-[11px] leading-none {current ? 'font-bold text-primary' : 'font-medium text-gray-500'}">
+      <span
+        class="text-[11px] leading-none {current
+          ? 'font-bold text-primary'
+          : 'font-medium text-gray-500'}"
+      >
         {tab.label}
       </span>
       {#if tab.badge}

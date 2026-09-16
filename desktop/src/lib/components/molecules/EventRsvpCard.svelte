@@ -69,9 +69,17 @@
       </div>
     {/if}
     {#if event.link}
-      <div class="flex items-center gap-2">
-        <span>🔗</span>
-        <a href={event.link} target="_blank" rel="noreferrer" class="text-discord-blurple hover:underline">
+      <!-- min-w-0 + truncate: a URL has no spaces, so it cannot wrap, and a
+           flex child's default min-width:auto refuses to shrink below its
+           content. Without both, a long link widened the whole page. -->
+      <div class="flex items-center gap-2 min-w-0">
+        <span class="shrink-0">🔗</span>
+        <a
+          href={event.link}
+          target="_blank"
+          rel="noreferrer"
+          class="text-discord-blurple hover:underline truncate"
+        >
           {event.link}
         </a>
       </div>

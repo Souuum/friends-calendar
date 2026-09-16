@@ -582,6 +582,63 @@ rather than re-deriving the patterns. Summary:
     correct. Found by logging `new Error().stack` from inside
     `mockImplementation` and seeing a second call whose stack came straight
     out of `callCleanupHooks` with no Svelte frames in it.
+- **Layout tests (`desktop/e2e/`, Playwright + Chromium, added 2026-09-16).**
+  Run `yarn test:layout` from `desktop/`; `yarn test:layout:ui` for the
+  interactive runner. Gated in CI by its own `Layout Tests` job.
+  - **Why a third tier exists:** happy-dom computes *no layout*. A div with
+    an explicit `width: 402px` reports `getBoundingClientRect()` 0×0,
+    `offsetWidth` 0, `scrollWidth` 0, and `window.innerWidth` is a fixed
+    1024 unrelated to any breakpoint. So every vitest test here is a
+    DOM-*structure* test, `hidden md:block` is just a string of characters
+    to it, and the whole responsive pass was **structurally unverifiable**
+    at that tier rather than merely untested.
+  - **What belongs here:** assertions a machine can make without judgement -
+    horizontal overflow, occlusion by the fixed tab bar, whether a
+    breakpoint actually switches, tap-target size. Three viewport projects
+    (`mobile-402` matching the mockup's own reference width, `tablet-768`,
+    `desktop-1280`), so a failure names the width it failed at.
+  - ⚠️ **What must NOT go here: pixel-diffed screenshot baselines.** Font
+    rendering differs between a macOS dev machine and CI's Linux container,
+    so committed baselines fail in CI immediately and permanently.
+    Screenshots are written to `e2e/screenshots/<project>/` (gitignored,
+    uploaded as a CI artifact) purely to be *looked at* - they are never a
+    gate. The overflow test captures its screenshot **before** asserting, so
+    a failing layout still leaves a picture behind.
+  - No backend and no database: `e2e/fixtures.ts` intercepts `**/api/**` and
+    serves fixtures, and seeds `localStorage.jwt_token` so pages render
+    authenticated instead of falling back to `LoginScreen`. Fixture content
+    is deliberately *long* (long titles, an unbroken URL, a two-digit badge)
+    - an empty page never overflows, so short fixtures would make every
+    assertion pass while proving nothing.
+  - `vite.config.js` excludes `e2e/**` from vitest; without it vitest's
+    default include pattern picks up the Playwright spec and fails on the
+    `@playwright/test` import.
+  - Selectors use `data-testid="sidebar"` / `data-testid="bottom-tab-bar"`
+    because `EventPeekPanel` is also an `<aside>`, so the tag alone can't
+    identify the shell.
+  - **Three real bugs on its first run**, none of which any existing test
+    could have caught: an unbroken URL in `EventRsvpCard` widened
+    `/friends/[id]` by 61px at 402px (a URL has no spaces so it can't wrap,
+    and a flex child's default `min-width: auto` refuses to shrink - fixed
+    with `min-w-0` + `truncate`); bottom-tab targets were 37px against the
+    44px floor (fixed by moving the bar's bottom safe-area padding onto the
+    buttons, which renders identical pixels but counts toward the hit area);
+    and `src/app.html` carried a stale `<link href="./app.css">` for a file
+    that doesn't exist in the build, 404ing on every page load since
+    `app.css` is bundled through `+layout.svelte`'s import.
+  - **Two more found by *reading* a screenshot**, which is the part
+    assertions can't do: full weekday names collided in the month grid's
+    ~50px columns at 402px (they overlapped rather than widening the page,
+    so no overflow assertion fired - `WeekdayHeader` now shows the
+    abbreviated form below `md`), and the header avatar was broken for
+    **every** user because `Frame.svelte` had `let avatarUrl = ...` instead
+    of `$:` - evaluated once at init while `$user` is still null, so it
+    froze at `.../avatars/undefined/undefined.png` forever. The username
+    beside it looked right because that reads the store reactively. That is
+    the third instance of this exact static-`$:`/stale-closure family in
+    this codebase; see the `matchesFilter`/`eventsForDay` note under
+    `mockup-calendar-redesign`.
+
 ⚠️ **Test across the JSON boundary, not just up to it.** Both `Visibility`
 and `ParticipationStatus` shipped with `#[sqlx(rename_all = "lowercase")]`
 and no serde rename, so their JSON form was `"Friends"`/`"Accepted"` while

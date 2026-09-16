@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import Frame from './Frame.svelte';
+import { user } from '$lib/stores';
 // @ts-expect-error - test-only helper injected by the $app/stores mock below, not a real export
 import { __setPathname } from '$app/stores';
 
@@ -65,5 +67,48 @@ describe('Frame sidebar navigation', () => {
     // active, so it would pass even when highlighting is broken.
     expect(announcementButton?.className).toContain('font-semibold');
     expect(calendarsButton?.className).not.toContain('font-semibold');
+  });
+});
+
+describe('Frame header avatar', () => {
+  // This was `let avatarUrl = ...`, evaluated once at init while $user is
+  // still null, so it froze at ".../avatars/undefined/undefined.png" for the
+  // whole session. Caught by looking at a browser screenshot, not by any
+  // assertion - the username beside it rendered correctly, because that
+  // reads the store reactively.
+  it('updates once the user store is populated', async () => {
+    user.set(null);
+    render(Frame);
+
+    const before = screen.getByAltText('User avatar') as HTMLImageElement;
+    expect(before.src).not.toContain('undefined');
+
+    user.set({
+      id: 'u1',
+      discord_id: '80351110224678912',
+      username: 'someone',
+      avatar: 'abc123'
+    } as never);
+    await tick();
+
+    expect((screen.getByAltText('User avatar') as HTMLImageElement).src).toBe(
+      'https://cdn.discordapp.com/avatars/80351110224678912/abc123.png'
+    );
+  });
+
+  // Accounts that never set an avatar have `avatar: null`, which used to
+  // build a URL ending in "null.png" and render as a broken image.
+  it('falls back to a Discord default avatar when the user has none', async () => {
+    user.set({
+      id: 'u1',
+      discord_id: '80351110224678912',
+      username: 'someone',
+      avatar: null
+    } as never);
+    render(Frame);
+    await tick();
+
+    const src = (screen.getByAltText('User avatar') as HTMLImageElement).src;
+    expect(src).toMatch(/embed\/avatars\/[0-5]\.png$/);
   });
 });

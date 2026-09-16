@@ -111,6 +111,66 @@ jobs:
           cd desktop
           yarn build
 
+  # Separate from Frontend Tests on purpose: these need a real browser, and a
+  # distinct red X says "the layout broke" rather than "a test broke". The
+  # vitest tier runs on happy-dom, which computes no layout at all - every
+  # geometry property is 0 there - so nothing in that job can catch an
+  # overflow or an occlusion.
+  layout-test:
+    name: Layout Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "yarn"
+          cache-dependency-path: desktop/yarn.lock
+
+      - name: Install dependencies
+        run: |
+          cd desktop
+          yarn install --frozen-lockfile
+
+      # ~94MB download, so cache it. Keyed on the lockfile: a Playwright
+      # version bump needs a matching browser build, and reusing a stale one
+      # fails in confusing ways.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('desktop/yarn.lock') }}
+
+      - name: Install Chromium
+        run: |
+          cd desktop
+          npx playwright install --with-deps chromium
+
+      - name: Run layout tests
+        run: |
+          cd desktop
+          yarn test:layout
+
+      # Screenshots are artifacts to look at, never a pixel-diffed gate -
+      # font rendering differs between a dev machine and this container, so
+      # committed baselines would fail here permanently.
+      - name: Upload screenshots and trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: layout-screenshots
+          path: |
+            desktop/e2e/screenshots/
+            desktop/e2e/.report/
+            desktop/e2e/.results/
+          retention-days: 7
+          if-no-files-found: ignore
+
   security-audit:
     name: Security Audit
     runs-on: ubuntu-latest
