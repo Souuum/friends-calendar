@@ -160,10 +160,18 @@
           <input type="checkbox" bind:checked={notifyAnnouncements} />
           Announcements
         </label>
-        <label class="flex items-center gap-2 text-sm">
-          <input type="checkbox" bind:checked={notifyWeeklyDigest} />
-          Weekly digest
-        </label>
+        <!-- No per-user "Weekly digest" toggle here on purpose. The digest
+             is a single message posted to one shared Discord channel
+             (services::digest), so there is no per-user delivery for a
+             per-user preference to switch off - a checkbox here could only
+             ever look functional. The real switch is the guild-level one
+             on /server. -->
+        <p class="text-sm text-gray-500">
+          The weekly digest is posted once to a shared Discord channel, so it's configured for the
+          whole server on the <a href="/server" class="text-discord-blurple hover:underline"
+            >Discord server</a
+          > page rather than per person.
+        </p>
       </section>
 
       {#if saveError}

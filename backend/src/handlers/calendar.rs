@@ -431,7 +431,16 @@ mod tests {
         let json: Value = serde_json::from_slice(&body).unwrap();
 
         assert_eq!(json["my_status"], "accepted");
-        assert_eq!(json["visibility"], "private");
+        // Value, not casing, is the other tests' business - this event was
+        // created without an explicit visibility, so it inherits the
+        // creator's `default_visibility` (see
+        // services::calendar::tests::create_event_falls_back_to_the_creators_default_visibility).
+        // Only assert the wire form is lowercase.
+        let visibility = json["visibility"].as_str().unwrap();
+        assert!(
+            matches!(visibility, "private" | "friends" | "public"),
+            "visibility {visibility:?} is not one of the lowercase values the client expects"
+        );
 
         // Not indexed by position - participant order isn't guaranteed and
         // isn't what this test is about. Every status must be one of the

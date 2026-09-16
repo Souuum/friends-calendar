@@ -315,9 +315,17 @@ three places. What's left is genuinely account-scoped:
   (`notify_event_invites`, `notify_rsvp_changes`, `notify_announcements`,
   `notify_weekly_digest`). Only fields present in the request body change —
   same pattern `services::calendar::update_event` already established.
-  `default_visibility` is stored but not yet consumed as an actual default
-  anywhere `CreateEventModal.svelte` builds a request — that wiring is left
-  for whoever builds on this next.
+  `default_visibility` **is** applied as a real default as of 2026-09-16:
+  `services::calendar::create_event` looks it up when the request omits
+  `visibility` (an explicit value in the request still wins — the
+  preference is a default, not an override), and
+  `CreateEventModal.svelte` preselects it from the `user` store so the
+  form shows what will actually happen.
+  ⚠️ **This endpoint could not accept its own frontend's payload until
+  2026-09-16.** `Visibility` carried `#[sqlx(rename_all = "lowercase")]`
+  but no serde rename, so JSON expected `"Friends"` while the settings
+  page sent `"friends"` — every save 422'd. See the enum-casing note under
+  "Testing" for why no test caught it.
 - `DELETE /api/auth/me` (`handlers::profile::delete_account`,
   `services::profile::delete_account`) — real, cascading account deletion
   (`ON DELETE CASCADE` on `calendar_events`/`event_participants`/etc.,
@@ -328,10 +336,27 @@ three places. What's left is genuinely account-scoped:
   disables the delete button client-side until the typed confirmation text
   matches the username too, as a first line of defense before the request
   even goes out.
-- Notification toggles are stored but **not yet read** by
-  `services::notifications::create` or anywhere else — they're
-  user-editable preferences with no enforcement point wired up yet, same
-  kind of gap as `default_visibility` above.
+- Notification toggles are **enforced** as of 2026-09-16, inside
+  `services::notifications::create` rather than at each trigger call site,
+  so every trigger — including ones added later — is gated by
+  construction and a new caller cannot forget to check. The mapping lives
+  in `preference_column_for(kind)`:
+  `event_invite` → `notify_event_invites`, `rsvp_change` →
+  `notify_rsvp_changes`, `announcement` → `notify_announcements`.
+  - `friend_request`/`friend_accepted` are deliberately **ungated** — they
+    have no preference of their own, and reusing `notify_event_invites`
+    would mean switching off *event invites* silently killed *friend
+    requests* too. Give them their own column if they should be
+    switchable.
+  - `notify_weekly_digest` is mapped to nothing and its checkbox has been
+    **removed** from `/settings`, replaced by a line pointing at `/server`.
+    The digest is one message to one shared channel
+    (`services::digest`, gated by the guild-level
+    `discord_bot_config.digest_enabled`), so there is no per-user delivery
+    for a per-user preference to filter — the control could only ever look
+    functional. The column still exists and is still round-tripped by
+    `PATCH /api/auth/me`, so no data is lost if per-user delivery ever
+    arrives.
 
 ### Server page (`/server`) — linked Discord server + bot channel config
 
@@ -520,6 +545,21 @@ rather than re-deriving the patterns. Summary:
   the settable-store mock pattern (`__setPathname`), or
   `routes/friends/[id]/page.test.ts` for a version that also supplies
   `$page.params` for a dynamic route.
+⚠️ **Test across the JSON boundary, not just up to it.** Both `Visibility`
+and `ParticipationStatus` shipped with `#[sqlx(rename_all = "lowercase")]`
+and no serde rename, so their JSON form was `"Friends"`/`"Accepted"` while
+the entire frontend sent and compared lowercase. Every RSVP click and every
+settings save 422'd, and reading back was broken too (`my_status` came back
+`"Accepted"`, so `Calendar.svelte`'s `my_status === 'accepted'` never
+matched). **Every test on both sides passed the whole time**, because none
+of them crossed the boundary: the backend service tests build
+`Visibility::Public` in Rust, the Svelte component tests build fixtures in
+TypeScript, and the one functional test for `PATCH /api/auth/me` only ever
+sent `display_name`. When a type is shared across the wire, at least one
+test must send the *literal payload the client sends* through the real
+router — see `handlers::profile::tests::patch_me_accepts_the_payload_the_settings_page_actually_sends`
+and `handlers::calendar::tests::update_participation_accepts_the_lowercase_status_the_client_sends`.
+
 - `cargo clippy --all-targets --all-features -- -D warnings` is **clean as of
   2026-09-16** and gates CI — any new lint is yours, fix it rather than
   adding to a pile that no longer exists.
@@ -788,8 +828,16 @@ that `event-reminders` plugs into, and `event-visibility-listing` settles
 "who can see this event", which is the same question as "who should be
 reminded about it".
 
-1. `.claude/skills/settings-integrity/SKILL.md` — **P0, contains a live
-   bug.** `Visibility` derives `#[sqlx(rename_all = "lowercase")]` but no
+1. `.claude/skills/settings-integrity/SKILL.md` — **done 2026-09-16.**
+   Turned out worse than the skill described: the casing split affected
+   `ParticipationStatus` too, so **RSVP had never worked either** — not
+   just settings. Both enums now carry `#[serde(rename_all = "lowercase")]`
+   (the DB representation is untouched; the sqlx attribute is independent,
+   so no migration), the four-times-duplicated visibility union is now a
+   single exported `Visibility` type in `types.ts`, `default_visibility` is
+   applied at event creation, and the `notify_*` toggles are enforced
+   inside `services::notifications::create`. Original diagnosis, kept
+   because the *reason* it went unnoticed still matters: `Visibility` derives `#[sqlx(rename_all = "lowercase")]` but no
    serde rename, so JSON is `"Friends"`; `/settings` sends `"friends"`
    (and `types.ts` types it lowercase), so **`PATCH /api/auth/me` has
    never succeeded** — the page cannot save anything, and the `<select>`

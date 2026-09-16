@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from 'svelte';
   import { api } from '$lib/api';
+  import { user } from '$lib/stores';
   import type { FriendInfo, Visibility } from '$lib/types';
 
   const dispatch = createEventDispatcher();
@@ -10,7 +11,11 @@
   let startTime = '';
   let endTime = '';
   let location = '';
-  let visibility: Visibility = 'friends';
+  // Preselected from the user's saved preference rather than sent as
+  // `undefined` and resolved server-side, so the form shows what will
+  // actually happen. The backend applies the same default when the field
+  // is omitted (services::calendar::create_event), so the two agree.
+  let visibility: Visibility = $user?.default_visibility ?? 'friends';
   let loading = false;
   let error = '';
   let price = '';

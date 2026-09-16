@@ -14,6 +14,20 @@ pub async fn create_event(
 ) -> Result<CalendarEvent> {
     let event_id = Uuid::new_v4();
 
+    // An explicit visibility in the request always wins; the stored
+    // preference is a *default*, not an override. Only looked up when the
+    // request omits the field, so the common path costs no extra query.
+    let visibility = match req.visibility {
+        Some(explicit) => explicit,
+        None => sqlx::query_scalar::<_, Visibility>(
+            "SELECT default_visibility FROM users WHERE id = $1",
+        )
+        .bind(creator_id)
+        .fetch_optional(db)
+        .await?
+        .unwrap_or_default(),
+    };
+
     let event = sqlx::query_as::<_, CalendarEvent>(
         r#"
         INSERT INTO calendar_events 
@@ -29,7 +43,7 @@ pub async fn create_event(
     .bind(req.start_time)
     .bind(req.end_time)
     .bind(&req.location)
-    .bind(req.visibility.unwrap_or(Visibility::Private))
+    .bind(&visibility)
     .bind(&req.price)
     .bind(&req.link)
     .bind(Utc::now())
@@ -511,6 +525,42 @@ mod tests {
         .await
         .unwrap();
         id
+    }
+
+    // `default_visibility` on `users` was written by the settings page and
+    // read by nobody - create_event hardcoded a Private fallback. These two
+    // pin down the intended relationship: the preference supplies the
+    // default, an explicit request value still overrides it.
+    #[sqlx::test]
+    async fn create_event_falls_back_to_the_creators_default_visibility(db: PgPool) {
+        let creator = seed_user(&db, "creator", "creator").await;
+        sqlx::query("UPDATE users SET default_visibility = 'public' WHERE id = $1")
+            .bind(creator)
+            .execute(&db)
+            .await
+            .unwrap();
+
+        let mut req = minimal_request("Party", None);
+        req.visibility = None;
+
+        let event = create_event(&db, creator, req).await.unwrap();
+        assert_eq!(event.visibility, Visibility::Public);
+    }
+
+    #[sqlx::test]
+    async fn create_event_lets_an_explicit_visibility_beat_the_default(db: PgPool) {
+        let creator = seed_user(&db, "creator", "creator").await;
+        sqlx::query("UPDATE users SET default_visibility = 'public' WHERE id = $1")
+            .bind(creator)
+            .execute(&db)
+            .await
+            .unwrap();
+
+        let mut req = minimal_request("Secret", None);
+        req.visibility = Some(Visibility::Private);
+
+        let event = create_event(&db, creator, req).await.unwrap();
+        assert_eq!(event.visibility, Visibility::Private);
     }
 
     fn minimal_request(title: &str, participant_ids: Option<Vec<Uuid>>) -> CreateEventRequest {

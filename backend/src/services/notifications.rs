@@ -4,9 +4,39 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-/// Create a notification for `user_id`. `message` is rendered by the
-/// caller (see the trigger call sites in services::calendar) - this
-/// function is intentionally dumb storage, not a template engine.
+/// The `users` column that gates a given notification `kind`, or `None`
+/// for kinds that are always delivered.
+///
+/// Deliberately ungated, rather than mapped onto a loosely-related toggle:
+/// - `friend_request` / `friend_accepted` have no preference of their own.
+///   They're low-volume and directly actionable, and reusing
+///   `notify_event_invites` for them would mean a user who turned off
+///   *event invites* silently stopped receiving *friend requests*. If
+///   these should be switchable, they need their own column - see
+///   `.claude/skills/settings-integrity/SKILL.md`.
+///
+/// `notify_weekly_digest` intentionally appears nowhere here: the digest
+/// posts one message to a shared Discord channel (services::digest, gated
+/// by the guild-level `discord_bot_config.digest_enabled`), so there is no
+/// per-user delivery for a per-user preference to filter.
+fn preference_column_for(kind: &str) -> Option<&'static str> {
+    match kind {
+        "event_invite" => Some("notify_event_invites"),
+        "rsvp_change" => Some("notify_rsvp_changes"),
+        "announcement" => Some("notify_announcements"),
+        _ => None,
+    }
+}
+
+/// Create a notification for `user_id`, unless the recipient has switched
+/// that kind off. `message` is rendered by the caller (see the trigger
+/// call sites in services::calendar) - this function is intentionally dumb
+/// storage, not a template engine.
+///
+/// The preference check lives here rather than at each call site so that
+/// every trigger - including ones added later - is gated by construction.
+/// A new caller cannot forget to respect the user's preferences, because
+/// it never sees them.
 #[allow(clippy::too_many_arguments)]
 pub async fn create(
     db: &PgPool,
@@ -16,6 +46,23 @@ pub async fn create(
     event_id: Option<Uuid>,
     message: &str,
 ) -> Result<()> {
+    if let Some(column) = preference_column_for(kind) {
+        // Column name comes from the match above, never from the caller -
+        // it cannot carry user input into the query.
+        let enabled: Option<bool> =
+            sqlx::query_scalar(&format!("SELECT {column} FROM users WHERE id = $1"))
+                .bind(user_id)
+                .fetch_optional(db)
+                .await?;
+
+        // A missing user row means there's nobody to notify; a disabled
+        // preference means they asked not to be. Both are a no-op, not an
+        // error - the callers treat a failure here as worth logging.
+        if enabled != Some(true) {
+            return Ok(());
+        }
+    }
+
     sqlx::query(
         r#"
         INSERT INTO notifications (id, user_id, kind, actor_user_id, event_id, message, created_at)
@@ -148,6 +195,71 @@ mod tests {
         .await
         .unwrap();
         id
+    }
+
+    #[sqlx::test]
+    async fn create_respects_the_recipients_notification_preferences(db: PgPool) {
+        let user = seed_user(&db, "u1", "u1").await;
+
+        // Default is on (migration 008), so this one lands.
+        create(&db, user, "event_invite", None, None, "invited")
+            .await
+            .unwrap();
+        assert_eq!(list(&db, user, 50).await.unwrap().len(), 1);
+
+        sqlx::query("UPDATE users SET notify_event_invites = false WHERE id = $1")
+            .bind(user)
+            .execute(&db)
+            .await
+            .unwrap();
+
+        create(&db, user, "event_invite", None, None, "invited again")
+            .await
+            .unwrap();
+        assert_eq!(
+            list(&db, user, 50).await.unwrap().len(),
+            1,
+            "a disabled preference must not write a notification row"
+        );
+
+        // A different kind with its own preference is unaffected by the
+        // one we switched off.
+        create(&db, user, "rsvp_change", None, None, "someone answered")
+            .await
+            .unwrap();
+        assert_eq!(list(&db, user, 50).await.unwrap().len(), 2);
+    }
+
+    #[sqlx::test]
+    async fn create_still_delivers_kinds_that_have_no_preference(db: PgPool) {
+        let user = seed_user(&db, "u1", "u1").await;
+
+        // Turning every existing toggle off must not silence friend
+        // requests - they deliberately have no preference of their own.
+        sqlx::query(
+            "UPDATE users SET notify_event_invites = false, notify_rsvp_changes = false, \
+             notify_announcements = false, notify_weekly_digest = false WHERE id = $1",
+        )
+        .bind(user)
+        .execute(&db)
+        .await
+        .unwrap();
+
+        create(
+            &db,
+            user,
+            "friend_request",
+            None,
+            None,
+            "wants to be friends",
+        )
+        .await
+        .unwrap();
+        create(&db, user, "friend_accepted", None, None, "accepted you")
+            .await
+            .unwrap();
+
+        assert_eq!(list(&db, user, 50).await.unwrap().len(), 2);
     }
 
     #[sqlx::test]
