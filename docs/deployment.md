@@ -153,6 +153,7 @@ Environment variables (Settings → Environment variables, Production):
 |---|---|---|
 | `VITE_API_URL` | `https://api.<your-domain>` | baked in at **build** time |
 | `NODE_VERSION` | `22` | see below |
+| `YARN_VERSION` | `1.22.22` | see below |
 
 Then **Custom domains → Set up a custom domain** →
 `calendar.<your-domain>`. Pages creates the DNS record itself; the tunnel
@@ -171,6 +172,26 @@ which will silently bite again if undone:
   `yarn install`, not at build - the same failure that broke CI. There is
   also a `.node-version` at the repo root, but the dashboard variable is
   the one that reliably wins.
+- **`YARN_VERSION=1.22.22`, and `packageManager` pinned in both
+  `package.json` files.** The first real Pages build failed here: it
+  detected `yarn@4.9.1`, and Yarn 4 auto-migrated the Yarn 1 lockfile to
+  its own format on the way in. Since a CI install is immutable, that is
+  fatal:
+  ```
+  YN0087: Migrated your project to the latest Yarn version 🚀
+  YN0028: The lockfile would have been modified by this install,
+          which is explicitly forbidden.
+  ```
+  `yarn.lock` here is `# yarn lockfile v1` and there are no berry artifacts
+  (`.yarnrc.yml`, `.yarn/`), so the whole project is Yarn 1. Pinning the
+  version is the fix; migrating to Yarn 4 would be a separate piece of work
+  (new lockfile format, `.yarnrc.yml` with `nodeLinker: node-modules` so
+  PnP doesn't break the Vite/Svelte tooling, and matching CI changes).
+  Verified by a clean-room `yarn install --frozen-lockfile` with no
+  `node_modules` present - **a local install is not proof**, because yarn
+  takes an "Already up-to-date" fast path whenever `node_modules` exists
+  and never re-validates. That fast path is exactly why the Node-version
+  bug stayed invisible locally for so long.
 - **`desktop/_redirects`** (committed as `desktop/static/_redirects`,
   copied verbatim into `build/`). Nothing is prerendered - `build/`
   contains exactly one HTML file - so without `/* /index.html 200` every

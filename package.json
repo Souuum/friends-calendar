@@ -1,6 +1,7 @@
 {
   "name": "friends-calendar-monorepo",
   "private": true,
+  "packageManager": "yarn@1.22.22",
   "scripts": {
     "dev": "concurrently \"yarn dev:backend\" \"yarn dev:web\"",
     "dev:backend": "cd backend && cargo run",
