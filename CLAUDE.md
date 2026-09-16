@@ -1020,6 +1020,54 @@ Applied to:
   "0" state never actually renders) - replaced with `anim-pop` on the
   tooltip card.
 
+## Dark mode (2026-09-17)
+
+**Implemented by redefining Tailwind's colour variables under `.dark`, not
+by adding `dark:` utilities to components.** Tailwind v4 compiles every
+colour utility to a variable — `.bg-white{background-color:var(--color-white)}`,
+`.text-gray-500{color:var(--color-gray-500)}` — so overriding those in one
+block re-themes all **272 raw colour usages across ~40 of the 68
+components** without editing any of them. The `dark:` alternative is the
+same work repeated 272 times, and silently incomplete the moment anyone
+writes a new component.
+
+- **The grey ramp is inverted, not replaced** (50↔900, 100↔800, …).
+  `text-gray-900` means "strongest text" and `bg-gray-100` means "just off
+  the surface"; both keep their *meaning* when the ramp flips, which is what
+  makes untouched markup work. Picking arbitrary darks would invert some
+  pairs and not others.
+- ⚠️ **`--color-white` must stay meaningfully lighter than `--color-gray-50`.**
+  In dark mode `bg-white` is the *elevated* card surface and `gray-50` is the
+  page ground beneath it. The first attempt set them to 20.5% and 21% — a
+  lightness difference of 0.000004, so every card boundary in the app
+  vanished. `e2e/theme.spec.ts` has a test for exactly this.
+- `@custom-variant dark (&:where(.dark, .dark *))` exists for the cases a
+  token swap can't cover (an inverted shadow, say). Class-based, not
+  media-based, because the theme is a user choice with a system default.
+- `lib/theme.ts` owns the state: `'light' | 'dark' | 'system'`, persisted in
+  `localStorage`. **`'system'` is a real third state**, not a snapshot — it
+  keeps following the OS via `watchSystemTheme()`, wired up in
+  `+layout.svelte`. Every storage access is try/caught (private browsing
+  throws rather than returning null) and `matchMedia` is feature-detected.
+- **The class is applied by an inline script in `app.html`, before paint.**
+  Doing it from the bundle would paint light first and flip on hydration — a
+  white flash on every load. It deliberately duplicates a few lines of
+  `theme.ts`; nothing is importable that early, and the comment says so.
+- The toggle lives on `/settings` but is **outside the Save button's
+  scope** — it's a per-device preference, not a column on `users`. Routing
+  it through `PATCH /api/auth/me` would mean one browser's choice changing
+  the theme on someone's phone.
+- Buttons, not a `<select>`: happy-dom can't match `<select>` options by
+  value, which is how the reminder-picker tests once passed by accident (see
+  the Testing section).
+
+⚠️ **A test-tooling trap this surfaced**: Chrome's `getComputedStyle`
+returns colours authored as `oklch()` **as `oklch()`**, not converted to
+rgb. The first version of `theme.spec.ts`'s luminance helper regexed three
+numbers out of `oklch(0.21 0.006 285)` and treated the *hue* (285) as a blue
+channel, reporting light-mode backgrounds as dark. It now branches on the
+format; for oklch the first component already *is* perceptual lightness.
+
 ## Multi-server — done (steps 1-5, 2026-09-16)
 
 `.claude/skills/multi-server/SKILL.md` (written 2026-09-16). The user

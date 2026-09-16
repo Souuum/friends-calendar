@@ -34,6 +34,91 @@ body {
   --font-mono: 'JetBrains Mono', monospace;
 }
 
+/* Lets components opt into `dark:` utilities where a token swap isn't
+   enough (an inverted shadow, say). Class-based rather than
+   media-based, because the theme is a user choice with a system default
+   - see lib/theme.ts. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------------------------------------------------------------------
+   Dark mode.
+
+   Tailwind v4 compiles every colour utility to a CSS variable -
+   `.bg-white{background-color:var(--color-white)}`,
+   `.text-gray-500{color:var(--color-gray-500)}` - so redefining the
+   variables here re-themes all 272 raw colour usages across ~40
+   components without touching a single one of them. The alternative was
+   adding a `dark:` variant to every one of those, which is the same work
+   repeated 272 times and silently incomplete the moment someone writes a
+   new component.
+
+   The grey ramp is INVERTED rather than replaced: 50<->900, 100<->800,
+   200<->700, 300<->600, 400<->500. That is what makes untouched markup
+   work. `text-gray-900` means "the strongest text colour" and
+   `bg-gray-100` means "a background just off the surface" - both keep
+   their *meaning* when the ramp flips, which is exactly what a theme
+   swap needs. Picking arbitrary dark values instead would invert some
+   pairs and not others, and contrast would collapse in places nobody
+   checked.
+
+   Values are oklch to match Tailwind's own palette, kept slightly
+   desaturated so large surfaces don't tint blue.
+   --------------------------------------------------------------------- */
+.dark {
+  /* Surfaces. `bg-white` is the single most common class in the app and is
+     what cards, the header and the sidebar all sit on - so in dark mode it
+     has to be the *elevated* surface, deliberately lighter than the page
+     ground below it.
+
+     Getting this wrong is the main hazard of inverting a ramp rather than
+     designing a palette: the first attempt put `--color-white` at 20.5% and
+     `--color-gray-50` at 21%, which is a luminance difference of 0.000004 -
+     every card boundary in the app silently vanished. There is a test for
+     exactly this now. Keep white meaningfully above gray-50. */
+  --color-white: oklch(22% 0.006 285);
+  --color-black: oklch(98% 0 0);
+
+  /* Inverted grey ramp. gray-50 is the page ground: the *darkest* value
+     here, because in light mode it is the lightest. */
+  --color-gray-50: oklch(15% 0.005 285);
+  --color-gray-100: oklch(19% 0.006 285);
+  --color-gray-200: oklch(25% 0.007 285);
+  --color-gray-300: oklch(33% 0.008 285);
+  --color-gray-400: oklch(52% 0.012 285);
+  --color-gray-500: oklch(65% 0.014 285);
+  --color-gray-600: oklch(76% 0.013 285);
+  --color-gray-700: oklch(85% 0.009 285);
+  --color-gray-800: oklch(91% 0.005 285);
+  --color-gray-900: oklch(96% 0.003 285);
+  --color-gray-950: oklch(98% 0.002 285);
+
+  /* Mockup tokens. Borders sit above the card surface (22%) or they may as
+     well not be drawn. */
+  --color-line: oklch(30% 0.008 285);
+  --color-muted: oklch(68% 0.014 285);
+  --color-body: oklch(80% 0.01 285);
+  --color-tint: oklch(28% 0.03 285);
+  --color-grey: oklch(30% 0.007 285);
+  --color-dark-grey: oklch(65% 0.012 285);
+
+  /* Brand colours stay recognisable but are lifted for contrast: the
+     light-mode primary is legible on white and too dark on a dark
+     surface. */
+  --color-primary: oklch(62% 0.19 285);
+  --color-primary-hover: oklch(35% 0.05 285 / 0.55);
+  --color-secondary: oklch(60% 0.19 4);
+  --color-red: oklch(65% 0.2 25);
+  --color-yellow: oklch(80% 0.14 75);
+}
+
+/* The page ground itself. Without this the <body> stays white behind
+   every component and shows through anywhere a container doesn't paint,
+   which is most visible while a route is still loading. */
+body {
+  background-color: var(--color-gray-50);
+  color: var(--color-gray-900);
+}
+
 /* Motion system, lifted verbatim from the mockup's own <style> block
    (both Friends Calendar Mockups.dc.html and Friends Calendar Mobile.dc.html
    define the identical set - same keyframe names, same durations/easings).

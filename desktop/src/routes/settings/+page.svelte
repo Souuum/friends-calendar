@@ -4,6 +4,7 @@
   import { api } from '$lib/api';
   import { user as userStore } from '$lib/stores';
   import Frame from '$lib/components/templates/Frame.svelte';
+  import { theme, setTheme, type Theme } from '$lib/theme';
   import type { User, Visibility } from '$lib/types';
 
   let profile: User | null = null;
@@ -111,7 +112,9 @@
         <h2 class="text-lg font-semibold">Profile</h2>
 
         <div>
-          <label for="display-name" class="block text-sm font-medium text-gray-700 mb-1">Display name</label>
+          <label for="display-name" class="block text-sm font-medium text-gray-700 mb-1"
+            >Display name</label
+          >
           <input
             id="display-name"
             type="text"
@@ -122,7 +125,8 @@
         </div>
 
         <div>
-          <label for="timezone" class="block text-sm font-medium text-gray-700 mb-1">Timezone</label>
+          <label for="timezone" class="block text-sm font-medium text-gray-700 mb-1">Timezone</label
+          >
           <input
             id="timezone"
             type="text"
@@ -145,6 +149,34 @@
             <option value="friends">Friends</option>
             <option value="public">Public</option>
           </select>
+        </div>
+
+        <!-- Deliberately outside the Save button's scope: this is a
+             per-device preference kept in localStorage, not a column on
+             `users`. Routing it through PATCH /api/auth/me would mean one
+             browser's choice silently changing the theme on someone's
+             phone, and would need a migration for no benefit. It applies
+             the moment it's clicked. -->
+        <div>
+          <span class="block text-sm font-medium text-gray-700 mb-1">Appearance</span>
+          <div class="flex gap-2" role="group" aria-label="Appearance">
+            {#each [{ value: 'system', label: 'System' }, { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }] as option (option.value)}
+              <button
+                type="button"
+                aria-pressed={$theme === option.value}
+                on:click={() => setTheme(option.value as Theme)}
+                class="px-3 py-2 rounded-lg border text-sm transition-colors {$theme ===
+                option.value
+                  ? 'border-primary bg-tint text-primary font-semibold'
+                  : 'border-gray-300 text-gray-700 hover:bg-gray-100'}"
+              >
+                {option.label}
+              </button>
+            {/each}
+          </div>
+          <p class="text-xs text-gray-500 mt-1">
+            Saved on this device only. “System” follows your OS setting as it changes.
+          </p>
         </div>
       </section>
 

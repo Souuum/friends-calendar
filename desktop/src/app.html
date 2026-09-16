@@ -9,6 +9,28 @@
       href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
+    <!--
+      Applies the dark class before first paint. This has to be an inline,
+      blocking script in <head>: if it ran from the app bundle instead, the
+      page would paint light first and flip once Svelte hydrates - a white
+      flash on every load for anyone using dark mode.
+
+      It deliberately duplicates the small amount of logic in lib/theme.ts
+      (same storage key, same 'system' fallback) because nothing is
+      importable this early. Keep the two in sync; theme.ts is the source
+      of truth for everything after this point.
+    -->
+    <script>
+      try {
+        var stored = localStorage.getItem('theme') || 'system';
+        var dark =
+          stored === 'dark' ||
+          (stored === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        if (dark) document.documentElement.classList.add('dark');
+      } catch (e) {
+        /* Blocked site-data throws on access; light is a fine fallback. */
+      }
+    </script>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">
