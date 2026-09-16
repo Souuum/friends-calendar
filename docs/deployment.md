@@ -116,22 +116,61 @@ Add a route to the existing `cloudflared`: `api.<your-domain>` →
 `desktop/` builds to a static site (`adapter-static`, `fallback:
 index.html`), so Pages serves it directly.
 
-- **Build command:** `yarn build`
-- **Build output directory:** `desktop/build`
-- **Root directory:** `desktop`
-- **Environment variable:** `VITE_API_URL = https://api.<your-domain>`
+Cloudflare dash → **Workers & Pages → Create → Pages → Connect to Git**,
+pick this repo, then:
 
-`VITE_API_URL` is baked in at **build** time, not read at runtime - a Pages
-build without it silently points the deployed frontend at
-`http://localhost:8080`, i.e. the visitor's own machine. That default is
-also what `LoginScreen` used to hard-code, independently of this variable.
+| Setting | Value |
+|---|---|
+| Production branch | `master` |
+| Framework preset | SvelteKit (or None - the fields below are what matter) |
+| Build command | `yarn build` |
+| Build output directory | `build` |
+| Root directory | `desktop` |
 
-Then set `FRONTEND_URL` on the container to the Pages URL and restart, so
-the post-login redirect and CORS both point at it.
+**Build output directory is relative to the root directory**, so with root
+`desktop` it is `build`, *not* `desktop/build`. Getting this pair wrong is
+the usual "build succeeded, site is blank" cause.
+
+Environment variables (Settings → Environment variables, Production):
+
+| Variable | Value | Why |
+|---|---|---|
+| `VITE_API_URL` | `https://api.<your-domain>` | baked in at **build** time |
+| `NODE_VERSION` | `22` | see below |
+
+Then **Custom domains → Set up a custom domain** →
+`calendar.<your-domain>`. Pages creates the DNS record itself; the tunnel
+is not involved, since Pages hosts these files at the edge.
+
+Finally set `FRONTEND_URL` on the container to that URL and
+`systemctl restart friends-calendar`, so the post-login redirect and the
+CORS allow-list both point at it.
+
+Three things this repo had to fix before a Pages build could work, all of
+which will silently bite again if undone:
+
+- **`NODE_VERSION=22`.** `vitest` declares `engines.node "^22.12.0 || ..."`
+  and **yarn v1 treats an incompatible `engines` field as a hard error**
+  (npm only warns). A Pages default of Node 18/20 fails at
+  `yarn install`, not at build - the same failure that broke CI. There is
+  also a `.node-version` at the repo root, but the dashboard variable is
+  the one that reliably wins.
+- **`desktop/_redirects`** (committed as `desktop/static/_redirects`,
+  copied verbatim into `build/`). Nothing is prerendered - `build/`
+  contains exactly one HTML file - so without `/* /index.html 200` every
+  route except `/` returns Pages' own 404 on a direct link or refresh.
+- **`desktop/package-lock.json` deleted.** Both lockfiles were committed;
+  Pages picks its package manager by sniffing lockfiles, and the npm one
+  was stale. `yarn.lock` is authoritative here.
+
+`VITE_API_URL` being build-time matters: a Pages build without it points
+the deployed frontend at `http://localhost:8080`, i.e. each visitor's own
+machine. That was also what `LoginScreen` hard-coded until 2026-09-16,
+independently of this variable.
 
 The Tauri desktop app keeps working alongside this: it is allowed through
-CORS by its own origin, and its login flow can still use the paste-the-token
-box.
+CORS by its own origin, and its login flow can still use the
+paste-the-token box.
 
 ### 4. Install the self-hosted runner
 
