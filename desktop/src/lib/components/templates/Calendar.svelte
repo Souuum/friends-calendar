@@ -33,7 +33,40 @@
   // Create-event modal, lifted here (from CalendarHeader) so the
   // Free-tonight bar's "Propose a time" button opens the same instance as
   // the header's "+ New Event" button.
+  //
+  // `editingEvent` doubles as the mode switch rather than being a second
+  // boolean: null means the modal is creating, an event means it's editing
+  // that one, so the two can't disagree.
   let showCreateModal = false;
+  let editingEvent: EventWithParticipants | null = null;
+
+  function openCreateModal() {
+    editingEvent = null;
+    showCreateModal = true;
+  }
+
+  function openEditModal(event: EventWithParticipants) {
+    editingEvent = event;
+    showCreateModal = true;
+  }
+
+  function closeModal() {
+    showCreateModal = false;
+    editingEvent = null;
+  }
+
+  function handleSaved() {
+    closeModal();
+    dispatch('refresh');
+  }
+
+  function handleDeleted() {
+    // The panel's selection is now a dangling id - clear it before the
+    // parent refetches, or the panel renders a deleted event until the
+    // new list arrives.
+    selectedEvent = null;
+    dispatch('refresh');
+  }
 
   // Free-tonight bar
   let freeFriends: FriendInfo[] = [];
@@ -94,11 +127,6 @@
   function handleRefresh() {
     dispatch('refresh');
     loadFreeTonight();
-  }
-
-  function handleEventCreated() {
-    showCreateModal = false;
-    dispatch('refresh');
   }
 
   function prev(): void {
@@ -190,7 +218,7 @@
   onPrev={prev}
   onNext={next}
   onToday={goToToday}
-  onNewEvent={() => (showCreateModal = true)}
+  onNewEvent={openCreateModal}
   on:view-change={handleViewChange}
 />
 
@@ -224,7 +252,7 @@
       <span class="text-[13px]">{freeFriends.length} friends have nothing on</span>
     {/if}
     <button
-      on:click={() => (showCreateModal = true)}
+      on:click={openCreateModal}
       class="ml-auto px-3 py-[7px] border border-primary text-primary rounded-lg text-xs font-semibold hover:bg-primary-hover"
     >
       Propose a time
@@ -273,10 +301,15 @@
     {/if}
   </div>
 
-  <EventPeekPanel event={selectedEvent} on:refresh={handleRefresh} />
+  <EventPeekPanel
+    event={selectedEvent}
+    on:refresh={handleRefresh}
+    on:edit={(e) => openEditModal(e.detail)}
+    on:deleted={handleDeleted}
+  />
 </div>
 </div>
 
 {#if showCreateModal}
-  <CreateEventModal on:close={() => (showCreateModal = false)} on:created={handleEventCreated} />
+  <CreateEventModal event={editingEvent} on:close={closeModal} on:saved={handleSaved} />
 {/if}

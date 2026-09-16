@@ -3,12 +3,13 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import EventPeekPanel from './EventPeekPanel.svelte';
 import type { EventWithParticipants } from '$lib/types';
 
-const { updateParticipation } = vi.hoisted(() => ({
-  updateParticipation: vi.fn()
+const { updateParticipation, deleteEvent } = vi.hoisted(() => ({
+  updateParticipation: vi.fn(),
+  deleteEvent: vi.fn()
 }));
 
 vi.mock('$lib/api', () => ({
-  api: { updateParticipation }
+  api: { updateParticipation, deleteEvent }
 }));
 
 function makeEvent(overrides: Partial<EventWithParticipants> = {}): EventWithParticipants {
@@ -35,6 +36,7 @@ function makeEvent(overrides: Partial<EventWithParticipants> = {}): EventWithPar
 describe('EventPeekPanel', () => {
   beforeEach(() => {
     updateParticipation.mockReset();
+    deleteEvent.mockReset();
   });
 
   it('shows an empty state when nothing is selected', () => {
@@ -61,9 +63,51 @@ describe('EventPeekPanel', () => {
   it('shows Edit/Nudge instead of RSVP buttons for your own event', () => {
     render(EventPeekPanel, { event: makeEvent({ is_creator: true }) });
 
-    expect(screen.getByRole('button', { name: 'Edit' })).toBeDisabled();
+    // Edit is live now; Nudge is still a placeholder because no endpoint
+    // pings pending participants.
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Nudge no-answers' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Maybe' })).not.toBeInTheDocument();
+  });
+
+  it('dispatches the event to edit when Edit is clicked', async () => {
+    const onEdit = vi.fn();
+    // `events` is a Svelte mount option, not a prop, so props have to go in
+    // the explicit `props` wrapper here - see CLAUDE.md's note on the
+    // reserved mount-option names. (component.$on() is gone in Svelte 5.)
+    render(EventPeekPanel, {
+      props: { event: makeEvent({ is_creator: true }) },
+      events: { edit: onEdit }
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+
+    expect(onEdit).toHaveBeenCalledTimes(1);
+    expect(onEdit.mock.calls[0][0].detail).toMatchObject({ id: 'e1' });
+  });
+
+  it('requires a second click to delete, and only offers it on your own event', async () => {
+    const { rerender } = render(EventPeekPanel, { event: makeEvent({ is_creator: false }) });
+    expect(screen.queryByRole('button', { name: 'Delete event' })).not.toBeInTheDocument();
+
+    await rerender({ event: makeEvent({ is_creator: true }) });
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete event' }));
+
+    // First click only arms the confirm - nothing has been deleted yet.
+    expect(deleteEvent).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Really delete' }));
+    await waitFor(() => expect(deleteEvent).toHaveBeenCalledWith('e1'));
+  });
+
+  it('surfaces a delete failure inline instead of leaving the panel silent', async () => {
+    deleteEvent.mockRejectedValue(new Error('nope'));
+    render(EventPeekPanel, { event: makeEvent({ is_creator: true }) });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete event' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Really delete' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('nope'));
   });
 
   it('shows the mockup status labels, not the raw enum values', () => {

@@ -31,6 +31,18 @@
     return STATUS[status ?? 'pending'] ?? STATUS.pending;
   }
 
+  // Two-step inline confirm rather than window.confirm(), to match how the
+  // rest of this panel reports state (the `error` binding below) instead of
+  // dropping a browser dialog on top of the app.
+  let confirmingDelete = false;
+
+  // Reset the confirm prompt when the selection changes, so it can't carry
+  // over and delete a different event than the one it was armed for.
+  $: if (event) {
+    void event.id;
+    confirmingDelete = false;
+  }
+
   async function handleStatusChange(status: 'accepted' | 'declined' | 'maybe') {
     if (!event) return;
     try {
@@ -40,6 +52,21 @@
       dispatch('refresh');
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to update status';
+    } finally {
+      updating = false;
+    }
+  }
+
+  async function handleDelete() {
+    if (!event) return;
+    try {
+      updating = true;
+      error = '';
+      await api.deleteEvent(event.id);
+      confirmingDelete = false;
+      dispatch('deleted');
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Failed to delete event';
     } finally {
       updating = false;
     }
@@ -118,24 +145,57 @@
       </div>
     {:else}
       <!-- Creator's own event: "Edit"/"Nudge no-answers" per the mockup,
-           not RSVP buttons. Non-functional placeholders for now - there's
-           no edit-event flow or no-answer-nudge endpoint yet, and adding
-           those is out of scope for a visual-parity fix; shown disabled
-           rather than omitted so the layout matches the mockup. -->
+           not RSVP buttons. "Nudge no-answers" is still a placeholder -
+           there is no endpoint that pings pending participants, and
+           inventing one (a Discord DM path plus rate-limiting) is its own
+           feature, not a side effect of wiring up Edit. -->
       <div class="flex gap-1.5 mb-4">
         <button
-          disabled
-          class="flex-1 py-2 rounded-lg text-xs font-semibold border border-line bg-white text-muted opacity-50 cursor-not-allowed"
+          on:click={() => dispatch('edit', event)}
+          disabled={updating}
+          class="flex-1 py-2 rounded-lg text-xs font-semibold border border-line bg-white text-muted hover:bg-gray-50 disabled:opacity-50"
         >
           Edit
         </button>
         <button
           disabled
+          title="Not built yet - there's no endpoint to nudge pending participants"
           class="flex-1 py-2 rounded-lg text-xs font-semibold border border-line bg-white text-muted opacity-50 cursor-not-allowed"
         >
           Nudge no-answers
         </button>
       </div>
+
+      <!-- Delete lives here because this panel is the only event detail UI
+           in week and day view - the month-view hover tooltip
+           (EventCardImpl) has had the only delete affordance, so there was
+           no way to delete an event from the other two views at all. -->
+      {#if confirmingDelete}
+        <div class="flex gap-1.5 mb-4">
+          <button
+            on:click={handleDelete}
+            disabled={updating}
+            class="flex-1 py-2 rounded-lg text-xs font-semibold bg-red-600 text-white disabled:opacity-50"
+          >
+            {updating ? 'Deleting…' : 'Really delete'}
+          </button>
+          <button
+            on:click={() => (confirmingDelete = false)}
+            disabled={updating}
+            class="flex-1 py-2 rounded-lg text-xs font-semibold border border-line bg-white text-muted hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        </div>
+      {:else}
+        <button
+          on:click={() => (confirmingDelete = true)}
+          disabled={updating}
+          class="w-full py-2 mb-4 rounded-lg text-xs font-semibold border border-line bg-white text-muted hover:border-red-600 hover:text-red-600 disabled:opacity-50"
+        >
+          Delete event
+        </button>
+      {/if}
     {/if}
 
     <div class="font-mono text-[10px] tracking-widest uppercase text-muted mb-2">

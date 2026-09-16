@@ -45,6 +45,24 @@ export const dateUtils = {
       d.setDate(start.getDate() + i);
       return d;
     });
+  },
+
+  /**
+   * Converts an API timestamp (RFC3339, UTC) into the exact string an
+   * `<input type="datetime-local">` accepts: `YYYY-MM-DDTHH:mm`, in *local*
+   * time, no seconds, no zone suffix.
+   *
+   * Deliberately not `toISOString().slice(0, 16)`, which is the obvious
+   * thing and is wrong twice over: it yields UTC rather than local time, so
+   * the form shows the wrong hour for any user not on UTC. An input given a
+   * value it can't parse renders blank without throwing, so this fails
+   * silently when it fails.
+   */
+  toDatetimeLocalValue(isoString: string): string {
+    const d = new Date(isoString);
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 };
 

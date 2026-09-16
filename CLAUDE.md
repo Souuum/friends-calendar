@@ -858,7 +858,25 @@ reminded about it".
    the two endpoints already disagree. Carries real privacy decisions
    (does `friends` mean guild-synced friends or only accepted requests?) —
    the skill flags them rather than guessing.
-3. `.claude/skills/event-edit-flow/SKILL.md` — cheapest real win.
+3. `.claude/skills/event-edit-flow/SKILL.md` — **done 2026-09-16.**
+   `CreateEventModal.svelte` is now create-or-edit via one nullable `event`
+   prop (null = create), rather than a second form that would drift from
+   it; `Calendar.svelte` holds `editingEvent` as the mode switch instead of
+   a second boolean, and both paths dispatch a single `saved` event.
+   `EventPeekPanel`'s Edit button is live and dispatches the event upward.
+   Delete was added to the peek panel too — it had only ever existed in the
+   month-view hover tooltip (`EventCardImpl`), so week and day view had no
+   way to delete anything; it uses a two-step inline confirm rather than
+   `window.confirm()`, matching how the panel reports its other state.
+   `Nudge no-answers` is *still* a disabled placeholder on purpose: no
+   endpoint pings pending participants, and building one (a Discord DM path
+   plus rate-limiting) is its own feature. `EventDetailsModal.svelte` was
+   left alone for `mockup-responsive-calendar` to reuse as the mobile sheet.
+   New `dateUtils.toDatetimeLocalValue()` converts the API's UTC RFC3339
+   into the local `YYYY-MM-DDTHH:mm` a `datetime-local` input requires —
+   **not** `toISOString().slice(0,16)`, which is both UTC and silently
+   renders blank when rejected.
+   Original entry:
    `PUT /api/events/:id` and `api.updateEvent()` both exist with **zero
    callers**, and `EventPeekPanel` ships a permanently `disabled` "Edit"
    button. Also settles the orphaned `EventDetailsModal` (kept alive only

@@ -2,9 +2,17 @@
   import { createEventDispatcher, onMount } from 'svelte';
   import { api } from '$lib/api';
   import { user } from '$lib/stores';
-  import type { FriendInfo, Visibility } from '$lib/types';
+  import { dateUtils } from '$lib/utils/dateUtils';
+  import type { EventWithParticipants, FriendInfo, Visibility } from '$lib/types';
+
+  // Null = create a new event, an event = edit that one. One nullable
+  // prop rather than a separate `isEditing` boolean, so the two can't
+  // contradict each other.
+  export let event: EventWithParticipants | null = null;
 
   const dispatch = createEventDispatcher();
+
+  $: isEditing = event !== null;
 
   let title = '';
   let description = '';
@@ -20,6 +28,22 @@
   let error = '';
   let price = '';
   let link = '';
+
+  // Prefill from the event being edited. Keyed on `event?.id` rather than
+  // `event` so this doesn't re-run (and clobber half-typed edits) if the
+  // parent hands down a new object for the same event after a refresh.
+  let prefilledId: string | null = null;
+  $: if (event && event.id !== prefilledId) {
+    prefilledId = event.id;
+    title = event.title;
+    description = event.description ?? '';
+    startTime = dateUtils.toDatetimeLocalValue(event.start_time);
+    endTime = dateUtils.toDatetimeLocalValue(event.end_time);
+    location = event.location ?? '';
+    visibility = event.visibility;
+    price = event.price ?? '';
+    link = event.link ?? '';
+  }
 
   // Invite picker: participant_ids has always been accepted by the
   // backend (services::calendar::create_event), but nothing here ever
@@ -53,27 +77,45 @@
       return;
     }
 
-    const payload = {
-      title,
-      description: description || undefined,
-      start_time: new Date(startTime).toISOString(),
-      end_time: new Date(endTime).toISOString(),
-      location: location || undefined,
-      visibility,
-      price: price || undefined,
-      link: link || undefined,
-      participant_ids: selectedFriendIds.size > 0 ? Array.from(selectedFriendIds) : undefined
-    };
-    console.log('📤 Sending payload:', payload);
-
     try {
       loading = true;
       error = '';
-      await api.createEvent(payload);
-      dispatch('created');
+
+      if (event) {
+        // No participant_ids: PUT /api/events/:id doesn't manage the
+        // guest list (that's POST/DELETE .../participants), so sending it
+        // would be silently ignored. Editing invitees is a separate flow.
+        await api.updateEvent(event.id, {
+          title,
+          description: description || undefined,
+          start_time: new Date(startTime).toISOString(),
+          end_time: new Date(endTime).toISOString(),
+          location: location || undefined,
+          visibility,
+          price: price || undefined,
+          link: link || undefined
+        });
+      } else {
+        await api.createEvent({
+          title,
+          description: description || undefined,
+          start_time: new Date(startTime).toISOString(),
+          end_time: new Date(endTime).toISOString(),
+          location: location || undefined,
+          visibility,
+          price: price || undefined,
+          link: link || undefined,
+          participant_ids: selectedFriendIds.size > 0 ? Array.from(selectedFriendIds) : undefined
+        });
+      }
+
+      // One event for both paths - the parent just reloads either way.
+      dispatch('saved');
     } catch (err) {
-      console.error('❌ Error:', err);
-      error = err instanceof Error ? err.message : 'Failed to create event';
+      error =
+        err instanceof Error
+          ? err.message
+          : `Failed to ${event ? 'update' : 'create'} event`;
     } finally {
       loading = false;
     }
@@ -88,7 +130,9 @@
   <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto anim-pop">
     <div class="p-6">
       <div class="flex justify-between items-center mb-6">
-        <h2 class="text-2xl font-bold text-gray-900">Create New Event</h2>
+        <h2 class="text-2xl font-bold text-gray-900">
+          {isEditing ? 'Edit event' : 'Create New Event'}
+        </h2>
         <button on:click={handleClose} class="text-gray-400 hover:text-gray-600 text-2xl">
           ×
         </button>
@@ -207,7 +251,10 @@
           </select>
         </div>
 
-        <div>
+        <!-- Invite picker is create-only: PUT /api/events/:id doesn't touch
+             the guest list (participants have their own endpoints), so
+             showing it while editing would imply changes that never save. -->
+        <div class:hidden={isEditing}>
           <span class="block text-sm font-medium text-gray-700 mb-1">Invite</span>
           {#if friendsError}
             <p class="text-sm text-red-600" role="alert">{friendsError}</p>
@@ -248,7 +295,11 @@
             disabled={loading}
             class="flex-1 px-4 py-2 border-2 border-primary text-primary rounded-lg hover:bg-primary hover:text-white font-medium transition disabled:opacity-50"
           >
-            {loading ? 'Creating...' : 'Create Event'}
+            {#if loading}
+              {isEditing ? 'Saving…' : 'Creating...'}
+            {:else}
+              {isEditing ? 'Save changes' : 'Create Event'}
+            {/if}
           </button>
         </div>
       </form>
