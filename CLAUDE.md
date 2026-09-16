@@ -981,8 +981,31 @@ ever migrates empty ones): one seeded with a config row and an announced
 event, where everything carried across; and one without, where the migration
 refused, rolled back all three tables, and left the message id intact.
 
-Remaining steps: visibility scoping, per-guild bot channels, the bot-invite
-flow, then the server picker.
+**Step 2 is done (2026-09-16)**: visibility is now scoped to **where an
+event was published**, not to a global friendship set. An event reaches you
+if you're a participant, or if it was announced in a server you're in *and*
+its visibility allows it there:
+
+- `public` → anyone in a server it was published to
+- `friends` → people in a published-to server who are **also** friends
+- `private` → participants only, unchanged
+
+Publishing decides reach; friendship only narrows it. Both halves are
+necessary and there's a test for each direction - a friend who isn't in the
+server doesn't see it, and a server-mate who isn't a friend doesn't either.
+
+⚠️ **An event published nowhere is invisible to non-participants**, whatever
+its visibility says. That's deliberate ("announce it nowhere but let
+strangers find it" isn't coherent) but it *is* a behaviour change for events
+created before the bot was configured - they were genuinely never broadcast.
+Creators and invitees still see them.
+
+`list_user_events` and `get_event_with_participants` carry the same clause,
+and a test asserts they agree: the listing calls the fetch per event, so a
+stricter fetch silently empties the list. That mismatch has bitten once.
+
+Remaining steps: per-guild bot channels, the bot-invite flow, then the
+server picker.
 
 ## Feature backlog — 2026-09-16 triage
 

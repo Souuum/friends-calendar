@@ -137,9 +137,9 @@ pub async fn get_event_with_participants(
 ) -> Result<Option<EventWithParticipants>> {
     // Get the event
     // Must accept exactly what list_user_events accepts, including the
-    // friends-visible case. list_user_events calls this per event to build
-    // its participant lists, so anything rejected here is silently dropped
-    // from the listing no matter what that query matched.
+    // publication scoping. list_user_events calls this per event to build its
+    // participant lists, so anything rejected here is silently dropped from
+    // the listing no matter what that query matched.
     let event = sqlx::query_as::<_, CalendarEvent>(
         r#"
         SELECT e.* FROM calendar_events e
@@ -150,12 +150,20 @@ pub async fn get_event_with_participants(
                 SELECT 1 FROM event_participants ep
                 WHERE ep.event_id = e.id AND ep.user_id = $2
             )
-            OR e.visibility = 'public'
             OR (
-                e.visibility = 'friends'
+                e.visibility <> 'private'
                 AND EXISTS (
-                    SELECT 1 FROM friendships f
-                    WHERE f.user_id = $2 AND f.friend_id = e.creator_id
+                    SELECT 1 FROM event_publications p
+                    JOIN user_guilds ug
+                      ON ug.guild_id = p.guild_id AND ug.user_id = $2
+                    WHERE p.event_id = e.id
+                )
+                AND (
+                    e.visibility = 'public'
+                    OR EXISTS (
+                        SELECT 1 FROM friendships f
+                        WHERE f.user_id = $2 AND f.friend_id = e.creator_id
+                    )
                 )
             )
         )
@@ -237,20 +245,26 @@ pub async fn list_user_events(
     end_date: Option<DateTime<Utc>>,
     include_declined: bool,
 ) -> Result<Vec<EventWithParticipants>> {
-    // Three ways an event can reach you, per
-    // .claude/skills/event-visibility-listing/SKILL.md:
+    // Two ways an event can reach you:
     //   1. you're a participant (invited, however you answered)
-    //   2. it's public
-    //   3. it's friends-visible and its creator is a friend of yours
+    //   2. it was announced in a server you're in, and its visibility lets
+    //      you see it there
     //
-    // `friends` deliberately means *any* row in `friendships`, covering both
-    // sources - guild-synced (services::friends) and explicitly accepted
-    // requests (services::friend_requests). That's a product decision, not
-    // an accident: see the skill for the exposure it implies.
+    // The second clause is **scoped to where the event was published**, not
+    // to a global friendship set, and that scoping is the whole point. Before
+    // multi-server, `friends` meant "any row in friendships" - which with
+    // several servers becomes "anyone I share *any* server with", so a work
+    // server would start seeing a games server's events. Publishing decides
+    // reach; friendship only narrows it further.
     //
-    // EXISTS rather than the old JOIN + DISTINCT: an event can qualify by
-    // more than one clause at once (invited *and* public), and DISTINCT
-    // over `e.*` was the only thing stopping that from double-listing it.
+    // A consequence worth knowing: an event published nowhere is invisible to
+    // non-participants whatever its visibility says. "Announce it nowhere but
+    // let strangers find it" isn't a coherent thing to ask for, and events
+    // created before the bot was configured genuinely were never broadcast.
+    //
+    // EXISTS rather than JOIN + DISTINCT: an event can qualify by more than
+    // one clause at once (invited *and* public), and DISTINCT over `e.*` was
+    // the only thing stopping that from double-listing it.
     let mut query = String::from(
         r#"
         SELECT e.* FROM calendar_events e
@@ -259,12 +273,20 @@ pub async fn list_user_events(
                 SELECT 1 FROM event_participants ep
                 WHERE ep.event_id = e.id AND ep.user_id = $1
             )
-            OR e.visibility = 'public'
             OR (
-                e.visibility = 'friends'
+                e.visibility <> 'private'
                 AND EXISTS (
-                    SELECT 1 FROM friendships f
-                    WHERE f.user_id = $1 AND f.friend_id = e.creator_id
+                    SELECT 1 FROM event_publications p
+                    JOIN user_guilds ug
+                      ON ug.guild_id = p.guild_id AND ug.user_id = $1
+                    WHERE p.event_id = e.id
+                )
+                AND (
+                    e.visibility = 'public'
+                    OR EXISTS (
+                        SELECT 1 FROM friendships f
+                        WHERE f.user_id = $1 AND f.friend_id = e.creator_id
+                    )
                 )
             )
         )
@@ -664,6 +686,28 @@ mod tests {
         }
     }
 
+    /// Announce an event in a server, the way handlers::calendar does.
+    /// Reach is scoped to publications now, so a test event nobody can see
+    /// usually just means it was never published.
+    async fn publish(db: &PgPool, event_id: Uuid, guild_discord_id: &str) -> Uuid {
+        let guild = crate::services::guilds::ensure_guild(db, guild_discord_id)
+            .await
+            .unwrap();
+        let publication = crate::services::guilds::add_publication(db, event_id, guild, "chan1")
+            .await
+            .unwrap();
+        crate::services::guilds::mark_published(db, publication, &Uuid::new_v4().to_string())
+            .await
+            .unwrap();
+        guild
+    }
+
+    async fn join(db: &PgPool, guild: Uuid, users: &[Uuid]) {
+        crate::services::guilds::set_guild_members(db, guild, users)
+            .await
+            .unwrap();
+    }
+
     async fn create_with_visibility(
         db: &PgPool,
         creator: Uuid,
@@ -683,7 +727,9 @@ mod tests {
         let creator = seed_user(&db, "creator", "creator").await;
         let stranger = seed_user(&db, "stranger", "stranger").await;
 
-        create_with_visibility(&db, creator, "Public party", Visibility::Public).await;
+        let event = create_with_visibility(&db, creator, "Public party", Visibility::Public).await;
+        let guild = publish(&db, event, "g1").await;
+        join(&db, guild, &[creator, stranger]).await;
 
         let listed = list_user_events(&db, stranger, None, None, false)
             .await
@@ -703,7 +749,9 @@ mod tests {
         let stranger = seed_user(&db, "stranger", "stranger").await;
         befriend(&db, creator, stranger, "discord_guild").await;
 
-        create_with_visibility(&db, creator, "Secret", Visibility::Private).await;
+        let event = create_with_visibility(&db, creator, "Secret", Visibility::Private).await;
+        let guild = publish(&db, event, "g1").await;
+        join(&db, guild, &[creator, stranger]).await;
 
         let listed = list_user_events(&db, stranger, None, None, false)
             .await
@@ -726,7 +774,9 @@ mod tests {
         befriend(&db, creator, guild_mate, "discord_guild").await;
         befriend(&db, creator, accepted, "friend_request").await;
 
-        create_with_visibility(&db, creator, "Friends only", Visibility::Friends).await;
+        let event = create_with_visibility(&db, creator, "Friends only", Visibility::Friends).await;
+        let guild = publish(&db, event, "g1").await;
+        join(&db, guild, &[creator, guild_mate, accepted, stranger]).await;
 
         for (who, label) in [(guild_mate, "guild-synced"), (accepted, "accepted request")] {
             let listed = list_user_events(&db, who, None, None, false).await.unwrap();
@@ -746,6 +796,130 @@ mod tests {
         );
     }
 
+    // The leak this scoping exists to prevent: before it, "friends" meant any
+    // friendship row, so being in a work server and a games server with the
+    // same person would show each group the other's events.
+    #[sqlx::test]
+    async fn a_public_event_does_not_reach_a_server_it_was_not_published_to(db: PgPool) {
+        let creator = seed_user(&db, "creator", "creator").await;
+        let outsider = seed_user(&db, "outsider", "outsider").await;
+
+        let event = create_with_visibility(&db, creator, "Work drinks", Visibility::Public).await;
+        let work = publish(&db, event, "work").await;
+        join(&db, work, &[creator]).await;
+
+        // outsider shares no server with the event, though they share the app.
+        let games = crate::services::guilds::ensure_guild(&db, "games")
+            .await
+            .unwrap();
+        join(&db, games, &[creator, outsider]).await;
+
+        let listed = list_user_events(&db, outsider, None, None, false)
+            .await
+            .unwrap();
+        assert!(
+            listed.is_empty(),
+            "publishing to one server must not broadcast to every server the creator is in"
+        );
+    }
+
+    #[sqlx::test]
+    async fn being_a_friend_is_not_enough_without_a_shared_publication(db: PgPool) {
+        let creator = seed_user(&db, "creator", "creator").await;
+        let friend = seed_user(&db, "friend", "friend").await;
+        befriend(&db, creator, friend, "friend_request").await;
+
+        let event = create_with_visibility(&db, creator, "Friends only", Visibility::Friends).await;
+        let work = publish(&db, event, "work").await;
+        join(&db, work, &[creator]).await; // the friend isn't in this server
+
+        assert!(
+            list_user_events(&db, friend, None, None, false)
+                .await
+                .unwrap()
+                .is_empty(),
+            "friendship narrows reach, it doesn't grant it"
+        );
+    }
+
+    #[sqlx::test]
+    async fn sharing_a_server_is_not_enough_for_a_friends_event(db: PgPool) {
+        let creator = seed_user(&db, "creator", "creator").await;
+        let acquaintance = seed_user(&db, "acq", "acq").await;
+
+        let event = create_with_visibility(&db, creator, "Friends only", Visibility::Friends).await;
+        let guild = publish(&db, event, "g1").await;
+        join(&db, guild, &[creator, acquaintance]).await;
+
+        // Same server, but not friends - `friends` still has to mean something.
+        assert!(
+            list_user_events(&db, acquaintance, None, None, false)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    // Events created before the bot was ever configured were genuinely never
+    // broadcast, so nobody outside the guest list should discover them now.
+    #[sqlx::test]
+    async fn an_unpublished_event_reaches_only_its_participants(db: PgPool) {
+        let creator = seed_user(&db, "creator", "creator").await;
+        let other = seed_user(&db, "other", "other").await;
+        befriend(&db, creator, other, "discord_guild").await;
+
+        let guild = crate::services::guilds::ensure_guild(&db, "g1")
+            .await
+            .unwrap();
+        join(&db, guild, &[creator, other]).await;
+
+        create_with_visibility(&db, creator, "Never announced", Visibility::Public).await;
+
+        assert!(
+            list_user_events(&db, other, None, None, false)
+                .await
+                .unwrap()
+                .is_empty(),
+            "no publication means no reach, whatever the visibility says"
+        );
+        // The creator still sees it - they're a participant.
+        assert_eq!(
+            list_user_events(&db, creator, None, None, false)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    // get_event_with_participants must accept exactly what the listing does;
+    // the listing calls it per event, so a stricter fetch silently empties the
+    // list. That mismatch has bitten once already.
+    #[sqlx::test]
+    async fn the_single_event_fetch_agrees_with_the_listing(db: PgPool) {
+        let creator = seed_user(&db, "creator", "creator").await;
+        let viewer = seed_user(&db, "viewer", "viewer").await;
+
+        let event = create_with_visibility(&db, creator, "Public party", Visibility::Public).await;
+        let guild = publish(&db, event, "g1").await;
+        join(&db, guild, &[creator, viewer]).await;
+
+        assert_eq!(
+            list_user_events(&db, viewer, None, None, false)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            get_event_with_participants(&db, event, viewer)
+                .await
+                .unwrap()
+                .is_some(),
+            "the listing found it, so fetching it directly must too"
+        );
+    }
+
     // The easiest regression to ship by accident: the declined filter used
     // to live on the JOINed participant row, so an event you turned down
     // could reappear through the new public/friends clause.
@@ -757,6 +931,8 @@ mod tests {
         let mut req = minimal_request("Public but declined", Some(vec![invitee]));
         req.visibility = Some(Visibility::Public);
         let event = create_event(&db, creator, req).await.unwrap();
+        let guild = publish(&db, event.id, "g1").await;
+        join(&db, guild, &[creator, invitee]).await;
 
         update_participation_status(&db, event.id, invitee, ParticipationStatus::Declined)
             .await
@@ -785,7 +961,9 @@ mod tests {
         // Invited AND public AND friend-of-creator - three routes, one event.
         let mut req = minimal_request("Everything at once", Some(vec![invitee]));
         req.visibility = Some(Visibility::Public);
-        create_event(&db, creator, req).await.unwrap();
+        let event = create_event(&db, creator, req).await.unwrap();
+        let guild = publish(&db, event.id, "g1").await;
+        join(&db, guild, &[creator, invitee]).await;
 
         let listed = list_user_events(&db, invitee, None, None, false)
             .await
