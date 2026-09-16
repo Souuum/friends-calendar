@@ -14,19 +14,15 @@ impl DiscordBot {
     // result_large_err rejects for a Result returned by value. Boxing costs
     // an allocation only on the failure path, and the sole caller (main.rs's
     // spawned task) just logs it.
-    pub async fn start(
-        bot_token: String,
-        db: PgPool,
-        announcement_channel_id: u64,
-    ) -> Result<(), Box<serenity::Error>> {
+    /// No announcement-channel argument any more: the bot watches every
+    /// server it's in and resolves reactions through event_publications, so
+    /// adding a server needs no restart and no configuration here.
+    pub async fn start(bot_token: String, db: PgPool) -> Result<(), Box<serenity::Error>> {
         let intents = GatewayIntents::GUILD_MESSAGE_REACTIONS
             | GatewayIntents::GUILDS
             | GatewayIntents::GUILD_MEMBERS;
 
-        let handler = Handler {
-            db: Arc::new(db),
-            announcement_channel_id,
-        };
+        let handler = Handler { db: Arc::new(db) };
 
         let mut client = Client::builder(&bot_token, intents)
             .event_handler(handler)
@@ -42,32 +38,44 @@ impl DiscordBot {
 
 struct Handler {
     db: Arc<PgPool>,
-    announcement_channel_id: u64,
 }
 
 #[async_trait]
 impl EventHandler for Handler {
     async fn ready(&self, _: Context, ready: Ready) {
         tracing::info!("🤖 Discord bot {} is connected!", ready.user.name);
-        tracing::info!("📢 Monitoring channel ID: {}", self.announcement_channel_id);
+    }
+
+    /// A new server added the bot (this also fires for every server on
+    /// connect, which is how an existing install gets its name and icon).
+    async fn guild_create(&self, _: Context, guild: Guild, _is_new: Option<bool>) {
+        match crate::services::guilds::upsert_guild_metadata(
+            &self.db,
+            &guild.id.get().to_string(),
+            &guild.name,
+            guild.icon.as_ref().map(|i| i.to_string()).as_deref(),
+        )
+        .await
+        {
+            Ok(_) => tracing::info!("🏠 Registered server {} ({})", guild.name, guild.id),
+            Err(e) => tracing::error!("❌ Failed to register server {}: {:?}", guild.id, e),
+        }
     }
 
     async fn reaction_add(&self, ctx: Context, reaction: Reaction) {
-        // Only process reactions in the announcement channel
-        if reaction.channel_id.get() != self.announcement_channel_id {
-            return;
-        }
-
-        // Only process white check mark emoji
+        // No channel filter. It used to compare against a single
+        // announcement channel captured at process start, which couldn't
+        // survive a second server being added without a restart - and it was
+        // only ever an optimisation: record_attendance already returns
+        // UnknownEvent for a message we didn't announce.
+        //
+        // So rather than making the filter hot-reloadable, it's gone: the
+        // emoji check below discards almost everything, and what's left costs
+        // one indexed lookup on event_publications.discord_message_id. A
+        // lookup can't go stale; a cached channel set can.
         if !is_attendance_emoji(&reaction.emoji) {
             return;
         }
-
-        tracing::info!(
-            "✅ User {} reacted with check mark to message {} in announcement channel",
-            reaction.user_id.map(|id| id.get()).unwrap_or(0),
-            reaction.message_id.get()
-        );
 
         if let Err(e) = self.handle_event_reaction(&ctx, &reaction).await {
             tracing::error!("❌ Failed to handle reaction: {:?}", e);
@@ -75,21 +83,10 @@ impl EventHandler for Handler {
     }
 
     async fn reaction_remove(&self, ctx: Context, reaction: Reaction) {
-        // Only process reactions in the announcement channel
-        if reaction.channel_id.get() != self.announcement_channel_id {
-            return;
-        }
-
-        // Only process white check mark emoji
+        // Same reasoning as reaction_add: no channel filter.
         if !is_attendance_emoji(&reaction.emoji) {
             return;
         }
-
-        tracing::info!(
-            "❌ User {} removed check mark from message {}",
-            reaction.user_id.map(|id| id.get()).unwrap_or(0),
-            reaction.message_id.get()
-        );
 
         if let Err(e) = self.handle_reaction_remove(&ctx, &reaction).await {
             tracing::error!("❌ Failed to handle reaction removal: {:?}", e);

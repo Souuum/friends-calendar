@@ -18,6 +18,9 @@ pub type DiscordOAuthClient =
 pub struct AppState {
     pub db: PgPool,
     pub oauth_client: DiscordOAuthClient,
+    /// Also used to build the bot's invite URL (handlers::guilds), not just
+    /// the OAuth login flow.
+    pub discord_client_id: String,
     /// Dedicated HTTP client for the OAuth2 token exchange, built with
     /// redirects disabled. oauth2 5.x requires this: a redirect-following
     /// client can be steered into leaking the authorization code to another
@@ -74,8 +77,9 @@ impl AppState {
         tracing::info!("✅ Migrations complete");
 
         // OAuth2 client setup
-        let discord_client_id =
-            ClientId::new(env::var("DISCORD_CLIENT_ID").expect("DISCORD_CLIENT_ID must be set"));
+        let discord_client_id_raw =
+            env::var("DISCORD_CLIENT_ID").expect("DISCORD_CLIENT_ID must be set");
+        let discord_client_id = ClientId::new(discord_client_id_raw.clone());
         let discord_client_secret = ClientSecret::new(
             env::var("DISCORD_CLIENT_SECRET").expect("DISCORD_CLIENT_SECRET must be set"),
         );
@@ -130,6 +134,7 @@ impl AppState {
         Ok(Self {
             db,
             oauth_client,
+            discord_client_id: discord_client_id_raw,
             oauth_http_client: build_oauth_http_client(),
             jwt_secret,
             frontend_url,
@@ -163,6 +168,7 @@ impl AppState {
         Self {
             db,
             oauth_client,
+            discord_client_id: "test-client-id".to_string(),
             oauth_http_client: build_oauth_http_client(),
             jwt_secret: "test-jwt-secret".to_string(),
             frontend_url: "http://localhost:1420".to_string(),

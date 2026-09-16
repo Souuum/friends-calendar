@@ -1004,8 +1004,41 @@ Creators and invitees still see them.
 and a test asserts they agree: the listing calls the fetch per event, so a
 stricter fetch silently empties the list. That mismatch has bitten once.
 
-Remaining steps: per-guild bot channels, the bot-invite flow, then the
-server picker.
+**Steps 3+4 are done (2026-09-16)**, merged because step 3 on its own had no
+consumer - resolving channels per guild changes nothing while there's one
+server, and building it ahead of the invite flow would have been the same
+build-before-the-caller mistake clippy caught elsewhere that day.
+
+Step 3 then **collapsed instead of being built**. `bot.rs` used to filter
+reactions against a single announcement channel captured at process start,
+which is what couldn't survive a new server without a restart. But that
+filter was only ever an optimisation: `record_attendance` already returns
+`UnknownEvent` for a message we didn't announce. So the filter is *gone*
+rather than hot-reloadable - the emoji check discards almost everything, and
+what's left costs one indexed lookup on
+`event_publications.discord_message_id`. A lookup can't go stale; a cached
+channel set can.
+
+Consequences:
+- `DiscordBot::start` takes only a token now, and `main.rs` starts the bot
+  without `DISCORD_ANNOUNCEMENT_CHANNEL_ID` - it watches every server it's in
+  whether or not any announcement channel is configured.
+- **Servers register themselves.** The gateway's `guild_create` fires on join
+  *and* for every server on reconnect, and records name + icon (the only
+  place those come from - nothing asks the user to type them). There is no
+  "add server" endpoint: authorising the bot on Discord *is* the action, and
+  a parallel callback of our own would just be a second way to get it wrong.
+- `GET /api/guilds` returns the servers plus the bot invite URL, built from
+  `DISCORD_CLIENT_ID` (now kept on `AppState`). The permissions bitfield is
+  spelled out as a sum in `handlers::guilds` rather than pasted as a magic
+  number, because checking such a number means decomposing it again.
+
+⚠️ **Not verifiable here**: whether the invite link actually works, and
+whether `guild_create` fires as expected, both need real Discord. The DB half
+is tested; the gateway half is not.
+
+Remaining: the server picker (step 5) - `/servers` and choosing where an
+event publishes.
 
 ## Feature backlog — 2026-09-16 triage
 

@@ -70,6 +70,8 @@ pub(crate) fn build_router(state: AppState) -> Router {
             "/api/events/:id/participants/:user_id",
             delete(handlers::calendar::remove_participant),
         )
+        // Servers the bot is in
+        .route("/api/guilds", get(handlers::guilds::list_servers))
         // Friends routes
         .route("/api/friends", get(handlers::friends::list_friends))
         .route("/api/friends/sync", post(handlers::friends::sync_friends))
@@ -185,31 +187,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Start the Discord bot in the background if it's configured. Unlike
-    // this branch's original .expect()-based setup, missing config here
-    // doesn't take down the whole backend — same reasoning as friend sync
-    // in services::friends: a Discord integration being unconfigured
-    // shouldn't block booting the rest of the API.
-    match (
-        &state.discord_bot_token,
-        state.discord_announcement_channel_id,
-    ) {
-        (Some(bot_token), Some(announcement_channel_id)) => {
-            let bot_token = bot_token.clone();
-            let db_clone = state.db.clone();
-            tokio::spawn(async move {
-                if let Err(e) =
-                    bot::DiscordBot::start(bot_token, db_clone, announcement_channel_id).await
-                {
-                    tracing::error!("❌ Discord bot error: {:?}", e);
-                }
-            });
-        }
-        _ => {
-            tracing::warn!(
-                "⚠️  DISCORD_BOT_TOKEN / DISCORD_ANNOUNCEMENT_CHANNEL_ID not set — Discord bot will not start"
-            );
-        }
+    // Start the Discord bot in the background if it's configured.
+    //
+    // Only the token is needed now. It used to also require
+    // DISCORD_ANNOUNCEMENT_CHANNEL_ID, because the gateway handler captured a
+    // single channel to filter reactions against - it no longer filters by
+    // channel at all, so the bot can watch every server it's in whether or
+    // not any announcement channel has been configured.
+    if let Some(bot_token) = &state.discord_bot_token {
+        let bot_token = bot_token.clone();
+        let db_clone = state.db.clone();
+        tokio::spawn(async move {
+            if let Err(e) = bot::DiscordBot::start(bot_token, db_clone).await {
+                tracing::error!("❌ Discord bot error: {:?}", e);
+            }
+        });
+    } else {
+        tracing::warn!("⚠️  DISCORD_BOT_TOKEN not set — Discord bot will not start");
     }
 
     // Weekly announcements digest — same conditional-spawn shape as the

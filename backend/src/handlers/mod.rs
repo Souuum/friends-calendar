@@ -6,5 +6,6 @@ pub mod discord;
 pub mod discord_config;
 pub mod friend_requests;
 pub mod friends;
+pub mod guilds;
 pub mod notifications;
 pub mod profile;

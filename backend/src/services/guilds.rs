@@ -48,6 +48,60 @@ pub async fn ensure_guild(db: &PgPool, discord_guild_id: &str) -> Result<Uuid> {
     Ok(id)
 }
 
+/// A server the bot is in, as shown on /servers.
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct GuildInfo {
+    pub id: Uuid,
+    pub discord_guild_id: String,
+    pub name: Option<String>,
+    pub icon_url: Option<String>,
+}
+
+/// Records what Discord calls a server, from the gateway's `guild_create`.
+///
+/// Separate from `ensure_guild` because that one runs where only the id is
+/// known (startup, publishing); this runs where Discord has just handed us
+/// the name and icon, which is the only place they come from - nothing in
+/// this app asks the user to type them.
+pub async fn upsert_guild_metadata(
+    db: &PgPool,
+    discord_guild_id: &str,
+    name: &str,
+    icon: Option<&str>,
+) -> Result<Uuid> {
+    let id = ensure_guild(db, discord_guild_id).await?;
+
+    sqlx::query("UPDATE guilds SET name = $1, icon = $2 WHERE id = $3")
+        .bind(name)
+        .bind(icon)
+        .bind(id)
+        .execute(db)
+        .await?;
+
+    Ok(id)
+}
+
+/// Every server the bot is in.
+pub async fn list_guilds(db: &PgPool) -> Result<Vec<GuildInfo>> {
+    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>)>(
+        "SELECT id, discord_guild_id, name, icon FROM guilds ORDER BY name NULLS LAST, added_at",
+    )
+    .fetch_all(db)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(id, discord_guild_id, name, icon)| GuildInfo {
+            icon_url: icon
+                .as_deref()
+                .map(|i| format!("https://cdn.discordapp.com/icons/{discord_guild_id}/{i}.png")),
+            id,
+            discord_guild_id,
+            name,
+        })
+        .collect())
+}
+
 /// Records that an event is to be announced in a server, before anything is
 /// posted. Idempotent, so re-publishing to the same server is a no-op rather
 /// than a duplicate.
