@@ -3,6 +3,7 @@ use axum::{
     Router,
     routing::{delete, get, patch, post, put},
 };
+use std::env;
 use std::net::SocketAddr;
 use tower_http::cors::CorsLayer;
 
@@ -16,6 +17,41 @@ mod services;
 
 use config::AppState;
 
+/// Origins the API accepts browser requests from.
+///
+/// This used to be the single hard-coded literal `http://localhost:1420` -
+/// the Tauri *dev server* origin. That is not the origin of anything in
+/// production: a packaged Tauri app sends `tauri://localhost` (macOS/Linux)
+/// or `https://tauri.localhost` (Windows), and a hosted web build sends its
+/// own domain. `FRONTEND_URL` already existed on `AppState` but only fed the
+/// OAuth redirect, so a deployed API answered the redirect and then had every
+/// subsequent request blocked by CORS.
+///
+/// `allow_credentials(true)` forbids the `*` wildcard, so this has to be an
+/// explicit list rather than "allow anything".
+fn allowed_origins(frontend_url: &str) -> Vec<HeaderValue> {
+    [
+        frontend_url,
+        // Kept so `yarn tauri:dev` / `vite dev` still work against a
+        // deployed API without needing FRONTEND_URL repointed.
+        "http://localhost:1420",
+        "tauri://localhost",
+        "https://tauri.localhost",
+    ]
+    .iter()
+    // A malformed FRONTEND_URL drops that one entry rather than panicking
+    // the whole server at startup over a config typo.
+    .filter_map(|origin| origin.trim_end_matches('/').parse::<HeaderValue>().ok())
+    // FRONTEND_URL defaults to the dev origin, which is also in the list
+    // below it - dedupe so it isn't sent twice.
+    .fold(Vec::new(), |mut acc, origin| {
+        if !acc.contains(&origin) {
+            acc.push(origin);
+        }
+        acc
+    })
+}
+
 /// The full application router. Pulled out of `main()` so functional
 /// (router-level) tests can build and drive the exact same routing/CORS
 /// setup the real server runs — see .claude/skills/add-tests/SKILL.md and
@@ -23,7 +59,7 @@ use config::AppState;
 pub(crate) fn build_router(state: AppState) -> Router {
     // Build CORS layer - specific origins and headers when using credentials
     let cors = CorsLayer::new()
-        .allow_origin("http://localhost:1420".parse::<HeaderValue>().unwrap())
+        .allow_origin(allowed_origins(&state.frontend_url))
         .allow_methods([
             Method::GET,
             Method::POST,
@@ -237,7 +273,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = build_router(state);
 
     // Start server
-    let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
+    // Configurable because where this binds depends on where the Cloudflare
+    // tunnel runs. `cloudflared` inside the same container reaches
+    // 127.0.0.1; a tunnel on the Proxmox host (or any other machine) cannot,
+    // and needs BIND_ADDR=0.0.0.0:8080. Defaults to loopback so that
+    // widening the exposure is always a deliberate act.
+    //
+    // There is no authentication in front of this port - every route is
+    // guarded by the JWT middleware, but 0.0.0.0 still means anything on the
+    // LAN can reach it, so it belongs on a trusted network only.
+    let addr: SocketAddr = env::var("BIND_ADDR")
+        .unwrap_or_else(|_| "127.0.0.1:8080".to_string())
+        .parse()
+        .expect("BIND_ADDR must look like 127.0.0.1:8080 or 0.0.0.0:8080");
     tracing::info!("🚀 Server starting on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -248,4 +296,120 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn root() -> &'static str {
     "Friends Calendar API - Discord OAuth2"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use sqlx::PgPool;
+    use tower::ServiceExt;
+
+    #[test]
+    fn the_configured_frontend_origin_is_allowed() {
+        let origins = allowed_origins("https://calendar.example.com");
+        assert!(origins.contains(&HeaderValue::from_static("https://calendar.example.com")));
+    }
+
+    // A packaged Tauri app does not send the dev-server origin, which is all
+    // the old hard-coded CorsLayer accepted.
+    #[test]
+    fn packaged_tauri_origins_are_allowed() {
+        let origins = allowed_origins("https://calendar.example.com");
+        assert!(origins.contains(&HeaderValue::from_static("tauri://localhost")));
+        assert!(origins.contains(&HeaderValue::from_static("https://tauri.localhost")));
+    }
+
+    #[test]
+    fn the_dev_origin_survives_a_production_frontend_url() {
+        let origins = allowed_origins("https://calendar.example.com");
+        assert!(origins.contains(&HeaderValue::from_static("http://localhost:1420")));
+    }
+
+    // FRONTEND_URL defaults to the dev origin, which is also hard-coded in
+    // the list - it must not be sent twice.
+    #[test]
+    fn the_default_frontend_url_is_not_duplicated() {
+        let origins = allowed_origins("http://localhost:1420");
+        let count = origins
+            .iter()
+            .filter(|o| *o == HeaderValue::from_static("http://localhost:1420"))
+            .count();
+        assert_eq!(count, 1, "dev origin listed {count} times");
+    }
+
+    // A trailing slash is the most likely way FRONTEND_URL gets written by
+    // hand; an Origin header never has one, so it would never match.
+    #[test]
+    fn a_trailing_slash_in_frontend_url_is_normalised() {
+        let origins = allowed_origins("https://calendar.example.com/");
+        assert!(origins.contains(&HeaderValue::from_static("https://calendar.example.com")));
+    }
+
+    #[test]
+    fn a_malformed_frontend_url_does_not_take_the_server_down() {
+        // Newlines can't go in a header value; the entry is dropped and the
+        // rest of the list survives.
+        let origins = allowed_origins("https://bad\norigin");
+        assert!(origins.contains(&HeaderValue::from_static("tauri://localhost")));
+    }
+
+    // The real router, so this can't pass while the deployed server rejects
+    // the browser - the exact gap that let the hard-coded origin survive.
+    #[sqlx::test]
+    async fn preflight_from_the_configured_frontend_is_accepted(db: PgPool) {
+        let mut state = AppState::for_test(db, "http://unused.invalid".to_string());
+        state.frontend_url = "https://calendar.example.com".to_string();
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/api/events")
+                    .header("Origin", "https://calendar.example.com")
+                    .header("Access-Control-Request-Method", "GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .and_then(|v| v.to_str().ok()),
+            Some("https://calendar.example.com")
+        );
+    }
+
+    #[sqlx::test]
+    async fn preflight_from_an_unrelated_origin_is_not_granted(db: PgPool) {
+        let state = AppState::for_test(db, "http://unused.invalid".to_string());
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/api/events")
+                    .header("Origin", "https://evil.example.com")
+                    .header("Access-Control-Request-Method", "GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .is_none(),
+            "an unlisted origin must not be granted CORS"
+        );
+    }
 }

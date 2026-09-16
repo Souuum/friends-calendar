@@ -49,7 +49,12 @@ jobs:
   deploy:
     name: Deploy to VPS
     needs: build
-    runs-on: ubuntu-latest
+    # Self-hosted, and it has to be: the container lives behind NAT on a
+    # home network, reachable from outside only through a Cloudflare tunnel,
+    # and a proxied Cloudflare record carries HTTP/S - not SSH. A
+    # GitHub-hosted runner has no route in at all. This runner sits on the
+    # same LAN and connects outbound to GitHub, so nothing needs exposing.
+    runs-on: self-hosted
     environment: production
 
     steps:
@@ -59,17 +64,28 @@ jobs:
           name: rust-friends-calendar
           path: ./artifact
 
+      # Everything goes in the workspace, not ~/.ssh. On a GitHub-hosted
+      # runner the whole machine is discarded afterwards; this runner is
+      # persistent, so writing to ~/.ssh/known_hosts would append the same
+      # host key on every deploy forever, and a private key left in $HOME
+      # would outlive the job.
       - name: Configure SSH
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "${{ secrets.DEPLOY_SSH_HOST }}" >> ~/.ssh/known_hosts
+          install -d -m 700 "$RUNNER_TEMP/ssh"
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > "$RUNNER_TEMP/ssh/deploy_key"
+          chmod 600 "$RUNNER_TEMP/ssh/deploy_key"
+          ssh-keyscan -H "${{ secrets.DEPLOY_SSH_HOST }}" \
+            > "$RUNNER_TEMP/ssh/known_hosts" 2>/dev/null
+          test -s "$RUNNER_TEMP/ssh/known_hosts" || {
+            echo "::error::ssh-keyscan returned nothing for DEPLOY_SSH_HOST - is the container up and reachable from this runner?"
+            exit 1
+          }
 
       - name: Ship binary and restart service
         run: |
+          SSH_OPTS="-i $RUNNER_TEMP/ssh/deploy_key -o UserKnownHostsFile=$RUNNER_TEMP/ssh/known_hosts -o IdentitiesOnly=yes"
           chmod +x ./artifact/rust-friends-calendar
-          scp -i ~/.ssh/deploy_key \
+          scp $SSH_OPTS \
             ./artifact/rust-friends-calendar \
             "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}:/opt/friends-calendar/target/release/rust-friends-calendar.new"
 
@@ -84,11 +100,18 @@ jobs:
           # operate (root over SSH). If DEPLOY_SSH_USER isn't root, either
           # grant it passwordless sudo for these two commands specifically,
           # or add `sudo` back here - see docs/deployment.md.
-          ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}" '
+          ssh $SSH_OPTS "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}" '
             set -e
             mv /opt/friends-calendar/target/release/rust-friends-calendar.new /opt/friends-calendar/target/release/rust-friends-calendar
             systemctl restart friends-calendar
           '
+
+      # The key is in RUNNER_TEMP, which the runner clears between jobs, but
+      # this runner is a long-lived machine and a deploy key is worth being
+      # explicit about. `always()` so a failed deploy doesn't leave it behind.
+      - name: Remove deploy key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/ssh"
 
       - name: Health check
         run: |

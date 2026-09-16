@@ -145,11 +145,35 @@ Runs on `axum = "0.7"`, `sqlx` (Postgres, runtime-tokio-native-tls),
 backend), `tower` with the `util` feature enabled specifically for
 `ServiceExt::oneshot` in functional tests.
 
-Server binds `127.0.0.1:8080`. CORS is hard-coded to allow only
-`http://localhost:1420` (the Tauri dev origin) with credentials. (This is
-also why `terraform/templates/nginx.conf` doesn't set its own CORS headers
-— see the Terraform section below for why that combination breaks browsers
-when both layers do it.)
+Server binds `BIND_ADDR` (default `127.0.0.1:8080`). It became configurable
+on 2026-09-16 because where it binds depends on where `cloudflared` runs:
+inside the same container, loopback is right; a tunnel on the Proxmox host
+can't reach loopback and needs `0.0.0.0:8080`. Loopback stays the default so
+widening exposure is a deliberate act — nothing authenticates in front of
+this port, only the JWT middleware behind it.
+
+**CORS** (`main.rs::allowed_origins`) is an explicit list built from
+`FRONTEND_URL`, plus the packaged-Tauri origins (`tauri://localhost`,
+`https://tauri.localhost`) and the `http://localhost:1420` dev origin.
+`allow_credentials(true)` forbids the `*` wildcard, so it has to be a list.
+
+⚠️ **Until 2026-09-16 this was the single hard-coded literal
+`http://localhost:1420` — the Tauri *dev server* origin, which is the origin
+of nothing in production.** `FRONTEND_URL` existed on `AppState` but only
+fed the OAuth redirect (`handlers::auth`), so a deployed API would have
+completed the login redirect and then had **every** subsequent browser
+request blocked, the packaged desktop app included. Found while preparing
+the first real deployment, not by any test — and the two router-level tests
+added with the fix were verified to fail against the old code first. A
+related subtlety: a *single* hard-coded origin makes tower-http echo
+`access-control-allow-origin` to every requester; a list correctly withholds
+it, which is why the "unrelated origin is not granted" test also failed
+before.
+
+(This is also why `terraform/templates/nginx.conf` doesn't set its own CORS
+headers — see the Terraform section below for why that combination breaks
+browsers when both layers do it. That file is unused now; see
+`terraform/README.md`.)
 
 ### Implemented API endpoints (from `backend/src/main.rs`)
 
@@ -1331,8 +1355,19 @@ molecules/organisms/templates have no stories yet.
 
 All three exist in the repo, at different levels of completeness:
 
-- **Terraform** (`terraform/`): real, and now fixed up (2026-09-15) rather
-  than just present. `main.tf` provisions a `proxmox_lxc` container, plus
+- **Terraform** (`terraform/`): ⚠️ **written, audited, and never applied —
+  and as of 2026-09-16 it does not describe how this app is deployed.**
+  There is no state file, no `terraform.tfvars` and no `.terraform/`; it has
+  never been run. The real topology (home Proxmox behind NAT, published
+  through a Cloudflare tunnel, deployed by a self-hosted runner) breaks most
+  of its assumptions — `terraform/README.md` has the file-by-file table, and
+  `docs/deployment.md` describes what actually happens. The one salvageable
+  piece is that the Proxmox API answers through the tunnel
+  (`https://proxmox.<domain>/api2/json/version` → 401), so container
+  *creation* could be driven remotely; everything downstream of creation is
+  handled differently now. The historical audit notes below are kept because
+  they document bugs that were real, not because the code is in use.
+  `main.tf` provisions a `proxmox_lxc` container, plus
   `cloudflare.tf` (DNS), `ssl.tf`, `provisioning.tf`, `outputs.tf`,
   `variables.tf`, and templates for nginx/systemd/env. This matches
   `Makefile`'s `init/plan/apply/destroy/ssh/logs/status/update` targets and
