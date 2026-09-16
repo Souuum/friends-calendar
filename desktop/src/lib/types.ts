@@ -77,6 +77,13 @@ export interface EventWithParticipants extends CalendarEvent {
   participants: ParticipantInfo[];
   is_creator: boolean;
   my_status?: Status;
+  /**
+   * Whether you're actually on the guest list, as opposed to just being
+   * able to see the event (it's public, or friends-visible and its creator
+   * is a friend). `my_status` can't answer this - it's absent both for a
+   * non-participant and for an invitee who hasn't replied.
+   */
+  is_participant: boolean;
 }
 
 export interface FriendInfo {

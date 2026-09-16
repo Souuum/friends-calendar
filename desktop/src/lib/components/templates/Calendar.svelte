@@ -170,7 +170,10 @@
       case 'going':
         return event.my_status === 'accepted';
       case 'awaiting':
-        return !event.my_status || event.my_status === 'pending';
+        // `is_participant` matters here: without it this sweeps up every
+        // public event in the server, since a non-participant has no
+        // my_status either. You can only owe an answer if you were asked.
+        return event.is_participant && (!event.my_status || event.my_status === 'pending');
       case 'mine':
         return event.is_creator;
       default:

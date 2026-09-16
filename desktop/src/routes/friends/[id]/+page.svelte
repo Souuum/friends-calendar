@@ -36,7 +36,11 @@
       ]);
       friend = friends.find((f) => f.user_id === id);
       sharedEvents = events
-        .filter((e) => e.participants.some((p) => p.user_id === id))
+        // `is_participant` matters since GET /api/events started returning
+        // events you can merely see (public, or a friend's friends-visible
+        // event). Without it, "Shared events" would list events only *they*
+        // are in, which is the opposite of shared.
+        .filter((e) => e.is_participant && e.participants.some((p) => p.user_id === id))
         .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to load friend';

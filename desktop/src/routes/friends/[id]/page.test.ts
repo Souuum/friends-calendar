@@ -46,6 +46,7 @@ function eventWith(id: string, title: string, participantIds: string[]): EventWi
     visibility: 'friends',
     created_at: '2026-02-01T00:00:00Z',
     updated_at: '2026-02-01T00:00:00Z',
+    is_participant: true,
     is_creator: true,
     my_status: 'accepted',
     participants: participantIds.map((id) => ({ user_id: id, username: id, status: 'accepted' }))

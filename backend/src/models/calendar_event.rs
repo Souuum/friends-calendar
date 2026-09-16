@@ -67,6 +67,13 @@ pub struct EventWithParticipants {
     pub participants: Vec<ParticipantInfo>,
     pub is_creator: bool,
     pub my_status: Option<ParticipationStatus>,
+    /// Whether the caller is actually on the guest list, as opposed to
+    /// merely being able to see the event (it's public, or friends-visible
+    /// and the creator is a friend). `my_status` can't answer this: a
+    /// non-participant has no status, and so does an invitee who hasn't
+    /// replied - the UI has to tell "you owe an answer" apart from "this is
+    /// someone else's event you can see".
+    pub is_participant: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

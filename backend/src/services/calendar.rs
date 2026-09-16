@@ -128,15 +128,28 @@ pub async fn get_event_with_participants(
     requesting_user_id: Uuid,
 ) -> Result<Option<EventWithParticipants>> {
     // Get the event
+    // Must accept exactly what list_user_events accepts, including the
+    // friends-visible case. list_user_events calls this per event to build
+    // its participant lists, so anything rejected here is silently dropped
+    // from the listing no matter what that query matched.
     let event = sqlx::query_as::<_, CalendarEvent>(
         r#"
         SELECT e.* FROM calendar_events e
-        LEFT JOIN event_participants ep ON e.id = ep.event_id
-        WHERE e.id = $1 
+        WHERE e.id = $1
         AND (
-            e.creator_id = $2 
-            OR ep.user_id = $2
+            e.creator_id = $2
+            OR EXISTS (
+                SELECT 1 FROM event_participants ep
+                WHERE ep.event_id = e.id AND ep.user_id = $2
+            )
             OR e.visibility = 'public'
+            OR (
+                e.visibility = 'friends'
+                AND EXISTS (
+                    SELECT 1 FROM friendships f
+                    WHERE f.user_id = $2 AND f.friend_id = e.creator_id
+                )
+            )
         )
         LIMIT 1
         "#,
@@ -194,11 +207,16 @@ pub async fn get_event_with_participants(
         .find(|p| p.user_id == requesting_user_id)
         .map(|p| p.status.clone());
 
+    // Derived from the participant list rather than re-queried: if you have
+    // a row there at all, you were invited, whatever you answered.
+    let is_participant = participants.iter().any(|p| p.user_id == requesting_user_id);
+
     Ok(Some(EventWithParticipants {
         event: event.clone(),
         participants,
         is_creator: event.creator_id == requesting_user_id,
         my_status,
+        is_participant,
     }))
 }
 
@@ -209,17 +227,53 @@ pub async fn list_user_events(
     end_date: Option<DateTime<Utc>>,
     include_declined: bool,
 ) -> Result<Vec<EventWithParticipants>> {
-    // Get all events where user is a participant
+    // Three ways an event can reach you, per
+    // .claude/skills/event-visibility-listing/SKILL.md:
+    //   1. you're a participant (invited, however you answered)
+    //   2. it's public
+    //   3. it's friends-visible and its creator is a friend of yours
+    //
+    // `friends` deliberately means *any* row in `friendships`, covering both
+    // sources - guild-synced (services::friends) and explicitly accepted
+    // requests (services::friend_requests). That's a product decision, not
+    // an accident: see the skill for the exposure it implies.
+    //
+    // EXISTS rather than the old JOIN + DISTINCT: an event can qualify by
+    // more than one clause at once (invited *and* public), and DISTINCT
+    // over `e.*` was the only thing stopping that from double-listing it.
     let mut query = String::from(
         r#"
-        SELECT DISTINCT e.* FROM calendar_events e
-        JOIN event_participants ep ON e.id = ep.event_id
-        WHERE ep.user_id = $1
+        SELECT e.* FROM calendar_events e
+        WHERE (
+            EXISTS (
+                SELECT 1 FROM event_participants ep
+                WHERE ep.event_id = e.id AND ep.user_id = $1
+            )
+            OR e.visibility = 'public'
+            OR (
+                e.visibility = 'friends'
+                AND EXISTS (
+                    SELECT 1 FROM friendships f
+                    WHERE f.user_id = $1 AND f.friend_id = e.creator_id
+                )
+            )
+        )
         "#,
     );
 
+    // Declining has to win over every route above, or an event you turned
+    // down reappears through the public/friends clause - which is exactly
+    // how this would regress. Scoped to the whole row, not to one JOINed
+    // participant row.
     if !include_declined {
-        query.push_str(" AND ep.status != 'declined'");
+        query.push_str(
+            r#"
+            AND NOT EXISTS (
+                SELECT 1 FROM event_participants ep
+                WHERE ep.event_id = e.id AND ep.user_id = $1 AND ep.status = 'declined'
+            )
+            "#,
+        );
     }
 
     let mut param_count = 1;
@@ -561,6 +615,158 @@ mod tests {
 
         let event = create_event(&db, creator, req).await.unwrap();
         assert_eq!(event.visibility, Visibility::Private);
+    }
+
+    async fn befriend(db: &PgPool, a: Uuid, b: Uuid, source: &str) {
+        // Symmetric, like both real writers: services::friends' guild sync
+        // and services::friend_requests' accept path each insert both
+        // directions.
+        for (x, y) in [(a, b), (b, a)] {
+            sqlx::query(
+                r#"
+                INSERT INTO friendships (id, user_id, friend_id, source, synced_at, created_at)
+                VALUES ($1, $2, $3, $4, now(), now())
+                ON CONFLICT (user_id, friend_id) DO NOTHING
+                "#,
+            )
+            .bind(Uuid::new_v4())
+            .bind(x)
+            .bind(y)
+            .bind(source)
+            .execute(db)
+            .await
+            .unwrap();
+        }
+    }
+
+    async fn create_with_visibility(
+        db: &PgPool,
+        creator: Uuid,
+        title: &str,
+        v: Visibility,
+    ) -> Uuid {
+        let mut req = minimal_request(title, None);
+        req.visibility = Some(v);
+        create_event(db, creator, req).await.unwrap().id
+    }
+
+    // `visibility` had no effect on listing at all before 2026-09-16: the
+    // query was participant-only, so a "public" event reached exactly the
+    // people a "private" one would.
+    #[sqlx::test]
+    async fn listing_surfaces_public_events_to_non_participants(db: PgPool) {
+        let creator = seed_user(&db, "creator", "creator").await;
+        let stranger = seed_user(&db, "stranger", "stranger").await;
+
+        create_with_visibility(&db, creator, "Public party", Visibility::Public).await;
+
+        let listed = list_user_events(&db, stranger, None, None, false)
+            .await
+            .unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].event.title, "Public party");
+        assert!(
+            !listed[0].is_participant,
+            "a discovered event must not look like one you were invited to"
+        );
+        assert!(listed[0].my_status.is_none());
+    }
+
+    #[sqlx::test]
+    async fn listing_hides_private_events_from_non_participants(db: PgPool) {
+        let creator = seed_user(&db, "creator", "creator").await;
+        let stranger = seed_user(&db, "stranger", "stranger").await;
+        befriend(&db, creator, stranger, "discord_guild").await;
+
+        create_with_visibility(&db, creator, "Secret", Visibility::Private).await;
+
+        let listed = list_user_events(&db, stranger, None, None, false)
+            .await
+            .unwrap();
+        assert!(
+            listed.is_empty(),
+            "private must stay private even between friends"
+        );
+    }
+
+    // The product decision recorded in the skill: `friends` covers BOTH
+    // friendship sources, not just explicitly accepted requests.
+    #[sqlx::test]
+    async fn listing_surfaces_friends_events_to_friends_of_either_source(db: PgPool) {
+        let creator = seed_user(&db, "creator", "creator").await;
+        let guild_mate = seed_user(&db, "guildmate", "guildmate").await;
+        let accepted = seed_user(&db, "accepted", "accepted").await;
+        let stranger = seed_user(&db, "stranger", "stranger").await;
+
+        befriend(&db, creator, guild_mate, "discord_guild").await;
+        befriend(&db, creator, accepted, "friend_request").await;
+
+        create_with_visibility(&db, creator, "Friends only", Visibility::Friends).await;
+
+        for (who, label) in [(guild_mate, "guild-synced"), (accepted, "accepted request")] {
+            let listed = list_user_events(&db, who, None, None, false).await.unwrap();
+            assert_eq!(
+                listed.len(),
+                1,
+                "{label} friend should see a friends-visible event"
+            );
+        }
+
+        let listed = list_user_events(&db, stranger, None, None, false)
+            .await
+            .unwrap();
+        assert!(
+            listed.is_empty(),
+            "a non-friend must not see a friends-visible event"
+        );
+    }
+
+    // The easiest regression to ship by accident: the declined filter used
+    // to live on the JOINed participant row, so an event you turned down
+    // could reappear through the new public/friends clause.
+    #[sqlx::test]
+    async fn declining_still_hides_an_event_that_is_also_publicly_visible(db: PgPool) {
+        let creator = seed_user(&db, "creator", "creator").await;
+        let invitee = seed_user(&db, "invitee", "invitee").await;
+
+        let mut req = minimal_request("Public but declined", Some(vec![invitee]));
+        req.visibility = Some(Visibility::Public);
+        let event = create_event(&db, creator, req).await.unwrap();
+
+        update_participation_status(&db, event.id, invitee, ParticipationStatus::Declined)
+            .await
+            .unwrap();
+
+        let listed = list_user_events(&db, invitee, None, None, false)
+            .await
+            .unwrap();
+        assert!(
+            listed.is_empty(),
+            "declining must win over public visibility"
+        );
+
+        let listed = list_user_events(&db, invitee, None, None, true)
+            .await
+            .unwrap();
+        assert_eq!(listed.len(), 1, "include_declined should still return it");
+    }
+
+    #[sqlx::test]
+    async fn listing_does_not_duplicate_an_event_that_matches_twice(db: PgPool) {
+        let creator = seed_user(&db, "creator", "creator").await;
+        let invitee = seed_user(&db, "invitee", "invitee").await;
+        befriend(&db, creator, invitee, "discord_guild").await;
+
+        // Invited AND public AND friend-of-creator - three routes, one event.
+        let mut req = minimal_request("Everything at once", Some(vec![invitee]));
+        req.visibility = Some(Visibility::Public);
+        create_event(&db, creator, req).await.unwrap();
+
+        let listed = list_user_events(&db, invitee, None, None, false)
+            .await
+            .unwrap();
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].is_participant);
     }
 
     fn minimal_request(title: &str, participant_ids: Option<Vec<Uuid>>) -> CreateEventRequest {

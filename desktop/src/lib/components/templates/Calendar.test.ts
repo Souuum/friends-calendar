@@ -35,6 +35,7 @@ function makeEvent(overrides: Partial<EventWithParticipants> = {}): EventWithPar
     visibility: 'friends',
     created_at: '2026-02-01T00:00:00Z',
     updated_at: '2026-02-01T00:00:00Z',
+    is_participant: true,
     is_creator: false,
     my_status: 'accepted',
     participants: [{ user_id: 'me-id', username: 'me', status: 'accepted' }],
@@ -83,6 +84,38 @@ describe('Calendar', () => {
     expect(screen.getByText('My Event')).toBeInTheDocument();
     expect(screen.queryByText('Their Event')).not.toBeInTheDocument();
     expect(getFreeFriendsNow).toHaveBeenCalledOnce();
+  });
+
+  it('does not count discovered events as awaiting your answer', async () => {
+    getFreeFriendsNow.mockResolvedValue([]);
+    getFriends.mockResolvedValue([]);
+
+    // Both have no my_status. Only the first is one you owe an answer on -
+    // the second is just visible to you (public, or a friend's event).
+    const invited = makeEvent({
+      id: 'invited',
+      title: 'Invited Event',
+      is_creator: false,
+      is_participant: true,
+      my_status: 'pending'
+    });
+    const discovered = makeEvent({
+      id: 'discovered',
+      title: 'Discovered Event',
+      is_creator: false,
+      is_participant: false,
+      my_status: undefined
+    });
+
+    render(Calendar, { props: { events: [invited, discovered] } });
+
+    await waitFor(() => expect(screen.getByText('Invited Event')).toBeInTheDocument());
+    expect(screen.getByText('Discovered Event')).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Awaiting my answer' }));
+
+    expect(screen.getByText('Invited Event')).toBeInTheDocument();
+    expect(screen.queryByText('Discovered Event')).not.toBeInTheDocument();
   });
 
   it('selects an event into the peek panel on click', async () => {

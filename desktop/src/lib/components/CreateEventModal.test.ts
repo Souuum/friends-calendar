@@ -56,6 +56,7 @@ function makeEvent(overrides: Partial<EventWithParticipants> = {}): EventWithPar
     link: 'https://example.com',
     created_at: '2026-02-01T00:00:00Z',
     updated_at: '2026-02-01T00:00:00Z',
+    is_participant: true,
     is_creator: true,
     my_status: 'accepted',
     participants: [],

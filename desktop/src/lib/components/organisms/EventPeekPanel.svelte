@@ -115,7 +115,15 @@
       <p class="text-xs text-red-600 mb-2" role="alert">{error}</p>
     {/if}
 
-    {#if !event.is_creator}
+    {#if !event.is_creator && !event.is_participant}
+      <!-- Visible to you (public, or a friend's friends-visible event) but
+           you're not on the guest list. No RSVP row: there's nothing to
+           answer, and update_participation assumes a participant row. -->
+      <div class="text-xs text-muted border border-line rounded-lg px-3 py-2 mb-4">
+        You're not invited to this one — it's visible to you because
+        {event.visibility === 'public' ? "it's public" : "you're friends with the organiser"}.
+      </div>
+    {:else if !event.is_creator}
       <!-- Going is always the solid primary CTA here - it does not
            reflect "currently selected", the mockup has no tint/fg
            selected-state on these three buttons (that pattern belongs to

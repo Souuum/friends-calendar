@@ -19,7 +19,9 @@
   // tier doesn't have. See mockup-friends-directory skill.
   function noteFor(friendId: string): string {
     const shared = events
-      .filter((e) => e.participants.some((p) => p.user_id === friendId))
+      // Same reason as /friends/[id]: the event list now includes events
+      // you can see but aren't part of, which aren't "shared".
+      .filter((e) => e.is_participant && e.participants.some((p) => p.user_id === friendId))
       .filter((e) => new Date(e.start_time).getTime() >= Date.now())
       .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
 

@@ -481,24 +481,41 @@ place in the app that shows calendar events with a read-only RSVP badge.
 Nothing about *that* feature changed; only its old top-level page and
 component name did.
 
-⚠️ **Real limitation surfaced while building the old view — half-fixed
-since:** `GET /api/events` (`services::calendar::list_user_events`) only
-returns events where you're already a row in `event_participants` — it does
-not consult `visibility` at all for listing (unlike the single-event `GET
-/api/events/:id`, which does check `OR e.visibility = 'public'`).
-`CreateEventModal.svelte` didn't send `participant_ids` either — there was
-no UI for inviting anyone at creation time. **The invite-picker half of
-this is now fixed** (see "Friends directory" below,
-`.claude/skills/mockup-friends-directory/SKILL.md`) — you can now actually
-invite friends when creating an event. The listing-query half is still
-open: `visibility: 'friends' | 'public'` still doesn't make an event
-appear for anyone who wasn't explicitly invited, even though the field
-implies it should. That's still a real backend feature (a listing query
-that also matches on visibility, not just direct participancy), not
-something to bolt on silently. (This limitation is about `GET /api/events`,
-used by `/friends/[id]`'s shared-events section and the calendar itself —
-it no longer has anything to do with `/announcements`, which now reads
-from `announcement_posts` instead.)
+✅ **The long-standing "visibility does nothing" limitation is fixed as of
+2026-09-16** (`.claude/skills/event-visibility-listing/SKILL.md`). For the
+record, since it stood for most of this project's life: `GET /api/events`
+used to be participant-only, so a `public` event reached exactly the people
+a `private` one would, while the single-event `GET /api/events/:id` *did*
+check `OR e.visibility = 'public'` — the two endpoints disagreed.
+
+`services::calendar::list_user_events` now matches an event if **any** of:
+you're a participant, it's `public`, or it's `friends` and its creator is a
+friend of yours. Points worth knowing before changing it:
+
+- **`friends` means any row in `friendships`** — both `'discord_guild'`
+  (guild-synced) and `'friend_request'` (explicitly accepted). That's a
+  deliberate product decision, confirmed with the user, not an
+  implementation accident. It does mean a `friends` event is visible to
+  everyone in the linked guild, which is wider than "people I approved".
+- **`get_event_with_participants` had to learn the same rule.**
+  `list_user_events` calls it per event to build participant lists, so any
+  event that function rejects is silently dropped from the listing no
+  matter what the listing query matched. Keep the two in sync.
+- **Declining wins over every visibility route.** The declined filter moved
+  off the JOINed participant row onto a row-scoped `NOT EXISTS`, otherwise
+  an event you turned down reappears through the public/friends clause.
+  There's a test for exactly this.
+- **`EXISTS` replaced `JOIN ... DISTINCT`** — an event can qualify by more
+  than one clause at once, and `DISTINCT` was the only thing stopping it
+  from listing twice.
+- **New `is_participant` on `EventWithParticipants`.** `my_status` can't
+  tell "invited, hasn't answered" from "not invited, just visible" — both
+  are absent. Anything that reasons about the caller's relationship to an
+  event needs this flag, and three places already did: the calendar's
+  "Awaiting my answer" filter (which would otherwise sweep up every public
+  event in the guild), `EventPeekPanel`'s RSVP row, and the "Shared events"
+  / "Next:" lists on `/friends/[id]` and `/friends` (which would otherwise
+  show events only the *friend* is in).
 
 ## Testing
 
@@ -851,8 +868,12 @@ reminded about it".
    creation and gates the four `notify_*` toggles (today: written by
    `services::profile`, read by nobody) inside
    `services::notifications::create`.
-2. `.claude/skills/event-visibility-listing/SKILL.md` — `visibility` has no
-   effect on listing. `list_user_events` is participant-only, so a `public`
+2. `.claude/skills/event-visibility-listing/SKILL.md` — **done 2026-09-16.**
+   Decisions taken with the user: `friends` resolves to *both* friendship
+   sources, and discovered events render visually distinct (dashed/muted)
+   with no RSVP controls rather than looking like events you owe an answer
+   on. See the visibility note further up for the mechanics. Original
+   entry: `visibility` has no effect on listing. `list_user_events` is participant-only, so a `public`
    event reaches exactly the people who'd see it if it were `private`.
    Note `GET /api/events/:id` *does* check `OR e.visibility = 'public'`, so
    the two endpoints already disagree. Carries real privacy decisions

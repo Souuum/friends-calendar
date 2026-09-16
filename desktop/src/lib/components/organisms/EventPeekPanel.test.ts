@@ -23,6 +23,7 @@ function makeEvent(overrides: Partial<EventWithParticipants> = {}): EventWithPar
     visibility: 'friends',
     created_at: '2026-02-01T00:00:00Z',
     updated_at: '2026-02-01T00:00:00Z',
+    is_participant: true,
     is_creator: false,
     my_status: 'pending',
     participants: [
@@ -58,6 +59,30 @@ describe('EventPeekPanel', () => {
 
     rerender({ event: makeEvent({ is_creator: true }) });
     expect(screen.queryByRole('button', { name: 'Going' })).not.toBeInTheDocument();
+  });
+
+  it('offers no RSVP on an event you can see but were never invited to', () => {
+    render(EventPeekPanel, {
+      event: makeEvent({ is_creator: false, is_participant: false, my_status: undefined })
+    });
+
+    // my_status alone can't distinguish this from an unanswered invite -
+    // both are absent - which is why is_participant exists.
+    expect(screen.queryByRole('button', { name: 'Going' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Maybe' })).not.toBeInTheDocument();
+    expect(screen.getByText(/not invited to this one/i)).toBeInTheDocument();
+  });
+
+  it('explains why a discovered event is visible, per its visibility', () => {
+    const { rerender } = render(EventPeekPanel, {
+      event: makeEvent({ is_creator: false, is_participant: false, visibility: 'public' })
+    });
+    expect(screen.getByText(/it's public/i)).toBeInTheDocument();
+
+    rerender({
+      event: makeEvent({ is_creator: false, is_participant: false, visibility: 'friends' })
+    });
+    expect(screen.getByText(/friends with the organiser/i)).toBeInTheDocument();
   });
 
   it('shows Edit/Nudge instead of RSVP buttons for your own event', () => {
