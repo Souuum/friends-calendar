@@ -816,6 +816,20 @@ speculatively.
     drops already-started events (a list has no month/week anchor, so
     "upcoming" is the only sensible scope), sorts chronologically, and groups
     by *local* day so a 23:00 event lands where the reader would expect.
+- `.claude/skills/mockup-responsive-friends`, `-add-friends`,
+  `-announcements`, `-settings-and-server` — **done 2026-09-16** in one
+  layout pass (they're the same kind of change: stack below `md:`, tighten
+  side padding, stop things overflowing at 402px). Two carry real behaviour
+  rather than CSS:
+  - **`/server` was unreachable on mobile.** The sidebar that links to it is
+    `hidden` below `md:`, and `BottomTabBar` folds Server under "Me" without
+    giving it a tab. `/settings` now has an explicit push-through row
+    (chevron) to `/server`, and `/server`'s back-link points at `‹ Me`
+    rather than the calendar.
+  - **Only the *first* pinned announcement gets the inverted card**
+    (`AnnouncementPostCard`'s `featured` prop), not every pinned one - a
+    column of dark cards would defeat the point of singling one out. Tested
+    both ways.
 - `.claude/skills/mockup-responsive-calendar/SKILL.md` (original entry),
   `mockup-responsive-friends/SKILL.md`,
   `mockup-responsive-add-friends/SKILL.md`,

@@ -95,7 +95,7 @@
 </svelte:head>
 
 <Frame>
-  <div class="max-w-2xl mx-auto py-6 px-4 space-y-8 anim-fade-up">
+  <div class="max-w-2xl mx-auto py-6 px-3 sm:px-4 space-y-6 md:space-y-8 anim-fade-up">
     <button class="text-sm text-discord-blurple hover:underline" on:click={() => goto('/')}>
       ← Back to calendar
     </button>
@@ -147,6 +147,23 @@
           </select>
         </div>
       </section>
+
+      <!-- The sidebar that links to /server is hidden below md:, and the
+           mobile tab bar folds Server under "Me" without a tab of its own -
+           so without this row /server is unreachable on a phone. Styled as a
+           push-through (chevron) because that's what it is on mobile; it's
+           harmless duplication of the sidebar link on desktop. -->
+      <a
+        href="/server"
+        class="flex items-center gap-3 bg-white border border-line rounded-xl px-4 py-3 no-underline hover:bg-gray-50"
+      >
+        <span class="text-lg">🤖</span>
+        <span class="flex-1 min-w-0">
+          <span class="block text-sm font-semibold text-gray-900">Discord server</span>
+          <span class="block text-xs text-muted">Linked server, bot channels, weekly digest</span>
+        </span>
+        <span class="text-muted" aria-hidden="true">›</span>
+      </a>
 
       <section class="space-y-3">
         <h2 class="text-lg font-semibold">Notifications</h2>

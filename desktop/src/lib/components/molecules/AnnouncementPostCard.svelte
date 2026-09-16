@@ -11,6 +11,13 @@
   // the mockup's `posts` list, where each card's fade-up animation-delay is
   // offset from the one before it rather than firing all at once.
   export let index = 0;
+  /**
+   * Inverted treatment for the pinned post, per the mockup's Hub screen.
+   * A flag rather than reading `post.pinned` directly: only the *first*
+   * pinned post gets it - several inverted cards in a row would just be a
+   * dark feed, which defeats the point of singling one out.
+   */
+  export let featured = false;
 
   function tagLabel(tag: string): string {
     return tag === 'event' ? '📅 Event' : '💬 General';
@@ -22,15 +29,17 @@
 </script>
 
 <div
-  class="bg-white rounded-lg shadow p-5 space-y-3 anim-fade-up-stagger"
+  class="rounded-lg shadow p-5 space-y-3 anim-fade-up-stagger {featured
+    ? 'bg-[#171719] text-white'
+    : 'bg-white'}"
   style="animation-delay: {index * 60}ms"
 >
   <div class="flex justify-between items-start gap-3">
     <div class="flex items-center gap-2 min-w-0">
       <Avatar src={post.author_avatar_url ?? ''} size={32} />
       <div class="min-w-0">
-        <p class="font-semibold text-gray-900 truncate m-0">{post.author_username}</p>
-        <p class="text-xs text-gray-500 m-0">{formatDate(post.posted_at)}</p>
+        <p class="font-semibold truncate m-0 {featured ? 'text-white' : 'text-gray-900'}">{post.author_username}</p>
+        <p class="text-xs m-0 {featured ? 'text-muted' : 'text-gray-500'}">{formatDate(post.posted_at)}</p>
       </div>
     </div>
     <div class="flex items-center gap-2 shrink-0">
@@ -42,12 +51,12 @@
   </div>
 
   {#if post.title}
-    <h3 class="font-bold text-lg text-gray-900 m-0">{post.title}</h3>
+    <h3 class="font-bold text-lg m-0 {featured ? 'text-white' : 'text-gray-900'}">{post.title}</h3>
   {/if}
 
-  <p class="text-gray-700 text-sm whitespace-pre-wrap m-0">{post.body}</p>
+  <p class="text-sm whitespace-pre-wrap m-0 {featured ? 'text-[#ebebeb]' : 'text-gray-700'}">{post.body}</p>
 
-  <div class="flex items-center gap-4 text-sm text-gray-500 border-t border-gray-100 pt-2">
+  <div class="flex items-center gap-4 text-sm border-t pt-2 {featured ? 'text-muted border-white/10' : 'text-gray-500 border-gray-100'}">
     <span>👍 {post.reaction_count}</span>
     <span>💬 {post.reply_count} {post.reply_count === 1 ? 'reply' : 'replies'}</span>
   </div>

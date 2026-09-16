@@ -82,9 +82,12 @@
 </svelte:head>
 
 <Frame>
-  <div class="max-w-2xl mx-auto py-6 px-4 space-y-8 anim-fade-up">
-    <button class="text-sm text-discord-blurple hover:underline" on:click={() => goto('/')}>
-      ← Back to calendar
+  <div class="max-w-2xl mx-auto py-6 px-3 sm:px-4 space-y-6 md:space-y-8 anim-fade-up">
+    <!-- Mobile reaches this page by pushing in from Settings ("Me"), so the
+         back affordance points there; on desktop the sidebar is visible and
+         either destination is one click away. -->
+    <button class="text-sm text-discord-blurple hover:underline" on:click={() => goto('/settings')}>
+      ‹ Me
     </button>
 
     <h1 class="text-2xl font-semibold m-0">Discord server</h1>

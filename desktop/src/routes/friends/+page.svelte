@@ -79,23 +79,23 @@
 </svelte:head>
 
 <Frame>
-  <div class="max-w-4xl mx-auto py-6 px-4 anim-fade-up">
+  <div class="max-w-4xl mx-auto py-6 px-3 sm:px-4 anim-fade-up">
     <div class="flex items-end gap-4 flex-wrap mb-5">
       <div>
         <h1 class="text-2xl font-semibold m-0">Friends</h1>
         <p class="text-sm text-gray-500 m-0 mt-1">{friends.length} synced from Discord</p>
       </div>
-      <div class="ml-auto flex gap-2">
+      <div class="w-full md:w-auto md:ml-auto flex gap-2">
         <button
           on:click={handleSync}
           disabled={syncing}
-          class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-semibold disabled:opacity-50"
+          class="flex-1 md:flex-none px-4 py-2 border border-gray-300 rounded-lg text-sm font-semibold disabled:opacity-50"
         >
           {syncing ? 'Syncing…' : 'Sync friends'}
         </button>
         <button
           on:click={() => goto('/friends/add')}
-          class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold"
+          class="flex-1 md:flex-none px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold"
         >
           + Add friend
         </button>
@@ -107,7 +107,7 @@
         type="text"
         bind:value={search}
         placeholder="Search by name"
-        class="w-full max-w-sm px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
+        class="w-full md:max-w-sm px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
       />
     </div>
 
@@ -120,7 +120,7 @@
         {friends.length === 0 ? 'No friends synced yet.' : 'No friends match your search.'}
       </p>
     {:else}
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-3">
         {#each visibleFriends as friend, i (friend.user_id)}
           <a
             href={`/friends/${friend.user_id}`}

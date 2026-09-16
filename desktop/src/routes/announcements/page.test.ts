@@ -105,4 +105,29 @@ describe('announcements page', () => {
     );
     expect(screen.getByText('Existing post')).toBeInTheDocument();
   });
+
+  it('features only the first pinned post, not every pinned one', async () => {
+    getAnnouncements.mockResolvedValue([
+      makePost({ id: 'p1', pinned: true, title: 'Pinned one' }),
+      makePost({ id: 'p2', pinned: true, title: 'Pinned two' }),
+      makePost({ id: 'p3', pinned: false, title: 'Regular' })
+    ]);
+
+    const { container } = render(AnnouncementsPage);
+    await waitFor(() => expect(screen.getByText('Pinned one')).toBeInTheDocument());
+
+    // A feed of inverted cards would defeat the point of singling one out,
+    // so exactly one gets the treatment.
+    const featured = container.querySelectorAll('.bg-\\[\\#171719\\]');
+    expect(featured).toHaveLength(1);
+  });
+
+  it('features nothing when no post is pinned', async () => {
+    getAnnouncements.mockResolvedValue([makePost({ id: 'p1', pinned: false, title: 'Just a post' })]);
+
+    const { container } = render(AnnouncementsPage);
+    await waitFor(() => expect(screen.getByText('Just a post')).toBeInTheDocument());
+
+    expect(container.querySelectorAll('.bg-\\[\\#171719\\]')).toHaveLength(0);
+  });
 });
