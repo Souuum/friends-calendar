@@ -7,6 +7,7 @@
   import { api } from '$lib/api';
   import { goto } from '$app/navigation';
   import { unreadNotificationCount } from '$lib/stores';
+  import { resolvedTheme, toggleTheme } from '$lib/theme';
 
   export let user;
   export let avatarUrl: string;
@@ -47,6 +48,21 @@
 <header class="bg-white">
   <div class="mx-auto px-4 pt-2 sm:px-6 lg:px-8 flex items-center justify-end gap-3">
     {#if user}
+      <!-- Icon shows what you'd switch TO, which is the prevailing
+           convention (moon while light, sun while dark). The aria-label
+           says it outright so the icon doesn't have to carry that alone.
+           Reads $resolvedTheme, not $theme: on 'system' the stored value
+           isn't what's on screen. -->
+      <button
+        on:click={toggleTheme}
+        data-testid="theme-toggle"
+        aria-label={$resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        title={$resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        class="w-9 h-9 flex items-center justify-center border border-gray-200 rounded-lg hover:bg-gray-50"
+      >
+        {$resolvedTheme === 'dark' ? '☀️' : '🌙'}
+      </button>
+
       <button
         on:click={goToNotifications}
         aria-label="Notifications"

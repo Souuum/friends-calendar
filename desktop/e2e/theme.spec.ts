@@ -129,3 +129,51 @@ for (const route of ROUTES_UNDER_TEST) {
     expect(scrollWidth, `${route} overflows in dark mode`).toBeLessThanOrEqual(clientWidth + 1);
   });
 }
+
+test('the header toggle flips the theme and persists it', async ({ page }) => {
+  // Deliberately NOT visit(): that helper seeds localStorage via
+  // addInitScript, which re-runs on every navigation - including the reload
+  // below, where it would overwrite exactly the value under test. Starting
+  // from an unset preference on a light OS gives the same starting state
+  // without pinning storage.
+  await mockApi(page);
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto('/settings');
+  await page.waitForLoadState('networkidle');
+  await page.locator('main').first().waitFor({ state: 'visible' });
+
+  const toggle = page.getByTestId('theme-toggle');
+  await expect(toggle).toBeVisible();
+  await expect(toggle).toHaveAttribute('aria-label', 'Switch to dark mode');
+
+  const before = await luminanceOf(page, 'body', 'background-color');
+  await toggle.click();
+
+  await expect(page.locator('html')).toHaveClass(/dark/);
+  await expect(toggle).toHaveAttribute('aria-label', 'Switch to light mode');
+
+  const after = await luminanceOf(page, 'body', 'background-color');
+  expect(before, 'the page should have been light before the click').toBeGreaterThan(0.8);
+  expect(after, 'the page should be dark after the click').toBeLessThan(0.3);
+
+  // Survives navigation, which is what writing to localStorage buys.
+  await page.reload();
+  await page.waitForLoadState('networkidle');
+  await expect(page.locator('html')).toHaveClass(/dark/);
+});
+
+test('the toggle leaves system by flipping what is rendered', async ({ page }) => {
+  await mockApi(page);
+  await page.addInitScript(() => window.localStorage.setItem('theme', 'system'));
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.goto('/settings');
+  await page.waitForLoadState('networkidle');
+
+  // System says dark, so the page is dark and the button offers light.
+  await expect(page.locator('html')).toHaveClass(/dark/);
+  const toggle = page.getByTestId('theme-toggle');
+  await expect(toggle).toHaveAttribute('aria-label', 'Switch to light mode');
+
+  await toggle.click();
+  await expect(page.locator('html')).not.toHaveClass(/dark/);
+});

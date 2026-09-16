@@ -1,6 +1,14 @@
 import { describe, expect, it, beforeEach, vi, afterEach } from 'vitest';
 import { get } from 'svelte/store';
-import { applyTheme, resolveTheme, setTheme, theme, THEME_STORAGE_KEY } from './theme';
+import {
+  applyTheme,
+  resolveTheme,
+  resolvedTheme,
+  setTheme,
+  theme,
+  THEME_STORAGE_KEY,
+  toggleTheme
+} from './theme';
 
 function mockMatchMedia(matches: boolean) {
   vi.stubGlobal(
@@ -86,5 +94,62 @@ describe('setTheme', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(true);
 
     setItem.mockRestore();
+  });
+});
+
+describe('toggleTheme', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    document.documentElement.classList.remove('dark');
+    setTheme('light');
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('flips light to dark and back', () => {
+    toggleTheme();
+    expect(get(theme)).toBe('dark');
+    toggleTheme();
+    expect(get(theme)).toBe('light');
+  });
+
+  // The case resolvedTheme exists for. Flipping the *stored* value from
+  // 'system' would set 'light' while the OS is still dark, so the screen
+  // wouldn't change and the button would look broken.
+  it('from system, flips away from what is actually rendered', () => {
+    mockMatchMedia(true); // OS says dark
+    setTheme('system');
+
+    toggleTheme();
+
+    expect(get(theme)).toBe('light');
+    expect(document.documentElement.classList.contains('dark')).toBe(false);
+  });
+
+  it('from system on a light OS, goes dark', () => {
+    mockMatchMedia(false);
+    setTheme('system');
+
+    toggleTheme();
+
+    expect(get(theme)).toBe('dark');
+    expect(document.documentElement.classList.contains('dark')).toBe(true);
+  });
+});
+
+describe('resolvedTheme', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('reports the rendered theme, following explicit changes', () => {
+    mockMatchMedia(false);
+    setTheme('light');
+    expect(get(resolvedTheme)).toBe('light');
+    setTheme('dark');
+    expect(get(resolvedTheme)).toBe('dark');
+  });
+
+  it('resolves system through the media query rather than reporting "system"', () => {
+    mockMatchMedia(true);
+    setTheme('system');
+    expect(get(resolvedTheme)).toBe('dark');
   });
 });

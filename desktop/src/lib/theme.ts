@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { get, readable, writable } from 'svelte/store';
 import { browser } from '$app/environment';
 
 /**
@@ -80,4 +80,39 @@ export function watchSystemTheme(): () => void {
     media.removeEventListener('change', onChange);
     unsubscribe();
   };
+}
+
+/**
+ * What is actually on screen right now, with 'system' already resolved.
+ *
+ * The header toggle needs this rather than `theme`: with `theme === 'system'`
+ * the button still has to show the right icon, and has to change when the OS
+ * flips underneath it. Recomputing on both inputs - the stored setting and
+ * the media query - is the only way to stay correct for the 'system' case.
+ */
+export const resolvedTheme = readable<'light' | 'dark'>(resolveTheme(get(theme)), (set) => {
+  const update = () => set(resolveTheme(get(theme)));
+  const unsubscribeTheme = theme.subscribe(update);
+
+  if (!browser || typeof window.matchMedia !== 'function') return unsubscribeTheme;
+
+  const media = window.matchMedia(DARK_QUERY);
+  media.addEventListener('change', update);
+  return () => {
+    media.removeEventListener('change', update);
+    unsubscribeTheme();
+  };
+});
+
+/**
+ * Flips to the opposite of what is *rendered*, not of what is stored.
+ *
+ * That distinction matters on 'system': clicking the toggle while the OS is
+ * dark should give light, and flipping the stored value instead would set
+ * 'light' while the OS still says dark - which, from 'system', can look like
+ * the button did nothing. The result is always an explicit choice; 'system'
+ * remains reachable from the settings page.
+ */
+export function toggleTheme(): void {
+  setTheme(resolveTheme(get(theme)) === 'dark' ? 'light' : 'dark');
 }

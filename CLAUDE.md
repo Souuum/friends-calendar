@@ -1060,6 +1060,15 @@ writes a new component.
 - Buttons, not a `<select>`: happy-dom can't match `<select>` options by
   value, which is how the reminder-picker tests once passed by accident (see
   the Testing section).
+- **A sun/moon toggle also sits in the header** (`Header.svelte`,
+  `data-testid="theme-toggle"`), next to the notifications bell. It reads
+  `resolvedTheme`, **not** `theme`: with the setting on `'system'` the
+  stored value isn't what's on screen, so the button would show the wrong
+  icon and flipping the stored value could appear to do nothing (setting
+  `'light'` while the OS still says dark). `toggleTheme()` therefore flips
+  away from what is *rendered*, and always lands on an explicit choice -
+  `'system'` stays reachable from `/settings`. The icon shows the mode you'd
+  switch **to**, with an `aria-label` that says so outright.
 
 ⚠️ **A test-tooling trap this surfaced**: Chrome's `getComputedStyle`
 returns colours authored as `oklch()` **as `oklch()`**, not converted to
