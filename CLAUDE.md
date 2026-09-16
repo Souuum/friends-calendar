@@ -778,6 +778,25 @@ speculatively.
   extracted and unit-tested because "today" means the same *local calendar
   day*, not "within 24 hours" (23:00 yesterday is yesterday to a reader).
   Empty groups are omitted so no heading ever renders with nothing under it.
+- `.claude/skills/mockup-responsive-create-event/SKILL.md` — **done
+  2026-09-16.** `CreateEventModal` gains a two-step wizard below `md:`
+  (step 1 when/where, step 2 invite + Discord preview); desktop is
+  unchanged. `step` is pure UI state and **both steps stay mounted**,
+  gated by `hidden md:block` rather than `{#if}` - that's what lets
+  desktop ignore `step` entirely and "‹ Back" return to filled-in fields
+  without any save/restore logic. A test asserts both paths send an
+  identical payload, so they can't drift.
+  - Editing deliberately stays single-scroll even on mobile: step 2 is the
+    invite picker and the preview, and `PUT /api/events/:id` manages
+    neither.
+  - **New `POST /api/events/announcement-preview`** renders the real
+    announcement for an unsaved event. It exists so the preview can't drift
+    from what's actually posted: `format_event_message` was extracted from
+    `DiscordAnnouncer` into a free `pub fn` and both call it, with a test
+    asserting the endpoint's output *equals* the formatter's. The panel
+    shows the raw message source (Discord markdown, `<t:…>` timestamps)
+    because that is literally what gets sent - Discord is what renders it,
+    and faking that rendering client-side would misrepresent it.
 - `.claude/skills/mockup-responsive-calendar/SKILL.md`,
   `mockup-responsive-friends/SKILL.md`,
   `mockup-responsive-add-friends/SKILL.md`,

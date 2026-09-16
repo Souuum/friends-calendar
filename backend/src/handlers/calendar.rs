@@ -99,6 +99,46 @@ pub async fn create_event(
     Ok(Json(event))
 }
 
+/// Renders the Discord announcement for an event that hasn't been created
+/// yet, so the create form can show exactly what will be posted.
+///
+/// Reuses services::discord_announcement::format_event_message verbatim
+/// rather than reimplementing the format in the client - the whole point of
+/// the endpoint is that the preview can't drift from the real message. The
+/// response is the raw message *source*, Discord markdown and `<t:…>`
+/// timestamps included; Discord renders those, the preview shows them as
+/// they'll be sent.
+pub async fn preview_announcement(
+    _claims: Claims,
+    Json(req): Json<CreateEventRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    // A transient, unsaved event purely to feed the formatter. The ids and
+    // timestamps are never read by it - only title/start/location/price/
+    // link/description are - but the struct needs them.
+    let preview = CalendarEvent {
+        id: Uuid::nil(),
+        creator_id: Uuid::nil(),
+        title: req.title,
+        description: req.description,
+        start_time: req.start_time,
+        end_time: req.end_time,
+        location: req.location,
+        visibility: req.visibility.unwrap_or_default(),
+        created_at: req.start_time,
+        updated_at: req.start_time,
+        discord_message_id: None,
+        discord_channel_id: None,
+        price: req.price,
+        link: req.link,
+        reminder_sent_at: None,
+        reminder_lead_minutes: req.reminder_lead_minutes.unwrap_or(0),
+    };
+
+    Ok(Json(serde_json::json!({
+        "message": crate::services::discord_announcement::format_event_message(&preview)
+    })))
+}
+
 // Get a specific event by ID with participants
 pub async fn get_event(
     claims: Claims,
@@ -340,6 +380,7 @@ mod tests {
     use crate::handlers::auth::generate_jwt;
     use crate::models::CreateEventRequest;
     use crate::services::auth::create_or_update_user;
+    use uuid::Uuid;
 
     async fn seed_user(db: &PgPool, discord_id: &str, username: &str) -> crate::models::User {
         create_or_update_user(
@@ -455,5 +496,68 @@ mod tests {
                 "participant status {status:?} is not one of the lowercase values the client expects"
             );
         }
+    }
+
+    // The preview's whole reason to exist is that it can't drift from the
+    // real announcement, so this asserts equality with the formatter rather
+    // than matching on any particular wording.
+    #[sqlx::test]
+    async fn announcement_preview_returns_exactly_what_would_be_posted(db: PgPool) {
+        let user = seed_user(&db, "me-discord", "me").await;
+
+        let state = AppState::for_test(db, "http://unused.invalid".to_string());
+        let token = generate_jwt(&user.discord_id, &state.jwt_secret).unwrap();
+        let app = crate::build_router(state);
+
+        let start = Utc::now() + Duration::days(2);
+        let body = serde_json::json!({
+            "title": "Raclette",
+            "start_time": start,
+            "end_time": start + Duration::hours(2),
+            "location": "Chez Lina",
+            "price": "15"
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/events/announcement-preview")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&bytes).unwrap();
+        let preview = json["message"].as_str().unwrap();
+
+        let expected = crate::services::discord_announcement::format_event_message(
+            &crate::models::CalendarEvent {
+                id: Uuid::nil(),
+                creator_id: Uuid::nil(),
+                title: "Raclette".to_string(),
+                description: None,
+                start_time: start,
+                end_time: start + Duration::hours(2),
+                location: Some("Chez Lina".to_string()),
+                visibility: crate::models::Visibility::default(),
+                created_at: start,
+                updated_at: start,
+                discord_message_id: None,
+                discord_channel_id: None,
+                price: Some("15".to_string()),
+                link: None,
+                reminder_sent_at: None,
+                reminder_lead_minutes: 0,
+            },
+        );
+        assert_eq!(preview, expected);
     }
 }

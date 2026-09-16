@@ -48,6 +48,10 @@ pub(crate) fn build_router(state: AppState) -> Router {
         .route("/api/auth/me", delete(handlers::profile::delete_account))
         .route("/api/auth/logout", post(handlers::auth::logout))
         // Calendar event routes
+        .route(
+            "/api/events/announcement-preview",
+            post(handlers::calendar::preview_announcement),
+        )
         .route("/api/events", post(handlers::calendar::create_event))
         .route("/api/events", get(handlers::calendar::list_events))
         .route("/api/events/:id", get(handlers::calendar::get_event))

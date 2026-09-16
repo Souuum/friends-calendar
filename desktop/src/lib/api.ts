@@ -102,6 +102,27 @@ class ApiClient {
     });
   }
 
+  /**
+   * Renders the Discord announcement for an event that doesn't exist yet.
+   * Server-side on purpose: it reuses the same formatter the real
+   * announcement uses, so the preview can't drift from what gets posted.
+   */
+  async previewAnnouncement(data: {
+    title: string;
+    description?: string;
+    start_time: string;
+    end_time: string;
+    location?: string;
+    price?: string;
+    link?: string;
+  }): Promise<string> {
+    const { message } = await this.fetch<{ message: string }>(
+      '/api/events/announcement-preview',
+      { method: 'POST', body: JSON.stringify(data) }
+    );
+    return message;
+  }
+
   async getEvents(params?: {
     start_date?: string;
     end_date?: string;

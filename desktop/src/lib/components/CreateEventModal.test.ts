@@ -1,17 +1,18 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/svelte';
 import { writable } from 'svelte/store';
 import { dateUtils } from '$lib/utils/dateUtils';
 import type { EventWithParticipants, FriendInfo } from '$lib/types';
 
-const { getFriends, createEvent, updateEvent } = vi.hoisted(() => ({
+const { getFriends, createEvent, updateEvent, previewAnnouncement } = vi.hoisted(() => ({
   getFriends: vi.fn(),
   createEvent: vi.fn(),
-  updateEvent: vi.fn()
+  updateEvent: vi.fn(),
+  previewAnnouncement: vi.fn()
 }));
 
 vi.mock('$lib/api', () => ({
-  api: { getFriends, createEvent, updateEvent }
+  api: { getFriends, createEvent, updateEvent, previewAnnouncement }
 }));
 
 // The component reads $user for the default-visibility preselect. Mocked
@@ -255,5 +256,97 @@ describe('CreateEventModal edit mode', () => {
 
     await waitFor(() => expect(screen.getByText('server said no')).toBeInTheDocument());
     expect(onSaved).not.toHaveBeenCalled();
+  });
+});
+
+// Mobile two-step wizard. Component tests don't evaluate CSS breakpoints, so
+// these assert the step *state machine* - which fields/controls are gated,
+// what survives Back, and that the payload matches the desktop path. The
+// "does it actually look like two steps at 402px" half is only checkable in
+// a browser.
+describe('CreateEventModal mobile wizard', () => {
+  beforeEach(() => {
+    getFriends.mockReset().mockResolvedValue([]);
+    createEvent.mockReset().mockResolvedValue({});
+    updateEvent.mockReset().mockResolvedValue({});
+    previewAnnouncement.mockReset().mockResolvedValue('@everyone\nProposition...');
+  });
+
+  it('refuses to advance to step 2 while step 1 is invalid', async () => {
+    render(CreateEventModal, { props: { event: null } });
+
+    await fireEvent.click(screen.getByRole('button', { name: /Next · invite friends/ }));
+
+    expect(screen.getByText('Please fill in all required fields')).toBeInTheDocument();
+    expect(previewAnnouncement).not.toHaveBeenCalled();
+    // Still on step 1, so the submit control hasn't appeared.
+    expect(screen.queryByRole('button', { name: '‹ Back' })).not.toBeInTheDocument();
+  });
+
+  it('refuses to advance when the end time is before the start', async () => {
+    render(CreateEventModal, { props: { event: null } });
+
+    await fireEvent.input(screen.getByLabelText('Event Title *'), { target: { value: 'Pizza' } });
+    await fireEvent.input(screen.getByLabelText('Start Time *'), {
+      target: { value: '2026-03-01T22:00' }
+    });
+    await fireEvent.input(screen.getByLabelText('End Time *'), {
+      target: { value: '2026-03-01T19:00' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /Next · invite friends/ }));
+
+    expect(screen.getByText('End time must be after start time')).toBeInTheDocument();
+  });
+
+  it('advances with valid input and loads the Discord preview', async () => {
+    render(CreateEventModal, { props: { event: null } });
+
+    await fillRequiredFields();
+    await fireEvent.click(screen.getByRole('button', { name: /Next · invite friends/ }));
+
+    await waitFor(() => expect(previewAnnouncement).toHaveBeenCalled());
+    expect(screen.getByRole('button', { name: '‹ Back' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/Proposition/)).toBeInTheDocument());
+  });
+
+  it('keeps step-1 values when going Back', async () => {
+    render(CreateEventModal, { props: { event: null } });
+
+    await fillRequiredFields();
+    await fireEvent.click(screen.getByRole('button', { name: /Next · invite friends/ }));
+    await fireEvent.click(await screen.findByRole('button', { name: '‹ Back' }));
+
+    // Same bindings throughout - nothing is reset on step change.
+    expect(screen.getByLabelText('Event Title *')).toHaveValue('Board games');
+    expect(screen.getByLabelText('Start Time *')).toHaveValue('2026-03-01T19:00');
+  });
+
+  it('submits the same payload the desktop single-step path sends', async () => {
+    render(CreateEventModal, { props: { event: null } });
+
+    await fillRequiredFields();
+    await fireEvent.click(screen.getByRole('button', { name: /Next · invite friends/ }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Create & post' }));
+
+    await waitFor(() => expect(createEvent).toHaveBeenCalled());
+    const viaWizard = createEvent.mock.calls[0][0];
+
+    // Unmount before the second render: auto-cleanup only runs between
+    // tests, and two mounted copies make every getByLabelText ambiguous.
+    cleanup();
+    createEvent.mockClear();
+    render(CreateEventModal, { props: { event: null } });
+    await fillRequiredFields();
+    await fireEvent.click(screen.getAllByRole('button', { name: 'Create Event' })[0]);
+    await waitFor(() => expect(createEvent).toHaveBeenCalled());
+
+    expect(viaWizard).toEqual(createEvent.mock.calls[0][0]);
+  });
+
+  it('does not wizard the edit form - PUT manages neither invites nor the preview', async () => {
+    render(CreateEventModal, { props: { event: makeEvent() } });
+
+    expect(screen.queryByRole('button', { name: /Next · invite friends/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeInTheDocument();
   });
 });

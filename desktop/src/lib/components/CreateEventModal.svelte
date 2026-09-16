@@ -39,6 +39,64 @@
   ];
   let reminderLeadMinutes = 60;
   let loading = false;
+
+  // Two-step wizard, mobile only. `step` is pure UI state - the submitted
+  // payload is identical either way, so the desktop single-scroll form and
+  // the mobile wizard can't drift into sending different things.
+  //
+  // Both steps' markup is always in the DOM; the `md:` classes decide what's
+  // visible. That keeps one set of bindings (so "Back" can't lose your
+  // input) and means desktop genuinely ignores `step` rather than being
+  // driven by it.
+  //
+  // Editing stays single-scroll even on mobile: step 2 is the invite picker
+  // and the Discord preview, and PUT /api/events/:id manages neither.
+  let step: 1 | 2 = 1;
+  $: wizard = !isEditing;
+  $: showStep1 = !wizard || step === 1;
+  $: showStep2 = !wizard || step === 2;
+
+  let stepError = '';
+
+  // Same checks the single-step submit makes, so step 2 is unreachable with
+  // step-1 data that would be rejected on submit anyway.
+  function validateStep1(): string {
+    if (!title || !startTime || !endTime) return 'Please fill in all required fields';
+    if (new Date(endTime) <= new Date(startTime)) return 'End time must be after start time';
+    return '';
+  }
+
+  function goToStep2() {
+    stepError = validateStep1();
+    if (stepError) return;
+    step = 2;
+    loadPreview();
+  }
+
+  // Rendered by the backend from the same formatter the real announcement
+  // uses, so it can't drift. Shown as raw message source - Discord markdown
+  // and <t:...> timestamps included - because that's literally what gets
+  // posted; Discord is what renders it.
+  let preview = '';
+  let previewError = '';
+
+  async function loadPreview() {
+    try {
+      previewError = '';
+      preview = await api.previewAnnouncement({
+        title,
+        description: description || undefined,
+        start_time: new Date(startTime).toISOString(),
+        end_time: new Date(endTime).toISOString(),
+        location: location || undefined,
+        price: price || undefined,
+        link: link || undefined
+      });
+    } catch (err) {
+      preview = '';
+      previewError = err instanceof Error ? err.message : 'Could not load the preview';
+    }
+  }
   let error = '';
   let price = '';
   let link = '';
@@ -149,6 +207,9 @@
       <div class="flex justify-between items-center mb-6">
         <h2 class="text-2xl font-bold text-gray-900">
           {isEditing ? 'Edit event' : 'Create New Event'}
+          {#if wizard}
+            <span class="md:hidden font-mono text-xs text-muted align-middle ml-2">{step} / 2</span>
+          {/if}
         </h2>
         <button on:click={handleClose} class="text-gray-400 hover:text-gray-600 text-2xl">
           ×
@@ -162,6 +223,10 @@
       {/if}
 
       <form on:submit|preventDefault={handleSubmit} class="space-y-4">
+        <!-- Step 1. `hidden md:block` rather than an {#if}: desktop must
+             render everything regardless of `step`, and keeping both steps
+             mounted is what lets "Back" return to filled-in fields. -->
+        <div class="space-y-4 {showStep1 ? '' : 'hidden md:block'}">
         <div>
           <label for="title" class="block text-sm font-medium text-gray-700 mb-1">
             Event Title *
@@ -293,6 +358,9 @@
           </p>
         </div>
 
+        </div>
+        <!-- Step 2: who's coming, and what lands in Discord. -->
+        <div class="space-y-4 {showStep2 ? '' : 'hidden md:block'}">
         <!-- Invite picker is create-only: PUT /api/events/:id doesn't touch
              the guest list (participants have their own endpoints), so
              showing it while editing would imply changes that never save. -->
@@ -324,7 +392,69 @@
           {/if}
         </div>
 
-        <div class="flex gap-3 pt-4">
+        {#if !isEditing}
+          <div>
+            <span class="block text-sm font-medium text-gray-700 mb-1">Discord preview</span>
+            {#if previewError}
+              <p class="text-sm text-red-600" role="alert">{previewError}</p>
+            {:else if preview}
+              <!-- The raw message source, not a rendering of it: this is
+                   exactly what gets posted, and Discord is what turns the
+                   markdown and <t:…> timestamps into formatted text. Faking
+                   that rendering here would misrepresent it. -->
+              <pre
+                class="bg-gray-50 border border-line rounded-lg p-3 text-xs whitespace-pre-wrap font-mono text-body overflow-x-auto">{preview}</pre>
+            {:else}
+              <p class="text-sm text-gray-500">
+                Fill in the details above to see what the bot will post.
+              </p>
+            {/if}
+          </div>
+        {/if}
+        </div>
+
+        {#if wizard}
+          <!-- Mobile-only wizard controls; the desktop footer below stays
+               the single Cancel/Create pair it has always been. -->
+          <div class="flex md:hidden gap-3 pt-4">
+            {#if step === 1}
+              <button
+                type="button"
+                on:click={handleClose}
+                class="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                on:click={goToStep2}
+                class="flex-1 px-4 py-2 bg-primary text-white rounded-lg font-medium"
+              >
+                Next · invite friends
+              </button>
+            {:else}
+              <button
+                type="button"
+                on:click={() => (step = 1)}
+                class="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 font-medium"
+              >
+                ‹ Back
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                class="flex-1 px-4 py-2 bg-primary text-white rounded-lg font-medium disabled:opacity-50"
+              >
+                {loading ? 'Creating...' : 'Create & post'}
+              </button>
+            {/if}
+          </div>
+          {#if stepError}
+            <p class="md:hidden text-sm text-red-600 m-0" role="alert">{stepError}</p>
+          {/if}
+        {/if}
+
+        <div class="{wizard ? 'hidden md:flex' : 'flex'} gap-3 pt-4">
           <button
             type="button"
             on:click={handleClose}
