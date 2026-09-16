@@ -99,14 +99,30 @@ JWT_SECRET=$(openssl rand -hex 32)
 BIND_ADDR=127.0.0.1:8080
 
 # --- Fill these in before starting the service -----------------------
-# Same Discord application as local development. FRONTEND_URL drives both
-# the OAuth redirect and the CORS allow-list, so it must be the origin the
-# client actually loads from.
+#
+# All five Discord values are the SAME ones as local development - copy them
+# from backend/.env. They identify the Discord application, not the machine.
+#
+# Blank is not "unset": the server refuses to start on an empty required
+# value rather than failing later at Discord with an unrelated-looking
+# error. DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET are required; the
+# other three degrade gracefully (no bot, no friend sync, no announcements).
 DISCORD_CLIENT_ID=
 DISCORD_CLIENT_SECRET=
 DISCORD_BOT_TOKEN=
 DISCORD_GUILD_ID=
 DISCORD_ANNOUNCEMENT_CHANNEL_ID=
+
+# This API's own public URL. The OAuth callback is built from it and sent to
+# Discord as redirect_uri, so "<this>/api/auth/callback" must ALSO be
+# registered under OAuth2 -> Redirects in the Discord developer portal, or
+# Discord rejects the login before it starts.
+#   e.g. https://api.example.com
+PUBLIC_API_URL=
+
+# Where the browser lands after authorising, and the origin allowed through
+# CORS. This is the *frontend's* URL, not this API's.
+#   e.g. https://calendar.example.com
 FRONTEND_URL=
 EOF
   chmod 600 "$ENV_FILE"

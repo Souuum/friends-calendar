@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api';
+  import { api, API_URL } from '$lib/api';
   import { user, isAuthenticated, isLoading } from '$lib/stores';
 
   let error = '';
@@ -9,8 +9,10 @@
 
   async function handleLogin() {
     try {
-      // Open Discord OAuth in browser
-      const authUrl = 'http://localhost:8080/api/auth/discord';
+      // Open Discord OAuth in browser. Built from VITE_API_URL, not
+      // hard-coded: a deployed build used to point users at localhost:8080
+      // on their own machine, where nothing is listening.
+      const authUrl = `${API_URL}/api/auth/discord`;
       window.open(authUrl, '_blank');
 
       // Show token input

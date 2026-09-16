@@ -69,13 +69,36 @@ enabled but **not started** - there is no binary until the first deploy, so
 starting it early only crash-loops.
 
 Then fill in the blanks it leaves in `/opt/friends-calendar/.env`:
-`DISCORD_*` and `FRONTEND_URL`.
 
-> `FRONTEND_URL` now feeds **both** the OAuth redirect and the CORS
-> allow-list. It must be the origin the client actually loads from, or the
-> browser blocks every API call after login. The packaged Tauri origins
-> (`tauri://localhost`, `https://tauri.localhost`) and the dev origin are
-> always allowed on top of it.
+| Variable | Value | Required? |
+|---|---|---|
+| `DISCORD_CLIENT_ID` | same as `backend/.env` | **yes** |
+| `DISCORD_CLIENT_SECRET` | same as `backend/.env` | **yes** |
+| `DISCORD_BOT_TOKEN` | same as `backend/.env` | no - bot/reminders/announcements/friend-sync off without it |
+| `DISCORD_GUILD_ID` | same as `backend/.env` | no - friend sync 400s without it |
+| `DISCORD_ANNOUNCEMENT_CHANNEL_ID` | same as `backend/.env` | no - and only a fallback; the `/server` page's DB config wins |
+| `PUBLIC_API_URL` | `https://api.<your-domain>` | effectively yes |
+| `FRONTEND_URL` | `https://calendar.<your-domain>` | effectively yes |
+
+All five Discord values identify the *application*, not the machine, so
+they are the same ones local development uses.
+
+> **Blank is not the same as unset.** `env::var` returns `Ok("")` for
+> `FOO=`, so a plain `.expect()` used to accept an unfilled placeholder and
+> fail much later at Discord. The required values now refuse to start on an
+> empty string, naming the file.
+
+> `FRONTEND_URL` feeds **both** the post-login redirect and the CORS
+> allow-list, so it must be the origin the client actually loads from. The
+> packaged Tauri origins (`tauri://localhost`, `https://tauri.localhost`)
+> and the dev origin are always allowed on top of it.
+
+> `PUBLIC_API_URL` builds the OAuth callback that gets sent to Discord as
+> `redirect_uri`. **`<PUBLIC_API_URL>/api/auth/callback` must also be
+> registered** in the Discord developer portal under OAuth2 → Redirects, or
+> Discord rejects the login before it even starts. It was hard-coded to
+> `http://localhost:8080/api/auth/callback` until 2026-09-16, which would
+> have sent every production login to the user's own machine.
 
 ### 3. Point the tunnel at it
 
@@ -87,6 +110,28 @@ Add a route to the existing `cloudflared`: `api.<your-domain>` →
 > to loopback, so a tunnel on another machine cannot reach it. Loopback is
 > the default deliberately: widening it should be a decision, not an
 > accident.
+
+### 3b. Deploy the frontend to Cloudflare Pages
+
+`desktop/` builds to a static site (`adapter-static`, `fallback:
+index.html`), so Pages serves it directly.
+
+- **Build command:** `yarn build`
+- **Build output directory:** `desktop/build`
+- **Root directory:** `desktop`
+- **Environment variable:** `VITE_API_URL = https://api.<your-domain>`
+
+`VITE_API_URL` is baked in at **build** time, not read at runtime - a Pages
+build without it silently points the deployed frontend at
+`http://localhost:8080`, i.e. the visitor's own machine. That default is
+also what `LoginScreen` used to hard-code, independently of this variable.
+
+Then set `FRONTEND_URL` on the container to the Pages URL and restart, so
+the post-login redirect and CORS both point at it.
+
+The Tauri desktop app keeps working alongside this: it is allowed through
+CORS by its own origin, and its login flow can still use the paste-the-token
+box.
 
 ### 4. Install the self-hosted runner
 

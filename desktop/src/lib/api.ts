@@ -18,7 +18,13 @@ import type {
   ServersResponse
 } from './types';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+/**
+ * Exported because the OAuth login link is a full-page navigation rather
+ * than a fetch, so it can't go through this client - and `LoginScreen`
+ * previously hard-coded `http://localhost:8080`, which meant a deployed
+ * build sent users to their own machine to log in.
+ */
+export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
 class ApiClient {
   private token: string | null = null;
@@ -119,10 +125,10 @@ class ApiClient {
     price?: string;
     link?: string;
   }): Promise<string> {
-    const { message } = await this.fetch<{ message: string }>(
-      '/api/events/announcement-preview',
-      { method: 'POST', body: JSON.stringify(data) }
-    );
+    const { message } = await this.fetch<{ message: string }>('/api/events/announcement-preview', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
     return message;
   }
 
@@ -302,7 +308,9 @@ class ApiClient {
 
   // Availability
   async getFreeFriendsNow(): Promise<string[]> {
-    const { free_friend_ids } = await this.fetch<{ free_friend_ids: string[] }>('/api/availability/friends-now');
+    const { free_friend_ids } = await this.fetch<{ free_friend_ids: string[] }>(
+      '/api/availability/friends-now'
+    );
     return free_friend_ids;
   }
 

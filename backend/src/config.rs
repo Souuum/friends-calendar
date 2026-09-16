@@ -57,10 +57,26 @@ fn build_oauth_http_client() -> reqwest::Client {
         .expect("failed to build the OAuth2 HTTP client")
 }
 
+/// A required setting, where an *empty* value counts as missing.
+///
+/// `env::var` returns `Ok("")` for `FOO=` in a .env file, so a plain
+/// `.expect()` accepts a blank as if it were configured. That matters
+/// because the provisioning script writes the Discord keys as empty
+/// placeholders to be filled in: leaving one blank used to start the server
+/// with empty OAuth credentials and fail later, at Discord, with an error
+/// that pointed nowhere near the cause. `DISCORD_BOT_TOKEN` already got this
+/// right via `.filter(|s| !s.is_empty())`; the required ones did not.
+fn require_env(key: &str) -> String {
+    match env::var(key) {
+        Ok(value) if !value.trim().is_empty() => value,
+        _ => panic!("{key} must be set to a non-empty value (check /opt/friends-calendar/.env)"),
+    }
+}
+
 impl AppState {
     pub async fn new() -> Result<Self, Box<dyn std::error::Error>> {
         // Database connection
-        let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+        let database_url = require_env("DATABASE_URL");
 
         tracing::info!("🔌 Connecting to database...");
 
@@ -77,20 +93,31 @@ impl AppState {
         tracing::info!("✅ Migrations complete");
 
         // OAuth2 client setup
-        let discord_client_id_raw =
-            env::var("DISCORD_CLIENT_ID").expect("DISCORD_CLIENT_ID must be set");
+        let discord_client_id_raw = require_env("DISCORD_CLIENT_ID");
         let discord_client_id = ClientId::new(discord_client_id_raw.clone());
-        let discord_client_secret = ClientSecret::new(
-            env::var("DISCORD_CLIENT_SECRET").expect("DISCORD_CLIENT_SECRET must be set"),
-        );
+        let discord_client_secret = ClientSecret::new(require_env("DISCORD_CLIENT_SECRET"));
 
         let auth_url = AuthUrl::new("https://discord.com/api/oauth2/authorize".to_string())
             .expect("Invalid authorization endpoint URL");
         let token_url = TokenUrl::new("https://discord.com/api/oauth2/token".to_string())
             .expect("Invalid token endpoint URL");
 
-        let redirect_url = RedirectUrl::new("http://localhost:8080/api/auth/callback".to_string())
-            .expect("Invalid redirect URL");
+        // Where Discord sends the browser back to. This was hard-coded to
+        // localhost:8080, which cannot work once deployed: the value is sent
+        // to Discord as `redirect_uri`, Discord checks it against the
+        // application's registered redirect list, and then sends the *user's
+        // browser* there. In production that has to be the public API URL,
+        // and the same string must be registered in the Discord developer
+        // portal or the login is rejected before it starts.
+        let public_api_url = env::var("PUBLIC_API_URL")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "http://localhost:8080".to_string());
+        let redirect_url = RedirectUrl::new(format!(
+            "{}/api/auth/callback",
+            public_api_url.trim_end_matches('/')
+        ))
+        .expect("PUBLIC_API_URL must be a valid URL, e.g. https://api.example.com");
 
         let oauth_client = BasicClient::new(discord_client_id)
             .set_client_secret(discord_client_secret)
@@ -98,7 +125,7 @@ impl AppState {
             .set_token_uri(token_url)
             .set_redirect_uri(redirect_url);
 
-        let jwt_secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set");
+        let jwt_secret = require_env("JWT_SECRET");
         let frontend_url =
             env::var("FRONTEND_URL").unwrap_or_else(|_| "http://localhost:1420".to_string());
 
@@ -179,5 +206,41 @@ impl AppState {
             discord_announcement_channel_id: Some(123456789),
             discord_api_base,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::require_env;
+
+    // Each test uses its own key: env is process-global and the test
+    // harness runs threads in parallel, so a shared key would race.
+    #[test]
+    fn returns_a_configured_value() {
+        unsafe { std::env::set_var("TEST_REQUIRE_ENV_OK", "hello") };
+        assert_eq!(require_env("TEST_REQUIRE_ENV_OK"), "hello");
+    }
+
+    // The case that motivated this: the provisioning script writes the
+    // Discord keys as empty placeholders, and `env::var` returns Ok("") for
+    // `FOO=`, so `.expect()` used to sail straight past a blank.
+    #[test]
+    #[should_panic(expected = "must be set to a non-empty value")]
+    fn an_empty_value_is_treated_as_missing() {
+        unsafe { std::env::set_var("TEST_REQUIRE_ENV_EMPTY", "") };
+        require_env("TEST_REQUIRE_ENV_EMPTY");
+    }
+
+    #[test]
+    #[should_panic(expected = "must be set to a non-empty value")]
+    fn a_whitespace_only_value_is_treated_as_missing() {
+        unsafe { std::env::set_var("TEST_REQUIRE_ENV_BLANK", "   ") };
+        require_env("TEST_REQUIRE_ENV_BLANK");
+    }
+
+    #[test]
+    #[should_panic(expected = "must be set to a non-empty value")]
+    fn an_absent_key_panics() {
+        require_env("TEST_REQUIRE_ENV_DEFINITELY_NOT_SET");
     }
 }
