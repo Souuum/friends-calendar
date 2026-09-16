@@ -927,6 +927,32 @@ Applied to:
   "0" state never actually renders) - replaced with `anim-pop` on the
   tooltip card.
 
+## Multi-server — planned, not started
+
+`.claude/skills/multi-server/SKILL.md` (written 2026-09-16). The user
+confirmed the shape: **one `calendar_events` row published to N servers**,
+never mirrored copies. Two things make single-server an assumption rather
+than a setting, and both are load-bearing:
+
+- **`visibility: friends` would silently widen.** `friendships` come from
+  shared guild membership (`source = 'discord_guild'`) and listing treats any
+  row as "friend". With several servers that becomes "anyone I share *any*
+  server with", so unrelated groups start seeing each other's events. The fix
+  is visibility relative to *where an event is published*, and it has to ship
+  with the feature, not after.
+- **One event = one Discord message is in the schema.**
+  `calendar_events.discord_message_id` is reverse-looked-up by `bot.rs` (✅ →
+  participant), `services::reminders` (the thread it posts into *is* that
+  message id) and `services::discord_feed` (event-tag inference). It becomes
+  an `event_publications` child table.
+
+Also new: `user_guilds`. Membership is *derived* into friendships today and
+never stored, so there's currently no way to answer "which servers can this
+person publish to?".
+
+Start with the data model alone (step 1 in the skill) - mechanical, no UI,
+and everything else is easy afterwards.
+
 ## Feature backlog — 2026-09-16 triage
 
 Triaged against the working tree (every claim below was verified by
