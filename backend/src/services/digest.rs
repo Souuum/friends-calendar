@@ -142,7 +142,7 @@ mod tests {
 
     #[sqlx::test]
     async fn sends_and_stamps_when_due_and_enabled(db: PgPool) {
-        discord_config::upsert_config(&db, "g1", None, Some("chan1".to_string()), None, Some(true))
+        discord_config::upsert_config(&db, "g1", Some("chan1".to_string()), Some(true))
             .await
             .unwrap();
 
@@ -173,7 +173,7 @@ mod tests {
 
     #[sqlx::test]
     async fn does_not_send_outside_the_due_window(db: PgPool) {
-        discord_config::upsert_config(&db, "g1", None, Some("chan1".to_string()), None, Some(true))
+        discord_config::upsert_config(&db, "g1", Some("chan1".to_string()), Some(true))
             .await
             .unwrap();
 
@@ -197,16 +197,9 @@ mod tests {
 
     #[sqlx::test]
     async fn does_not_send_when_digest_is_disabled(db: PgPool) {
-        discord_config::upsert_config(
-            &db,
-            "g1",
-            None,
-            Some("chan1".to_string()),
-            None,
-            Some(false),
-        )
-        .await
-        .unwrap();
+        discord_config::upsert_config(&db, "g1", Some("chan1".to_string()), Some(false))
+            .await
+            .unwrap();
 
         let http = Client::new();
         let monday_9am = dt("2026-03-02T09:00:00Z");
@@ -225,7 +218,7 @@ mod tests {
 
     #[sqlx::test]
     async fn does_not_send_without_a_configured_channel(db: PgPool) {
-        discord_config::upsert_config(&db, "g1", None, None, None, Some(true))
+        discord_config::upsert_config(&db, "g1", None, Some(true))
             .await
             .unwrap();
 

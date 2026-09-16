@@ -28,17 +28,13 @@ export interface UpdateProfileRequest {
 
 export interface BotChannelConfig {
   guild_id: string;
-  events_channel_id?: string;
   announcements_channel_id?: string;
-  reminders_channel_id?: string;
   digest_enabled: boolean;
   last_digest_sent_at?: string;
 }
 
 export interface UpdateBotChannelConfigRequest {
-  events_channel_id?: string;
   announcements_channel_id?: string;
-  reminders_channel_id?: string;
   digest_enabled?: boolean;
 }
 

@@ -26,9 +26,7 @@ pub async fn get_config(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?
         .unwrap_or_else(|| BotChannelConfig {
             guild_id: guild_id.to_string(),
-            events_channel_id: None,
             announcements_channel_id: None,
-            reminders_channel_id: None,
             digest_enabled: false,
             last_digest_sent_at: None,
         });
@@ -46,9 +44,7 @@ pub async fn update_config(
     let config = discord_config::upsert_config(
         &state.db,
         guild_id,
-        req.events_channel_id,
         req.announcements_channel_id,
-        req.reminders_channel_id,
         req.digest_enabled,
     )
     .await

@@ -1,0 +1,21 @@
+-- Drop the two bot-channel settings nothing ever read.
+--
+-- `discord_bot_config` shipped with three channel fields in 008. Only
+-- `announcements_channel_id` was ever consumed (by
+-- services::discord_config::resolve_announcement_channel_id, which feeds
+-- both the auto-announce on event creation and the announcements feed, and
+-- by services::digest). The other two were settable on /server and read by
+-- nothing:
+--
+--   * reminders_channel_id - reminders go into the event's own Discord
+--     thread (services::reminders), not a dedicated channel.
+--   * events_channel_id    - event announcements use the announcements
+--     channel; this was never wired to anything.
+--
+-- Three inputs where one works is worse than one input: it invites people
+-- to configure behaviour that will never happen. Dropped rather than left
+-- for later - if a dedicated destination is ever wanted, adding a column
+-- back is trivial, whereas a field that silently does nothing is the exact
+-- defect this project keeps finding.
+ALTER TABLE discord_bot_config DROP COLUMN IF EXISTS reminders_channel_id;
+ALTER TABLE discord_bot_config DROP COLUMN IF EXISTS events_channel_id;

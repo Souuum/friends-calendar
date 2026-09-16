@@ -370,6 +370,14 @@ just this UI.
   `services::friends::get_linked_server_info`) — unchanged from before,
   `GET /guilds/{id}` on the bot token, returns
   `{ id, name, icon_url, approximate_member_count }`.
+⚠️ **`/server` has one channel field, not the mockup's three.**
+`events_channel_id` and `reminders_channel_id` were dropped in migration
+013: nothing ever read either. Event announcements use the announcements
+channel, and reminders go into each event's own Discord thread
+(`services::reminders`). Three inputs where one works is worse than one -
+it invites configuring behaviour that will never happen. If a dedicated
+destination is ever wanted, adding a column back is trivial.
+
 - `GET`/`PUT /api/discord/config` (`handlers::discord_config`,
   `services::discord_config`, backed by `discord_bot_config`, one row per
   guild) — DB-backed, user-editable channel IDs for events/announcements/
@@ -1053,10 +1061,6 @@ reminded about it".
    not on a new pattern.
 
 Still open, not worth a skill file yet:
-- `discord_bot_config.reminders_channel_id` is *still* configurable on
-  `/server` and used by nothing: reminders go to the event's own thread
-  instead. Either wire it up as an additional destination or drop the
-  field from the form.
 - `bot.rs` / `discord_announcement.rs` have no tests — see the Discord bot
   section below for why, and `.claude/skills/add-tests/SKILL.md` for the
   `wiremock` pattern that would work for the HTTP half.
