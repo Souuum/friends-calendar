@@ -1,3 +1,5 @@
+import type { EventWithParticipants } from '$lib/types';
+
 export const dateUtils = {
   isSameDay(date1: Date, date2: Date): boolean {
     return (
@@ -75,4 +77,64 @@ export function formatDate(dateString: string) {
     hour: '2-digit',
     minute: '2-digit'
   });
+}
+
+export interface DayGroup {
+  /** Stable key for `{#each}` - the local calendar date, not the raw ISO. */
+  key: string;
+  /** "Today" / "Tomorrow" / "Sat 21 Mar" */
+  label: string;
+  events: EventWithParticipants[];
+}
+
+/**
+ * Groups events by local calendar day for the agenda list, dropping anything
+ * that has already started and sorting what's left chronologically.
+ *
+ * Grid views are anchored to the month or week you're looking at; a list has
+ * no such anchor, so "upcoming" is the only sensible scope - otherwise it
+ * opens on whatever happened months ago.
+ *
+ * Grouping is by *local* day, matching how the rest of the app renders times
+ * (`toLocaleDateString`), so an event at 23:00 lands on the day the reader
+ * would call it.
+ */
+export function groupEventsByDay(
+  events: EventWithParticipants[],
+  now: Date = new Date()
+): DayGroup[] {
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+
+  const upcoming = events
+    .filter((e) => new Date(e.start_time).getTime() >= now.getTime())
+    .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+
+  const groups = new Map<string, DayGroup>();
+
+  for (const event of upcoming) {
+    const d = new Date(event.start_time);
+    const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+
+    if (!groups.has(key)) {
+      const dayStart = new Date(d);
+      dayStart.setHours(0, 0, 0, 0);
+      const daysOut = Math.round(
+        (dayStart.getTime() - startOfToday.getTime()) / (24 * 60 * 60 * 1000)
+      );
+
+      const label =
+        daysOut === 0
+          ? 'Today'
+          : daysOut === 1
+            ? 'Tomorrow'
+            : d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' });
+
+      groups.set(key, { key, label, events: [] });
+    }
+
+    groups.get(key)!.events.push(event);
+  }
+
+  return Array.from(groups.values());
 }

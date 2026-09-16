@@ -133,4 +133,43 @@ describe('Calendar', () => {
 
     await waitFor(() => expect(screen.getByText('1 invited')).toBeInTheDocument());
   });
+
+  it('switches to the agenda list, which shows upcoming events grouped by day', async () => {
+    getFreeFriendsNow.mockResolvedValue([]);
+    getFriends.mockResolvedValue([]);
+
+    const soon = new Date();
+    soon.setDate(soon.getDate() + 1);
+    soon.setHours(19, 0, 0, 0);
+
+    render(Calendar, {
+      props: {
+        events: [makeEvent({ id: 'e1', title: 'Board Game Night', start_time: soon.toISOString() })]
+      }
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'List' }));
+
+    // Day-grouped heading rather than a grid cell.
+    expect(screen.getByText('Tomorrow')).toBeInTheDocument();
+    expect(screen.getByText('Board Game Night')).toBeInTheDocument();
+  });
+
+  it('opens the peek panel from an agenda row, same as from the grid', async () => {
+    getFreeFriendsNow.mockResolvedValue([]);
+    getFriends.mockResolvedValue([]);
+
+    const soon = new Date();
+    soon.setDate(soon.getDate() + 1);
+    soon.setHours(19, 0, 0, 0);
+
+    render(Calendar, {
+      props: { events: [makeEvent({ title: 'Raclette', start_time: soon.toISOString() })] }
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    await fireEvent.click(screen.getByText('Raclette'));
+
+    await waitFor(() => expect(screen.getByText('1 invited')).toBeInTheDocument());
+  });
 });

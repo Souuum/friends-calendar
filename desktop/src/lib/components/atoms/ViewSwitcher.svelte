@@ -14,16 +14,20 @@
   const views: { value: ViewType; label: string }[] = [
     { value: 'day', label: 'Day' },
     { value: 'week', label: 'Week' },
-    { value: 'month', label: 'Month' }
+    { value: 'month', label: 'Month' },
+    { value: 'list', label: 'List' }
   ];
 </script>
 
 <div class="flex bg-[#f4f4f7] rounded-[9px] p-[3px]">
   {#each views as viewOption}
     {@const isActive = view === viewOption.value}
+    {@const mobileHidden = viewOption.value === 'day' || viewOption.value === 'week'}
     <button
       on:click={() => onChange(viewOption.value)}
-      class="px-[13px] py-1.5 text-[13px] rounded-[7px] transition-colors cursor-pointer"
+      class="px-[13px] py-1.5 text-[13px] rounded-[7px] transition-colors cursor-pointer {mobileHidden
+        ? 'hidden md:block'
+        : ''}"
       class:bg-white={isActive}
       class:shadow-sm={isActive}
       class:font-semibold={isActive}

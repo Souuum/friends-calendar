@@ -151,4 +151,10 @@ export interface DayAvailability {
 
 export type ButtonType = 'button' | 'submit' | 'reset';
 
-export type ViewType = 'month' | 'week' | 'day';
+/**
+ * 'list' is the mobile agenda: upcoming events grouped by day rather than
+ * laid out on a grid. It's offered at every width - a chronological list is
+ * useful on a desktop too - but it's the one that makes the calendar usable
+ * at 402px, where a 7-column grid has ~55px per day.
+ */
+export type ViewType = 'month' | 'week' | 'day' | 'list';

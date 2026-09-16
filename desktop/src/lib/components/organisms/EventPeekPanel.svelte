@@ -4,13 +4,13 @@
   import type { EventWithParticipants } from '$lib/types';
   import { formatDate } from '$lib/utils/dateUtils';
 
-  // Persistent side panel replacing the old hover-tooltip (month) /
-  // modal-on-click (week, day) interaction - see
-  // .claude/skills/mockup-calendar-redesign/SKILL.md. The RSVP call itself
-  // mirrors EventDetailsModal.svelte's handleStatusChange, but the colors
-  // below are this screen's own (the mockup's STATUS map), not copied from
-  // that older component - see the skill for why those two don't share a
-  // palette even though they share behavior.
+  // The app's single event-detail surface: a side panel from `md:` up, a
+  // bottom sheet below it. Replaced the old hover-tooltip (month) /
+  // modal-on-click (week, day) interaction in mockup-calendar-redesign, and
+  // superseded EventDetailsModal entirely in mockup-responsive-calendar -
+  // that component was deleted rather than revived as the mobile sheet, since
+  // it predated the mockup's STATUS palette and had no edit or
+  // is_participant handling.
   export let event: EventWithParticipants | null = null;
 
   const dispatch = createEventDispatcher();
@@ -73,7 +73,19 @@
   }
 </script>
 
-<aside class="w-[296px] shrink-0 bg-white border border-line rounded-xl p-[18px]">
+<!-- One component, two placements. Below `md:` there's no room for a 296px
+     side panel at 402px wide, so it docks to the bottom of the viewport as a
+     sheet; from `md:` up it's the static side panel the mockup shows. Note
+     this replaces the plan to revive EventDetailsModal for the mobile sheet:
+     that component predates the mockup's status palette, uses
+     confirm()/alert(), has no edit affordance and no is_participant
+     handling, so reusing it would have reintroduced all four. -->
+<aside
+  class="bg-white border border-line p-[18px]
+         fixed inset-x-0 bottom-0 z-40 max-h-[70vh] overflow-y-auto rounded-t-2xl shadow-[0_-14px_40px_rgba(0,0,0,0.18)] anim-sheet
+         md:static md:z-auto md:max-h-none md:overflow-visible md:w-[296px] md:shrink-0 md:rounded-xl md:shadow-none md:animate-none
+         {event ? '' : 'hidden md:block'}"
+>
   {#if !event}
     <p class="text-sm text-gray-500">Select an event to see its details here.</p>
   {:else}

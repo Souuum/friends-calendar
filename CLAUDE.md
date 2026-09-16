@@ -797,7 +797,26 @@ speculatively.
     shows the raw message source (Discord markdown, `<t:…>` timestamps)
     because that is literally what gets sent - Discord is what renders it,
     and faking that rendering client-side would misrepresent it.
-- `.claude/skills/mockup-responsive-calendar/SKILL.md`,
+- `.claude/skills/mockup-responsive-calendar/SKILL.md` — **done
+  2026-09-16, with one deliberate deviation.** The skill planned to revive
+  `EventDetailsModal` as the mobile bottom sheet. It was instead **deleted**,
+  and `EventPeekPanel` made responsive: a bottom sheet below `md:`
+  (`fixed inset-x-0 bottom-0`, `anim-sheet`), the 296px side panel from
+  `md:` up. The skill predates `event-edit-flow` and
+  `event-visibility-listing`; by now `EventDetailsModal` carried the
+  pre-mockup green/red/yellow status palette, `confirm()`/`alert()` dialogs,
+  no edit affordance and no `is_participant` handling, so reusing it would
+  have reintroduced all four on mobile only. One detail surface, two
+  placements.
+  - New `'list'` `ViewType` + `AgendaView.svelte`: upcoming events grouped by
+    day, offered at every width but the thing that makes the calendar usable
+    at 402px (a 7-column grid gets ~55px per day). Day/Week are `hidden
+    md:block` in `ViewSwitcher` for the same reason.
+  - Grouping lives in `dateUtils.groupEventsByDay` and is unit-tested: it
+    drops already-started events (a list has no month/week anchor, so
+    "upcoming" is the only sensible scope), sorts chronologically, and groups
+    by *local* day so a 23:00 event lands where the reader would expect.
+- `.claude/skills/mockup-responsive-calendar/SKILL.md` (original entry),
   `mockup-responsive-friends/SKILL.md`,
   `mockup-responsive-add-friends/SKILL.md`,
   `mockup-announcement-thread/SKILL.md`,

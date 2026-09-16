@@ -6,6 +6,7 @@
   import MonthView from '$lib/components/organisms/MonthView.svelte';
   import WeekView from '$lib/components/organisms/WeekView.svelte';
   import DayView from '$lib/components/organisms/DayView.svelte';
+  import AgendaView from '$lib/components/organisms/AgendaView.svelte';
   import EventTooltip from '$lib/components/molecules/EventTooltip.svelte';
   import EventPeekPanel from '$lib/components/organisms/EventPeekPanel.svelte';
   import CreateEventModal from '$lib/components/CreateEventModal.svelte';
@@ -16,7 +17,7 @@
 
   const dispatch = createEventDispatcher();
 
-  type ViewType = 'month' | 'week' | 'day';
+  import type { ViewType } from '$lib/types';
   let view: ViewType = 'month';
   let currentDate = new Date();
 
@@ -299,6 +300,8 @@
       />
     {:else if view === 'week'}
       <WeekView {weekDays} {eventsForDay} onEventClick={selectEvent} />
+    {:else if view === 'list'}
+      <AgendaView events={filteredEvents} onEventClick={selectEvent} />
     {:else}
       <DayView {currentDate} events={eventsForDay(currentDate)} onEventClick={selectEvent} />
     {/if}

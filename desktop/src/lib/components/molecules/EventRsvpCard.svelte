@@ -5,7 +5,7 @@
 
   // Read-only: shows whether you (and everyone else) responded to a
   // calendar event - it doesn't let you change your RSVP from here, that
-  // already exists via EventDetailsModal (opened from the calendar view).
+  // already exists via EventPeekPanel (opened from the calendar view).
   // Originally AnnouncementCard.svelte / the old event-RSVP /announcements
   // page; renamed when that page was replaced by a real Discord-message
   // feed (services::discord_feed) so "Announcement" stopped meaning this.
