@@ -51,8 +51,6 @@ export interface CalendarEvent {
   end_time: string;
   location?: string;
   visibility: Visibility;
-  /** Minutes before start_time that the reminder fires. 0 = no reminder. */
-  reminder_lead_minutes: number;
   created_at: string;
   updated_at: string;
   discord_message_id?: string;
@@ -88,6 +86,12 @@ export interface EventWithParticipants extends CalendarEvent {
    * non-participant and for an invitee who hasn't replied.
    */
   is_participant: boolean;
+  /**
+   * Reminder offsets in minutes-before-start, ascending. Empty = no
+   * reminders. Several are allowed: an event can remind a week out, a day
+   * out and an hour out.
+   */
+  reminder_leads: number[];
 }
 
 export interface FriendInfo {

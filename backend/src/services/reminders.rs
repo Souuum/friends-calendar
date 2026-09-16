@@ -6,9 +6,9 @@ use reqwest::Client;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-/// Lead time when an event doesn't specify one. Matches the column default
-/// in migration 011, so an event created straight through SQL and one
-/// created through the API behave the same.
+/// Used when a create request doesn't mention reminders at all. An explicit
+/// empty list means "none" and is honoured as such - only *silence* gets a
+/// default.
 pub const DEFAULT_LEAD_MINUTES: i32 = 60;
 
 // The set of lead times offered to the creator lives in the UI
@@ -21,19 +21,31 @@ pub const DEFAULT_LEAD_MINUTES: i32 = 60;
 /// hour early or late, which for "starts in an hour" is the whole message.
 const POLL_INTERVAL_SECS: u64 = 300;
 
-/// Whether an event needs its reminder sent now. Pure, so the scheduling
-/// rules are testable without a database or a Discord mock - same split as
+/// One pending reminder joined to its event. `#[sqlx(flatten)]` maps the
+/// `e.*` half straight into CalendarEvent, so this stays in step with that
+/// struct automatically.
+#[derive(sqlx::FromRow)]
+struct DueReminder {
+    reminder_id: Uuid,
+    lead_minutes: i32,
+    sent_at: Option<DateTime<Utc>>,
+    #[sqlx(flatten)]
+    event: CalendarEvent,
+}
+
+/// Whether a given reminder should fire now. Pure, so the scheduling rules
+/// are testable without a database or a Discord mock - same split as
 /// `services::digest::is_due`.
 ///
-/// `lead_minutes` is the creator's choice for this event. A lead of 0 can
-/// never be due, which is how "no reminder" is expressed: the window is
-/// `start_time > now AND start_time <= now + lead`, and those two are
-/// contradictory at 0. No special case needed.
-///
 /// The `start_time > now` half is the one that's easy to forget: if the
-/// process was down over the reminder window, every event that started
-/// during the outage would otherwise look due on restart and fire a
-/// reminder for something already underway.
+/// process was down over the window, every event that started during the
+/// outage would otherwise look due on restart and fire a reminder for
+/// something already underway.
+///
+/// (A zero lead can't be due either, since the window would have to satisfy
+/// `start > now AND start <= now` - but that's now a curiosity rather than
+/// load-bearing: since migration 012 "no reminder" is the absence of a row,
+/// not a 0 stored in one.)
 pub fn is_due(
     now: DateTime<Utc>,
     start_time: DateTime<Utc>,
@@ -49,28 +61,93 @@ pub fn is_due(
     start_time <= now + Duration::minutes(lead_minutes as i64)
 }
 
-/// Events inside their own reminder window that haven't been reminded.
+/// Reminders whose moment has arrived, with the event each belongs to.
 ///
-/// The window is now per row, so the upper bound has to be computed in SQL
-/// (`make_interval`) rather than passed in as one timestamp. `> 0` keeps
-/// events with reminders switched off out of the scan entirely, matching
-/// the partial index from migration 011.
-async fn due_events(db: &PgPool, now: DateTime<Utc>) -> Result<Vec<CalendarEvent>> {
-    let events = sqlx::query_as::<_, CalendarEvent>(
+/// One row per *reminder*, not per event: an event with 1-week/48h/1h
+/// reminders appears three times across the day, once as each falls due,
+/// and each is stamped independently.
+///
+/// `lead_minutes > 0` is gone - it was only needed while 0 meant "off". A
+/// switched-off event now simply has no rows here.
+async fn due_reminders(db: &PgPool, now: DateTime<Utc>) -> Result<Vec<DueReminder>> {
+    let rows = sqlx::query_as::<_, DueReminder>(
         r#"
-        SELECT * FROM calendar_events
-        WHERE reminder_sent_at IS NULL
-          AND reminder_lead_minutes > 0
-          AND start_time > $1
-          AND start_time <= $1 + make_interval(mins => reminder_lead_minutes)
-        ORDER BY start_time ASC
+        SELECT r.id AS reminder_id, r.lead_minutes, r.sent_at, e.*
+        FROM event_reminders r
+        JOIN calendar_events e ON e.id = r.event_id
+        WHERE r.sent_at IS NULL
+          AND e.start_time > $1
+          AND e.start_time <= $1 + make_interval(mins => r.lead_minutes)
+        ORDER BY e.start_time ASC
         "#,
     )
     .bind(now)
     .fetch_all(db)
     .await?;
 
-    Ok(events)
+    Ok(rows)
+}
+
+/// Replaces an event's reminders with `leads`.
+///
+/// Wholesale replacement rather than a diff: the form always submits the
+/// complete set, so reconciling additions and removals separately would be
+/// more moving parts for the same result. Non-positive values and duplicates
+/// are dropped rather than rejected - they describe the same intent as
+/// leaving them out, and failing a whole event save over one is unhelpful.
+///
+/// Already-sent reminders that are kept retain their `sent_at`, so editing
+/// an event's other fields can't re-notify anyone. `ON CONFLICT DO NOTHING`
+/// is what preserves that.
+pub async fn set_reminders(db: &PgPool, event_id: Uuid, leads: &[i32]) -> Result<()> {
+    let mut wanted: Vec<i32> = leads.iter().copied().filter(|m| *m > 0).collect();
+    wanted.sort_unstable();
+    wanted.dedup();
+
+    sqlx::query("DELETE FROM event_reminders WHERE event_id = $1 AND NOT (lead_minutes = ANY($2))")
+        .bind(event_id)
+        .bind(&wanted)
+        .execute(db)
+        .await?;
+
+    for lead in &wanted {
+        sqlx::query(
+            r#"
+            INSERT INTO event_reminders (id, event_id, lead_minutes)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (event_id, lead_minutes) DO NOTHING
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(event_id)
+        .bind(lead)
+        .execute(db)
+        .await?;
+    }
+
+    Ok(())
+}
+
+/// The offsets configured for an event, ascending.
+pub async fn leads_for(db: &PgPool, event_id: Uuid) -> Result<Vec<i32>> {
+    let leads = sqlx::query_scalar::<_, i32>(
+        "SELECT lead_minutes FROM event_reminders WHERE event_id = $1 ORDER BY lead_minutes ASC",
+    )
+    .bind(event_id)
+    .fetch_all(db)
+    .await?;
+
+    Ok(leads)
+}
+
+/// Lets every reminder for an event fire again - used when the event moves,
+/// since a reminder that already went out described the old time.
+pub async fn clear_sent(db: &PgPool, event_id: Uuid) -> Result<()> {
+    sqlx::query("UPDATE event_reminders SET sent_at = NULL WHERE event_id = $1")
+        .bind(event_id)
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 /// Who hears about it: everyone who said yes or maybe.
@@ -136,8 +213,9 @@ pub fn humanise_lead(lead_minutes: i32) -> String {
 /// English or to server-local timestamps would read as a different app.
 /// Discord renders these timestamps in each reader's own timezone, which is
 /// also why this doesn't try to use `users.timezone`.
-pub fn format_reminder_message(event: &CalendarEvent) -> String {
+pub fn format_reminder_message(event: &CalendarEvent, lead_minutes: i32) -> String {
     let ts = event.start_time.timestamp();
+    let _ = lead_minutes; // <t:…:R> already says "in 2 days" in the reader's locale
     let mut message = format!("⏰ **Rappel :** {} commence <t:{ts}:R> !\n", event.title);
     message.push_str(&format!("**Heure :** <t:{ts}:t>\n"));
 
@@ -161,26 +239,23 @@ pub async fn send_due_reminders(
     bot_token: Option<&str>,
     now: DateTime<Utc>,
 ) -> Result<usize> {
-    let events = due_events(db, now).await?;
+    let due = due_reminders(db, now).await?;
     let mut sent = 0;
 
-    for event in events {
+    for item in due {
+        let event = &item.event;
+
         // Belt and braces: the query already encodes the window, but going
         // through is_due keeps one definition of "due" rather than two that
         // can drift.
-        if !is_due(
-            now,
-            event.start_time,
-            event.reminder_lead_minutes,
-            event.reminder_sent_at,
-        ) {
+        if !is_due(now, event.start_time, item.lead_minutes, item.sent_at) {
             continue;
         }
 
         let message = format!(
             "{} starts in {}",
             event.title,
-            humanise_lead(event.reminder_lead_minutes)
+            humanise_lead(item.lead_minutes)
         );
         for user_id in recipients(db, event.id).await? {
             // No preference check here - services::notifications::create
@@ -211,7 +286,7 @@ pub async fn send_due_reminders(
                 http,
                 bot_token,
                 thread_id,
-                &format_reminder_message(&event),
+                &format_reminder_message(event, item.lead_minutes),
             )
             .await
         {
@@ -223,11 +298,12 @@ pub async fn send_due_reminders(
         }
 
         // Stamped even if Discord failed above: the in-app reminders did go
-        // out, and retrying the whole event would double-notify everyone to
-        // chase one Discord post.
-        sqlx::query("UPDATE calendar_events SET reminder_sent_at = $1 WHERE id = $2")
+        // out, and retrying would double-notify everyone to chase one
+        // Discord post. Scoped to this reminder row, so the event's other
+        // lead times are untouched.
+        sqlx::query("UPDATE event_reminders SET sent_at = $1 WHERE id = $2")
             .bind(now)
-            .bind(event.id)
+            .bind(item.reminder_id)
             .execute(db)
             .await?;
 
@@ -295,7 +371,7 @@ mod tests {
                 participant_ids: Some(invitees.to_vec()),
                 price: None,
                 link: None,
-                reminder_lead_minutes: None,
+                reminder_leads: None,
             },
         )
         .await
@@ -322,7 +398,7 @@ mod tests {
             participant_ids: None,
             price: None,
             link: None,
-            reminder_lead_minutes: None,
+            reminder_leads: None,
         }
     }
 
@@ -489,7 +565,7 @@ mod tests {
         assert_eq!(second, 0, "restarting the loop must not double-send");
 
         let stamped: Option<DateTime<Utc>> =
-            sqlx::query_scalar("SELECT reminder_sent_at FROM calendar_events WHERE id = $1")
+            sqlx::query_scalar("SELECT sent_at FROM event_reminders WHERE event_id = $1")
                 .bind(event)
                 .fetch_one(&db)
                 .await
@@ -539,7 +615,7 @@ mod tests {
             ("No reminder", 0),
         ] {
             let mut req = minimal_request_at(title, now + Duration::minutes(2000));
-            req.reminder_lead_minutes = Some(lead);
+            req.reminder_leads = Some(vec![lead]);
             calendar::create_event(&db, creator, req).await.unwrap();
         }
 
@@ -551,12 +627,177 @@ mod tests {
         assert_eq!(sent, 1, "only the week-lead event is inside its own window");
 
         let reminded: Vec<String> = sqlx::query_scalar(
-            "SELECT title FROM calendar_events WHERE reminder_sent_at IS NOT NULL",
+            r#"
+            SELECT e.title FROM calendar_events e
+            JOIN event_reminders r ON r.event_id = e.id
+            WHERE r.sent_at IS NOT NULL
+            "#,
         )
         .fetch_all(&db)
         .await
         .unwrap();
         assert_eq!(reminded, vec!["One week lead".to_string()]);
+    }
+
+    // The whole point of the child table: each lead fires on its own
+    // schedule and is stamped on its own, so an event can have several.
+    #[sqlx::test]
+    async fn each_lead_time_fires_separately_as_it_comes_due(db: PgPool) {
+        let creator = seed_user(&db, "creator").await;
+        let now = Utc::now();
+
+        // Starts in ~25 hours, with 1-week / 1-day / 1-hour reminders.
+        let mut req = minimal_request_at("Ski trip", now + Duration::minutes(1500));
+        req.reminder_leads = Some(vec![10080, 1440, 60]);
+        let event = calendar::create_event(&db, creator, req).await.unwrap().id;
+
+        let server = mock_discord().await;
+        let http = Client::new();
+
+        // Right now only the 1-week reminder's window has opened.
+        assert_eq!(
+            send_due_reminders(&server.uri(), &db, &http, None, now)
+                .await
+                .unwrap(),
+            1
+        );
+
+        // Half an hour later nothing new is due (1470 min still to go, so
+        // the 1-day window hasn't opened) and the week one doesn't repeat.
+        assert_eq!(
+            send_due_reminders(&server.uri(), &db, &http, None, now + Duration::minutes(30))
+                .await
+                .unwrap(),
+            0
+        );
+
+        // Inside a day of the start, the 1-day reminder comes due.
+        assert_eq!(
+            send_due_reminders(
+                &server.uri(),
+                &db,
+                &http,
+                None,
+                now + Duration::minutes(120)
+            )
+            .await
+            .unwrap(),
+            1
+        );
+
+        // And finally the 1-hour one, an hour before it starts.
+        assert_eq!(
+            send_due_reminders(
+                &server.uri(),
+                &db,
+                &http,
+                None,
+                now + Duration::minutes(1450)
+            )
+            .await
+            .unwrap(),
+            1
+        );
+
+        let sent: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM event_reminders WHERE event_id = $1 AND sent_at IS NOT NULL",
+        )
+        .bind(event)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(sent, 3, "all three fired, each exactly once");
+    }
+
+    #[sqlx::test]
+    async fn set_reminders_replaces_the_set_but_keeps_sent_markers(db: PgPool) {
+        let creator = seed_user(&db, "creator").await;
+        let now = Utc::now();
+
+        let mut req = minimal_request_at("Party", now + Duration::minutes(30));
+        req.reminder_leads = Some(vec![60, 1440]);
+        let event = calendar::create_event(&db, creator, req).await.unwrap().id;
+
+        let server = mock_discord().await;
+        send_due_reminders(&server.uri(), &db, &Client::new(), None, now)
+            .await
+            .unwrap();
+
+        // Keep the 60 (already sent) and swap 1440 for 180.
+        set_reminders(&db, event, &[60, 180]).await.unwrap();
+        assert_eq!(leads_for(&db, event).await.unwrap(), vec![60, 180]);
+
+        let already_sent: Option<DateTime<Utc>> = sqlx::query_scalar(
+            "SELECT sent_at FROM event_reminders WHERE event_id = $1 AND lead_minutes = 60",
+        )
+        .bind(event)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert!(
+            already_sent.is_some(),
+            "editing the set must not re-arm a reminder that already went out"
+        );
+    }
+
+    #[sqlx::test]
+    async fn set_reminders_drops_duplicates_and_non_positive_values(db: PgPool) {
+        let creator = seed_user(&db, "creator").await;
+        let event = seed_upcoming_event(&db, creator, &[]).await;
+
+        set_reminders(&db, event, &[60, 60, 0, -30, 1440])
+            .await
+            .unwrap();
+
+        // Same intent as leaving them out, so they're dropped rather than
+        // failing the whole save.
+        assert_eq!(leads_for(&db, event).await.unwrap(), vec![60, 1440]);
+    }
+
+    #[sqlx::test]
+    async fn an_empty_lead_list_means_no_reminders_at_all(db: PgPool) {
+        let creator = seed_user(&db, "creator").await;
+        let now = Utc::now();
+
+        let mut req = minimal_request_at("Silent", now + Duration::minutes(30));
+        req.reminder_leads = Some(vec![]);
+        let event = calendar::create_event(&db, creator, req).await.unwrap().id;
+
+        assert!(leads_for(&db, event).await.unwrap().is_empty());
+        assert_eq!(
+            send_due_reminders("http://unused.invalid", &db, &Client::new(), None, now)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+
+    #[sqlx::test]
+    async fn omitting_leads_on_create_gets_the_default_reminder(db: PgPool) {
+        let creator = seed_user(&db, "creator").await;
+        let event = seed_upcoming_event(&db, creator, &[]).await;
+
+        // Silence is not the same as an explicit empty list.
+        assert_eq!(
+            leads_for(&db, event).await.unwrap(),
+            vec![DEFAULT_LEAD_MINUTES]
+        );
+    }
+
+    #[sqlx::test]
+    async fn deleting_an_event_takes_its_reminders_with_it(db: PgPool) {
+        let creator = seed_user(&db, "creator").await;
+        let event = seed_upcoming_event(&db, creator, &[]).await;
+
+        calendar::delete_event(&db, event, creator).await.unwrap();
+
+        let left: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM event_reminders WHERE event_id = $1")
+                .bind(event)
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(left, 0, "ON DELETE CASCADE, not orphaned rows");
     }
 
     #[sqlx::test]
@@ -565,7 +806,7 @@ mod tests {
         let now = Utc::now();
 
         let mut req = minimal_request_at("Silent", now + Duration::minutes(30));
-        req.reminder_lead_minutes = Some(0);
+        req.reminder_leads = Some(vec![]);
         calendar::create_event(&db, creator, req).await.unwrap();
 
         let sent = send_due_reminders("http://unused.invalid", &db, &Client::new(), None, now)
@@ -605,7 +846,7 @@ mod tests {
                 visibility: None,
                 price: None,
                 link: None,
-                reminder_lead_minutes: None,
+                reminder_leads: None,
             },
         )
         .await
@@ -645,7 +886,7 @@ mod tests {
                 visibility: None,
                 price: None,
                 link: None,
-                reminder_lead_minutes: None,
+                reminder_leads: None,
             },
         )
         .await
@@ -680,7 +921,7 @@ mod tests {
                     participant_ids: None,
                     price: None,
                     link: None,
-                    reminder_lead_minutes: None,
+                    reminder_leads: None,
                 },
             )
             .await
@@ -710,11 +951,9 @@ mod tests {
             discord_channel_id: None,
             price: Some("15".to_string()),
             link: None,
-            reminder_sent_at: None,
-            reminder_lead_minutes: DEFAULT_LEAD_MINUTES,
         };
 
-        let message = format_reminder_message(&event);
+        let message = format_reminder_message(&event, DEFAULT_LEAD_MINUTES);
         // <t:...:R> renders in each reader's own timezone - which is why
         // this doesn't consult users.timezone.
         assert!(message.contains(&format!("<t:{}:R>", event.start_time.timestamp())));

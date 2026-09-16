@@ -95,7 +95,7 @@ class ApiClient {
     participant_ids?: string[];
     price?: string;
     link?: string;
-    reminder_lead_minutes?: number;
+    reminder_leads?: number[];
   }): Promise<CalendarEvent> {
     return this.fetch<CalendarEvent>('/api/events', {
       method: 'POST',
@@ -157,7 +157,7 @@ class ApiClient {
       visibility: Visibility;
       price: string;
       link: string;
-      reminder_lead_minutes: number;
+      reminder_leads: number[];
     }>
   ): Promise<CalendarEvent> {
     return this.fetch<CalendarEvent>(`/api/events/${id}`, {

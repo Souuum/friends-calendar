@@ -1001,13 +1001,29 @@ reminded about it".
      id is stored. If thread creation failed when the event was announced
      (`discord_announcement` tolerates that with a warning), this POST 404s
      — it's logged and skipped, not fatal.
-   - **Lead time is per event, chosen by the creator** (migration 011,
-     `calendar_events.reminder_lead_minutes`, default 60) - a picker in
-     `CreateEventModal` offering none / 1h / 3h / 1 day / 2 days / 1 week.
-     **0 means "no reminder", and needs no special case anywhere**: the
-     window is `start_time > now AND start_time <= now + lead`, which is
-     unsatisfiable at 0. The due-events query computes the bound per row
-     with `make_interval(mins => reminder_lead_minutes)`.
+   - **Several reminders per event**, chosen by the creator (migration 012,
+     `event_reminders` - one row per lead time, each with its own `sent_at`).
+     An event can nudge a week out *and* a day out *and* an hour out; the
+     due query joins the table so each row falls due and is stamped
+     independently. `CreateEventModal` offers them as toggle chips.
+     - **"No reminder" is now no rows.** Migration 011 needed a `0` sentinel
+       because a NOT NULL column always holds *something*; a child table
+       represents absence natively, so the sentinel and the
+       `lead_minutes > 0` filters it required are gone. `CHECK
+       (lead_minutes > 0)` now rejects what used to be meaningful.
+     - `set_reminders` replaces the set wholesale and uses `ON CONFLICT DO
+       NOTHING`, so a kept lead time **retains its `sent_at`** - editing an
+       event's title can't re-notify everyone. Duplicates and non-positive
+       values are dropped rather than rejected: they mean the same as
+       leaving them out, and failing a whole save over one is unhelpful.
+     - **Silence vs. an empty list differ on create**: no `reminder_leads`
+       field means "the usual single reminder", `[]` means none.
+     - 011's column was dropped in the same migration that backfills from
+       it, rather than left behind - two sources of truth for "when does
+       this remind people" is the drift this project keeps fixing. The
+       backfill was verified against seeded data on a scratch database (the
+       `#[sqlx::test]` harness only ever migrates empty tables, so nothing
+       in the suite exercises it).
    - Polled every 5 minutes, which has to stay well under the shortest
      offered lead - polling hourly for a one-hour lead would let "starts in
      an hour" land up to an hour out.

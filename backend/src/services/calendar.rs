@@ -31,8 +31,8 @@ pub async fn create_event(
     let event = sqlx::query_as::<_, CalendarEvent>(
         r#"
         INSERT INTO calendar_events 
-            (id, creator_id, title, description, start_time, end_time, location, visibility, price, link, created_at, updated_at, reminder_lead_minutes)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            (id, creator_id, title, description, start_time, end_time, location, visibility, price, link, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING *
         "#,
     )
@@ -48,12 +48,16 @@ pub async fn create_event(
     .bind(&req.link)
     .bind(Utc::now())
     .bind(Utc::now())
-    .bind(
-        req.reminder_lead_minutes
-            .unwrap_or(crate::services::reminders::DEFAULT_LEAD_MINUTES),
-    )
     .fetch_one(db)
     .await?;
+
+    // Silence means "the usual single reminder"; an explicit empty list
+    // means "none", and is honoured as such.
+    let leads = req
+        .reminder_leads
+        .clone()
+        .unwrap_or_else(|| vec![crate::services::reminders::DEFAULT_LEAD_MINUTES]);
+    crate::services::reminders::set_reminders(db, event_id, &leads).await?;
 
     // Add creator as accepted participant
     sqlx::query(
@@ -214,6 +218,7 @@ pub async fn get_event_with_participants(
     // Derived from the participant list rather than re-queried: if you have
     // a row there at all, you were invited, whatever you answered.
     let is_participant = participants.iter().any(|p| p.user_id == requesting_user_id);
+    let reminder_leads = crate::services::reminders::leads_for(db, event_id).await?;
 
     Ok(Some(EventWithParticipants {
         event: event.clone(),
@@ -221,6 +226,7 @@ pub async fn get_event_with_participants(
         is_creator: event.creator_id == requesting_user_id,
         my_status,
         is_participant,
+        reminder_leads,
     }))
 }
 
@@ -362,27 +368,18 @@ pub async fn update_event(
     if let Some(link) = req.link {
         event.link = Some(link);
     }
-    if let Some(lead) = req.reminder_lead_minutes {
-        event.reminder_lead_minutes = lead.max(0);
-    }
-
-    // Rescheduling invalidates a reminder that already went out - it was
-    // about the old time. Clearing the marker lets the reminder fire again
-    // for the new one; without this, moving an event a week later would
+    // Rescheduling invalidates reminders that already went out - they were
+    // about the old time. Without this, moving an event a week later would
     // silently leave everyone un-reminded.
     let rescheduled = req.start_time.is_some_and(|new| new != original_start);
-    if rescheduled {
-        event.reminder_sent_at = None;
-    }
 
     // Save updated event
     let updated = sqlx::query_as::<_, CalendarEvent>(
         r#"
         UPDATE calendar_events
         SET title = $1, description = $2, start_time = $3, end_time = $4,
-            location = $5, visibility = $6, price = $7, link = $8, updated_at = $9,
-            reminder_lead_minutes = $10, reminder_sent_at = $11
-        WHERE id = $12 AND creator_id = $13
+            location = $5, visibility = $6, price = $7, link = $8, updated_at = $9
+        WHERE id = $10 AND creator_id = $11
         RETURNING *
         "#,
     )
@@ -395,12 +392,20 @@ pub async fn update_event(
     .bind(&event.price)
     .bind(&event.link)
     .bind(Utc::now())
-    .bind(event.reminder_lead_minutes)
-    .bind(event.reminder_sent_at)
     .bind(event_id)
     .bind(creator_id)
     .fetch_one(db)
     .await?;
+
+    // Reminders are replaced wholesale when the request mentions them, and
+    // left alone when it doesn't - so editing a title can't silently wipe
+    // them.
+    if let Some(leads) = &req.reminder_leads {
+        crate::services::reminders::set_reminders(db, event_id, leads).await?;
+    }
+    if rescheduled {
+        crate::services::reminders::clear_sent(db, event_id).await?;
+    }
 
     Ok(Some(updated))
 }
@@ -801,7 +806,7 @@ mod tests {
             participant_ids,
             price: None,
             link: None,
-            reminder_lead_minutes: None,
+            reminder_leads: None,
         }
     }
 

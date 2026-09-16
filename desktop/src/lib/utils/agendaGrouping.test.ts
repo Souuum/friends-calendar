@@ -12,7 +12,7 @@ function evt(id: string, start: Date, title = id): EventWithParticipants {
     visibility: 'friends',
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
-    reminder_lead_minutes: 60,
+    reminder_leads: [60],
     is_participant: true,
     is_creator: false,
     my_status: 'accepted',

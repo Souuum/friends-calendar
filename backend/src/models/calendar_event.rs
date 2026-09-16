@@ -47,14 +47,6 @@ pub struct CalendarEvent {
     pub discord_channel_id: Option<String>,
     pub price: Option<String>,
     pub link: Option<String>,
-    /// Set by services::reminders once the reminder for this event has gone
-    /// out. `SELECT *` queries map it through FromRow, so this field has to
-    /// exist here or every event read breaks after migration 010.
-    pub reminder_sent_at: Option<DateTime<Utc>>,
-    /// Minutes before `start_time` that the reminder fires. 0 = no
-    /// reminder (see services::reminders::is_due for why that needs no
-    /// special case).
-    pub reminder_lead_minutes: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -82,6 +74,9 @@ pub struct EventWithParticipants {
     /// replied - the UI has to tell "you owe an answer" apart from "this is
     /// someone else's event you can see".
     pub is_participant: bool,
+    /// The event's reminder offsets, ascending. Empty means no reminders.
+    /// Exposed so the edit form can prefill without a second request.
+    pub reminder_leads: Vec<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,9 +100,11 @@ pub struct CreateEventRequest {
     pub participant_ids: Option<Vec<Uuid>>, // Invite users by ID
     pub price: Option<String>,
     pub link: Option<String>,
-    /// Omitted = the column default (services::reminders::DEFAULT_LEAD_MINUTES).
-    /// 0 = no reminder.
-    pub reminder_lead_minutes: Option<i32>,
+    /// Minutes-before-start at which to remind everyone going, one entry
+    /// per reminder. Omitted = a single default reminder; an empty vec =
+    /// none at all. Duplicates and non-positive values are discarded by
+    /// services::reminders::set_reminders.
+    pub reminder_leads: Option<Vec<i32>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,7 +117,9 @@ pub struct UpdateEventRequest {
     pub visibility: Option<Visibility>,
     pub price: Option<String>,
     pub link: Option<String>,
-    pub reminder_lead_minutes: Option<i32>,
+    /// Replaces the event's reminders wholesale when present; omitted
+    /// leaves them untouched.
+    pub reminder_leads: Option<Vec<i32>>,
 }
 
 #[derive(Debug, Deserialize)]

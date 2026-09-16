@@ -130,8 +130,6 @@ pub async fn preview_announcement(
         discord_channel_id: None,
         price: req.price,
         link: req.link,
-        reminder_sent_at: None,
-        reminder_lead_minutes: req.reminder_lead_minutes.unwrap_or(0),
     };
 
     Ok(Json(serde_json::json!({
@@ -422,7 +420,7 @@ mod tests {
                 participant_ids: Some(vec![invitee.id]),
                 price: None,
                 link: None,
-                reminder_lead_minutes: None,
+                reminder_leads: None,
             },
         )
         .await
@@ -554,8 +552,6 @@ mod tests {
                 discord_channel_id: None,
                 price: Some("15".to_string()),
                 link: None,
-                reminder_sent_at: None,
-                reminder_lead_minutes: 0,
             },
         );
         assert_eq!(preview, expected);

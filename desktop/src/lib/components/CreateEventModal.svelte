@@ -25,19 +25,24 @@
   // is omitted (services::calendar::create_event), so the two agree.
   let visibility: Visibility = $user?.default_visibility ?? 'friends';
 
-  // Minutes before the start time that everyone going gets reminded.
-  // 0 = no reminder; the backend needs no special case for it (see
-  // services::reminders::is_due). Must stay in step with
-  // services::reminders::LEAD_TIME_CHOICES.
+  // Minutes before the start time at which everyone going gets reminded.
+  // Several can be picked - an event can nudge a week out, a day out and an
+  // hour out - so "no reminder" is simply nothing selected rather than a
+  // sentinel value (migration 012 stores one row per reminder).
   const REMINDER_CHOICES: { value: number; label: string }[] = [
-    { value: 0, label: 'No reminder' },
-    { value: 60, label: '1 hour before' },
-    { value: 180, label: '3 hours before' },
-    { value: 1440, label: '1 day before' },
-    { value: 2880, label: '2 days before' },
-    { value: 10080, label: '1 week before' }
+    { value: 60, label: '1 hour' },
+    { value: 180, label: '3 hours' },
+    { value: 1440, label: '1 day' },
+    { value: 2880, label: '2 days' },
+    { value: 10080, label: '1 week' }
   ];
-  let reminderLeadMinutes = 60;
+  let reminderLeads: number[] = [60];
+
+  function toggleReminder(value: number) {
+    reminderLeads = reminderLeads.includes(value)
+      ? reminderLeads.filter((v) => v !== value)
+      : [...reminderLeads, value].sort((a, b) => a - b);
+  }
   let loading = false;
 
   // Two-step wizard, mobile only. `step` is pure UI state - the submitted
@@ -113,7 +118,7 @@
     endTime = dateUtils.toDatetimeLocalValue(event.end_time);
     location = event.location ?? '';
     visibility = event.visibility;
-    reminderLeadMinutes = event.reminder_lead_minutes;
+    reminderLeads = [...event.reminder_leads];
     price = event.price ?? '';
     link = event.link ?? '';
   }
@@ -167,7 +172,7 @@
           visibility,
           price: price || undefined,
           link: link || undefined,
-          reminder_lead_minutes: reminderLeadMinutes
+          reminder_leads: reminderLeads
         });
       } else {
         await api.createEvent({
@@ -179,7 +184,7 @@
           visibility,
           price: price || undefined,
           link: link || undefined,
-          reminder_lead_minutes: reminderLeadMinutes,
+          reminder_leads: reminderLeads,
           participant_ids: selectedFriendIds.size > 0 ? Array.from(selectedFriendIds) : undefined
         });
       }
@@ -333,30 +338,34 @@
           </select>
         </div>
 
-        <div>
-          <label for="reminder" class="block text-sm font-medium text-gray-700 mb-1">
+        <fieldset class="border-0 p-0 m-0">
+          <legend class="block text-sm font-medium text-gray-700 mb-1">
             Remind everyone going
-          </label>
-          <!-- Explicit on:change rather than bind:value. The two-way binding
-               resolves the selected option through Svelte's internal
-               `__value`, which is fragile to drive from a test and was
-               silently snapping the select back to the first option. Reading
-               the string off the DOM and converting once is both clearer and
-               testable. -->
-          <select
-            id="reminder"
-            value={String(reminderLeadMinutes)}
-            on:change={(e) => (reminderLeadMinutes = Number(e.currentTarget.value))}
-            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
-          >
+          </legend>
+          <!-- Checkboxes, not a dropdown: several reminders per event are
+               allowed, and "none" is nothing ticked rather than a special
+               option. -->
+          <div class="flex flex-wrap gap-2">
             {#each REMINDER_CHOICES as choice (choice.value)}
-              <option value={String(choice.value)}>{choice.label}</option>
+              {@const selected = reminderLeads.includes(choice.value)}
+              <button
+                type="button"
+                on:click={() => toggleReminder(choice.value)}
+                aria-pressed={selected}
+                class="rounded-full px-3 py-1.5 text-sm font-medium border transition {selected
+                  ? 'bg-primary text-white border-primary'
+                  : 'bg-gray-100 text-gray-700 border-transparent hover:bg-gray-200'}"
+              >
+                {choice.label} before
+              </button>
             {/each}
-          </select>
+          </div>
           <p class="text-xs text-gray-500 mt-1">
-            Sent in the app, and in this event's Discord thread.
+            {reminderLeads.length === 0
+              ? 'No reminders for this event.'
+              : "Sent in the app, and in this event's Discord thread."}
           </p>
-        </div>
+        </fieldset>
 
         </div>
         <!-- Step 2: who's coming, and what lands in Discord. -->
