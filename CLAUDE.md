@@ -766,6 +766,18 @@ speculatively.
   `<BottomTabBar>` (`md:hidden`, fixed to the viewport bottom) below `md:`;
   `<main>` gets bottom padding below `md:` so content doesn't sit under the
   fixed bar. Route content itself is unchanged by this skill — shell only.
+- `.claude/skills/mockup-responsive-notifications-and-rsvp/SKILL.md` —
+  **done 2026-09-16.** `/notifications` cards for `event_invite`
+  notifications that still carry an `event_id` get inline Going/Maybe/Can't
+  (`api.updateParticipation`), and answering marks the notification read in
+  the same tap — acting on it *is* acknowledgement. A failed RSVP shows an
+  error scoped to that one card (`rsvpErrors` keyed by notification id)
+  rather than blanking the list: the event may have been deleted, or you
+  removed from it, since the row was written. Notifications are grouped
+  Today/Earlier by `groupByRecency` in `lib/utils/notificationUtils.ts` —
+  extracted and unit-tested because "today" means the same *local calendar
+  day*, not "within 24 hours" (23:00 yesterday is yesterday to a reader).
+  Empty groups are omitted so no heading ever renders with nothing under it.
 - `.claude/skills/mockup-responsive-calendar/SKILL.md`,
   `mockup-responsive-friends/SKILL.md`,
   `mockup-responsive-add-friends/SKILL.md`,
