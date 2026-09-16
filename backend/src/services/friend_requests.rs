@@ -250,10 +250,8 @@ pub async fn count_guild_members_without_accounts(
 
 /// Posts a simple text prompt into the configured channel encouraging
 /// non-member guild members to sign up. Uses the same base_url-as-parameter
-/// pattern as services::friends (mockable, no live Discord call in tests) -
-/// deliberately doesn't reuse services::discord_announcement's
-/// DiscordAnnouncer, which wraps serenity's own Http client rather than a
-/// plain reqwest::Client and so isn't mockable the same way.
+/// pattern as every other Discord call here (mockable, no live Discord call
+/// in tests).
 pub async fn post_guild_invite_prompt(
     base_url: &str,
     http: &Client,

@@ -320,13 +320,18 @@ async fn get_json<T: serde::de::DeserializeOwned>(
     Ok(response.json().await?)
 }
 
-pub async fn send_channel_message(
+/// Posts a message and returns Discord's id for it.
+///
+/// The id matters for announcements: it's stored on the event, and it's also
+/// how the event's thread is later addressed (a thread started from a
+/// message shares that message's id).
+pub async fn post_message(
     base_url: &str,
     http: &Client,
     bot_token: &str,
     channel_id: &str,
     content: &str,
-) -> Result<()> {
+) -> Result<String> {
     let url = format!("{base_url}/channels/{channel_id}/messages");
 
     let response = http
@@ -342,7 +347,62 @@ pub async fn send_channel_message(
         return Err(anyhow!("Discord API error ({status}): {body}"));
     }
 
+    #[derive(serde::Deserialize)]
+    struct Posted {
+        id: String,
+    }
+    let posted: Posted = response.json().await?;
+    Ok(posted.id)
+}
+
+/// Fire-and-forget variant for callers that don't need the message id.
+pub async fn send_channel_message(
+    base_url: &str,
+    http: &Client,
+    bot_token: &str,
+    channel_id: &str,
+    content: &str,
+) -> Result<()> {
+    post_message(base_url, http, bot_token, channel_id, content).await?;
     Ok(())
+}
+
+/// Adds a reaction as the bot, so people can RSVP by clicking it (see
+/// bot.rs, which turns that click back into a participant row).
+pub async fn add_reaction(
+    base_url: &str,
+    http: &Client,
+    bot_token: &str,
+    channel_id: &str,
+    message_id: &str,
+    emoji: &str,
+) -> Result<()> {
+    // The emoji goes in the path, so it has to be percent-encoded - "✅"
+    // unescaped would be an invalid URL.
+    let encoded: String = url_encode(emoji);
+    let url =
+        format!("{base_url}/channels/{channel_id}/messages/{message_id}/reactions/{encoded}/@me");
+
+    let response = http
+        .put(&url)
+        .header("Authorization", format!("Bot {bot_token}"))
+        .header("Content-Length", "0")
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(anyhow!("Discord API error ({status}): {body}"));
+    }
+
+    Ok(())
+}
+
+/// Minimal percent-encoding for a path segment. Enough for emoji, which is
+/// all this is used for - not a general-purpose URL encoder.
+fn url_encode(s: &str) -> String {
+    s.bytes().map(|b| format!("%{b:02X}")).collect()
 }
 
 #[cfg(test)]

@@ -1240,11 +1240,31 @@ full commit message for the complete list):
   `desktop/src/lib/api.ts` `updateEvent()` params.
 - Migration renumbering + `IF NOT EXISTS` — see the migrations section above.
 
-**Still true / not done:**
-- No automated tests for `bot.rs` / `discord_announcement.rs` (they need a
-  live Discord gateway connection to exercise meaningfully; the friend-sync
-  tests show the pattern for mocking Discord's REST API with `wiremock` if
-  someone wants to test `discord_announcement.rs`'s HTTP calls that way).
+**Tested as of 2026-09-16** — these were the last untested services:
+- `bot.rs`: the gateway connection still isn't covered (that needs a live
+  Discord socket), but every *decision* it makes on a reaction now is. The
+  DB logic was lifted out of the serenity event handlers into free functions
+  (`record_attendance`, `withdraw_attendance`, `is_attendance_emoji`) taking
+  `&PgPool` and plain strings; the `EventHandler` impl is a thin adapter,
+  and serenity types stop at that boundary. Only one thing genuinely needs
+  Discord — resolving a reactor's *username*, since the reaction carries an
+  id — so only that stayed in the adapter.
+  Behaviour now pinned by tests, some of which was undocumented before:
+  re-reacting is idempotent; un-reacting sets `declined` rather than
+  deleting the row (so the creator still sees who pulled out); re-reacting
+  after that flips back to `accepted`; a reaction on an unrelated message is
+  a no-op that does **not** create a user; and neither does a stranger
+  un-reacting.
+- `discord_announcement.rs`: rewritten off serenity onto `reqwest`, matching
+  `discord_feed`/`digest`, so it takes `base_url` and is wiremock-testable —
+  it was the last Discord call in the codebase that wasn't. `announce_event`
+  now composes `discord_feed`'s `post_message`/`add_reaction`/
+  `fetch_or_create_thread`, and the reaction and thread steps are
+  best-effort: failing to react or to open a thread logs a warning but still
+  returns the message id, because the announcement itself did go out. A
+  failed *post* does propagate — there'd be nothing to store.
+- **`serenity` is now used only by `bot.rs`**, for the gateway. Everything
+  else talks to Discord over `reqwest`.
 - Requires the bot application's "Server Members Intent" enabled in the
   Discord developer portal (same requirement friend sync has, for the
   `GUILD_MEMBERS` gateway intent `bot.rs` requests).
@@ -1268,8 +1288,9 @@ its contents.
    `feat(terraform)` (local-only), `origin/dev/refacto`, `feat(Calendar)`,
    `feat(DiscordBot)` — all 0 ahead of `master` as of 2026-09-14, nothing
    left to merge from any of them.
-4. `bot.rs`/`discord_announcement.rs` have no automated tests (see Discord
-   bot section above for why and what a first pass could look like).
+4. ~~`bot.rs`/`discord_announcement.rs` have no automated tests~~ — **done
+   2026-09-16**, see the Discord bot section above. The only Discord surface
+   still uncovered is the gateway socket itself.
 5. CI/CD is now fixed and real (see the Terraform/GitHub Actions section
    above and `docs/deployment.md`), but the pipeline can't deploy anything
    until a person does the one-time manual setup `docs/deployment.md`

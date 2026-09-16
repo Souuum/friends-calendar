@@ -16,7 +16,7 @@ use crate::{
         CalendarEvent, CreateEventRequest, EventWithParticipants, InviteParticipantsRequest,
         ListEventsQuery, UpdateEventRequest, UpdateParticipationRequest,
     },
-    services::{calendar, discord_announcement::DiscordAnnouncer},
+    services::{calendar, discord_announcement},
 };
 
 // Create a new event
@@ -64,9 +64,15 @@ pub async fn create_event(
     };
 
     if let (Some(bot_token), Some(channel_id)) = (&state.discord_bot_token, resolved_channel_id) {
-        let announcer = DiscordAnnouncer::new(bot_token.clone(), channel_id);
-
-        match announcer.announce_event(&event).await {
+        match discord_announcement::announce_event(
+            &state.discord_api_base,
+            &state.http_client,
+            bot_token,
+            &channel_id.to_string(),
+            &event,
+        )
+        .await
+        {
             Ok(message_id) => {
                 // Update event with Discord message ID
                 if let Ok(updated) = sqlx::query_as::<_, CalendarEvent>(
