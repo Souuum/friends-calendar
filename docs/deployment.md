@@ -121,6 +121,20 @@ they are the same ones local development uses.
 Add a route to the existing `cloudflared`: `api.<your-domain>` →
 `http://<container-ip>:8080`.
 
+> ⚠️ **Use a single-level subdomain.** Cloudflare's free Universal SSL
+> certificate covers `<domain>` and `*.<domain>` - one level only. A
+> hostname like `discord.api.<domain>` needs `*.api.<domain>`, which
+> requires Advanced Certificate Manager (paid). Without it Cloudflare has
+> no certificate to present and aborts the handshake before any HTTP
+> happens:
+> ```
+> curl: (35) sslv3 alert handshake failure
+> ```
+> The DNS record resolves perfectly and the tunnel route is correct, so
+> this looks like a backend problem and isn't one - nothing reaches the
+> app at all. `api.<domain>` or `discord-api.<domain>` are both fine; a
+> hyphen keeps it one level.
+
 > If `cloudflared` runs on the **Proxmox host** rather than inside the
 > container, set `BIND_ADDR=0.0.0.0:8080` in `.env` first. The app defaults
 > to loopback, so a tunnel on another machine cannot reach it. Loopback is
