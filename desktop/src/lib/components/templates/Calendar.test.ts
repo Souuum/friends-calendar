@@ -3,13 +3,18 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import Calendar from './Calendar.svelte';
 import type { EventWithParticipants, FriendInfo } from '$lib/types';
 
-const { getFreeFriendsNow, getFriends } = vi.hoisted(() => ({
+const { getFreeFriendsNow, getFriends, getServers, previewAnnouncement } = vi.hoisted(() => ({
   getFreeFriendsNow: vi.fn(),
-  getFriends: vi.fn()
+  getFriends: vi.fn(),
+  // CreateEventModal loads these on mount. Stubbed here because opening the
+  // create form is now reachable from the calendar itself (double-click a
+  // day), not only from a test that renders the modal directly.
+  getServers: vi.fn(),
+  previewAnnouncement: vi.fn()
 }));
 
 vi.mock('$lib/api', () => ({
-  api: { getFreeFriendsNow, getFriends }
+  api: { getFreeFriendsNow, getFriends, getServers, previewAnnouncement }
 }));
 
 const alice: FriendInfo = {
@@ -48,6 +53,14 @@ describe('Calendar', () => {
   beforeEach(() => {
     getFreeFriendsNow.mockReset();
     getFriends.mockReset();
+    getServers.mockReset();
+    previewAnnouncement.mockReset();
+    // A default so opening the create form doesn't explode on an unstubbed
+    // call; tests that care about specific friends override it.
+    getFriends.mockResolvedValue([]);
+    getFreeFriendsNow.mockResolvedValue([]);
+    getServers.mockResolvedValue({ guilds: [], invite_url: '' });
+    previewAnnouncement.mockResolvedValue('');
   });
 
   it('shows free-tonight friends when available', async () => {
@@ -171,5 +184,98 @@ describe('Calendar', () => {
     await fireEvent.click(screen.getByText('Raclette'));
 
     await waitFor(() => expect(screen.getByText('1 invited')).toBeInTheDocument());
+  });
+  describe('tapping a day', () => {
+    /** The cell for today, which `makeEvent` puts its events on. */
+    function todayCell() {
+      const label = String(new Date().getDate());
+      return screen
+        .getAllByRole('button')
+        .find(
+          (el) => el.getAttribute('aria-pressed') !== null && el.textContent?.startsWith(label)
+        );
+    }
+
+    it("lists that day's events under the grid", async () => {
+      render(Calendar, { props: { events: [makeEvent({ title: 'Board Game Night' })] } });
+
+      await fireEvent.click(todayCell()!);
+
+      const list = await screen.findByRole('region', { hidden: true }).catch(() => null);
+      void list;
+      expect(screen.getByText(/1 event$/)).toBeInTheDocument();
+      // The title appears in the grid chip too, so assert the count line -
+      // that only exists in the day list.
+    });
+
+    it('clears the selection when the same day is tapped again', async () => {
+      render(Calendar, { props: { events: [makeEvent()] } });
+
+      await fireEvent.click(todayCell()!);
+      expect(screen.getByText(/1 event$/)).toBeInTheDocument();
+
+      await fireEvent.click(todayCell()!);
+      expect(screen.queryByText(/1 event$/)).not.toBeInTheDocument();
+    });
+
+    it('says so when the day has nothing on it', async () => {
+      render(Calendar, { props: { events: [] } });
+
+      await fireEvent.click(todayCell()!);
+
+      expect(screen.getByText(/Nothing on this day/)).toBeInTheDocument();
+    });
+
+    // The chip is inside the cell, so without stopPropagation one tap would
+    // both open the event and change which day filters the list.
+    it('opening an event does not also select its day', async () => {
+      render(Calendar, { props: { events: [makeEvent({ title: 'Board Game Night' })] } });
+
+      const chip = screen.getByText('Board Game Night');
+      await fireEvent.click(chip);
+
+      // The peek panel opened...
+      expect(screen.getByTestId('event-peek')).toBeInTheDocument();
+      // ...and no day list appeared.
+      expect(screen.queryByText(/1 event$/)).not.toBeInTheDocument();
+    });
+
+    // The cells have claimed role="button" since they were written.
+    it('responds to Enter on a focused day', async () => {
+      render(Calendar, { props: { events: [makeEvent()] } });
+
+      await fireEvent.keyDown(todayCell()!, { key: 'Enter' });
+
+      expect(screen.getByText(/1 event$/)).toBeInTheDocument();
+    });
+  });
+
+  describe('starting an event on a day', () => {
+    it('double-click opens the create form prefilled with that date', async () => {
+      render(Calendar, { props: { events: [] } });
+
+      const label = String(new Date().getDate());
+      const cell = screen
+        .getAllByRole('button')
+        .find(
+          (el) => el.getAttribute('aria-pressed') !== null && el.textContent?.startsWith(label)
+        );
+      await fireEvent.dblClick(cell!);
+
+      // Assert the value in the field, not that a prop was passed.
+      // The value in the field, not that a prop was passed.
+      const start = (await screen.findByLabelText(/Start Time/i)) as HTMLInputElement;
+      const now = new Date();
+      const localDay = [
+        now.getFullYear(),
+        String(now.getMonth() + 1).padStart(2, '0'),
+        String(now.getDate()).padStart(2, '0')
+      ].join('-');
+      expect(start.value).toBe(`${localDay}T19:00`);
+
+      // And an end time, so the form is submittable without inventing one.
+      const end = screen.getByLabelText(/End Time/i) as HTMLInputElement;
+      expect(end.value).toBe(`${localDay}T21:00`);
+    });
   });
 });

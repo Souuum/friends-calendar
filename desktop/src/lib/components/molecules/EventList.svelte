@@ -11,7 +11,16 @@
 
 <div class="flex w-full flex-col gap-0.5">
   {#each events.slice(0, maxVisible) as event}
-    <div on:click={() => onEventClick?.(event)} on:keydown role="button" tabindex="0">
+    <!-- stopPropagation: the chip sits *inside* the day cell, and the cell
+         selects the day on click. Without this, opening an event would also
+         change which day is filtering the list - two actions from one tap.
+         There's a test for exactly that. -->
+    <div
+      on:click|stopPropagation={() => onEventClick?.(event)}
+      on:keydown|stopPropagation
+      role="button"
+      tabindex="0"
+    >
       <CalendarEvent {event} {variant} />
     </div>
   {/each}

@@ -5,11 +5,26 @@
   import EventList from '$lib/components/molecules/EventList.svelte';
   import { createEventDispatcher } from 'svelte';
   import { calculateTooltipPosition } from '$lib/utils/tooltipUtils';
+  import { longPress } from '$lib/actions/longPress';
 
   export let monthGrid: Date[];
   export let currentMonth: Date;
   export let eventsForDay: (day: Date) => EventWithParticipants[];
   export let onEventClick: ((event: EventWithParticipants) => void) | undefined = undefined;
+  /** The day currently filtering the list below the grid, if any. */
+  export let selectedDay: Date | null = null;
+  export let onDayClick: ((day: Date) => void) | undefined = undefined;
+  /** Long press (touch) or double-click (mouse): start an event on that day. */
+  export let onDayLongPress: ((day: Date) => void) | undefined = undefined;
+
+  function isSameDay(a: Date | null, b: Date): boolean {
+    return (
+      a !== null &&
+      a.getFullYear() === b.getFullYear() &&
+      a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate()
+    );
+  }
 
   const dispatch = createEventDispatcher();
 
@@ -111,11 +126,25 @@
     {#each monthGrid as day}
       {@const dayEvents = eventsForDay(day)}
       {@const outside = !isCurrentMonth(day)}
+      <!-- These cells carried `role="button"`, `tabindex="0"` and a pointer
+           cursor with **no handler at all** - 35 promises per screen that
+           the component didn't keep, and worse than a plain div because a
+           screen reader announced them as buttons. Now they select. -->
       <div
         role="button"
         tabindex="0"
-        class="flex min-h-[126px] cursor-pointer flex-col bg-surface px-[9px] pb-2.5 pt-[9px] text-left transition-colors
+        aria-pressed={isSameDay(selectedDay, day)}
+        class="flex min-h-[126px] cursor-pointer flex-col px-[9px] pb-2.5 pt-[9px] text-left transition-colors
+          {isSameDay(selectedDay, day) ? 'bg-tint' : 'bg-surface'}
           {outside ? 'opacity-45' : isPast(day) ? 'opacity-[0.72]' : ''}"
+        on:click={() => onDayClick?.(day)}
+        on:keydown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onDayClick?.(day);
+          }
+        }}
+        use:longPress={() => onDayLongPress?.(day)}
         on:mouseenter={(e) => handleMouseEnter(day, e)}
         on:mouseleave={handleMouseLeave}
       >

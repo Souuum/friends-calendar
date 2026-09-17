@@ -10,6 +10,15 @@
   // prop rather than a separate `isEditing` boolean, so the two can't
   // contradict each other.
   export let event: EventWithParticipants | null = null;
+  /**
+   * A date to open a *new* event on, when creation started from a specific
+   * day (long-press / double-click on the month grid).
+   *
+   * A third nullable input rather than a `mode` flag, matching how `event`
+   * already works: null means "no opinion", and it is ignored entirely when
+   * editing, where the event's own times win.
+   */
+  export let initialDate: Date | null = null;
 
   const dispatch = createEventDispatcher();
 
@@ -128,6 +137,20 @@
   // Prefill from the event being edited. Keyed on `event?.id` rather than
   // `event` so this doesn't re-run (and clobber half-typed edits) if the
   // parent hands down a new object for the same event after a refresh.
+  /**
+   * Same shape as the edit prefill below, and for the same reason: keyed on
+   * the value so re-rendering the parent can't clobber what's been typed.
+   * Only ever applies when creating - an edit carries its own times.
+   */
+  let prefilledDate: number | null = null;
+  $: if (!event && initialDate && initialDate.getTime() !== prefilledDate) {
+    prefilledDate = initialDate.getTime();
+    startTime = dateUtils.toDatetimeLocalValue(initialDate.toISOString());
+    endTime = dateUtils.toDatetimeLocalValue(
+      new Date(initialDate.getTime() + 2 * 60 * 60 * 1000).toISOString()
+    );
+  }
+
   let prefilledId: string | null = null;
   $: if (event && event.id !== prefilledId) {
     prefilledId = event.id;

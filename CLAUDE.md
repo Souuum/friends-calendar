@@ -1016,11 +1016,31 @@ Run in this order; only the last pair has a real dependency.
    - The label is a `<span id>` + `aria-labelledby`, not `<label for>`: which
      control it names depends on the branch, and a `for` pointing at an input
      that doesn't exist names nothing.
-2. `.claude/skills/calendar-day-interactions/SKILL.md` - ⚠️ **month day
-   cells carry `role="button"`, `tabindex="0"` and `cursor-pointer` with no
-   click handler.** 35 fake buttons per screen. The mockup wants tap-to-
-   filter and long-press-to-create-on-that-date. (Swipe between months is
-   deliberately out of scope - see the skill.)
+2. `.claude/skills/calendar-day-interactions/SKILL.md` - **done 2026-09-17.**
+   Month day cells carried `role="button"`, `tabindex="0"` and
+   `cursor-pointer` with **no click handler** - 35 fake buttons per screen,
+   and worse than a plain div because a screen reader announced them as
+   buttons. They now select a day (listing its events under the grid, with
+   Enter/Space doing the same) and long-press / double-click starts an event
+   on that date. Swipe-between-months stayed out of scope: there are no
+   gestures in this app, and building a gesture abstraction as a side effect
+   of adding a click handler is how one component ends up owning a swipe
+   library.
+   - `lib/actions/longPress.ts` - ⚠️ **cancel on movement, not just on
+     pointerup.** A finger that presses then drags is *scrolling*, and
+     without a threshold every scroll starting on a day cell opened the
+     create form. Mutation-tested: removing the check fails the browser
+     test. Mouse `pointerdown` is ignored on purpose (a click-and-think
+     would fire it); double-click is the desktop equivalent.
+   - ⚠️ **The event chip needed `stopPropagation`.** It sits *inside* the
+     cell, so one tap both opened the event and changed which day filtered
+     the list. There's a test for exactly that.
+   - `CreateEventModal` takes a third nullable input, `initialDate`, rather
+     than a `mode` flag - matching how `event` already works. It is cleared
+     on close, or the next "+ New event" opens on whatever day was last
+     long-pressed.
+   - Long-press cancellation is a **browser** test: happy-dom has no
+     pointer-movement model, so the threshold is unassertable there.
 3. `.claude/skills/event-nudge-no-answers/SKILL.md` - the last placeholder
    control in the app. Its genuinely new problem is that it's the first
    **user-triggered** outbound send, so it needs a DB-level rate limit, not

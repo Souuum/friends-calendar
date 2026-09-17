@@ -11,6 +11,7 @@
   import EventPeekPanel from '$lib/components/organisms/EventPeekPanel.svelte';
   import CreateEventModal from '$lib/components/CreateEventModal.svelte';
   import { dateUtils } from '$lib/utils/dateUtils';
+  import { statusOf } from '$lib/utils/eventStatus';
   import { createEventDispatcher } from 'svelte';
 
   export let events: EventWithParticipants[] = [];
@@ -40,20 +41,32 @@
   // that one, so the two can't disagree.
   let showCreateModal = false;
   let editingEvent: EventWithParticipants | null = null;
+  /**
+   * A date to open the create form on, when it was started from a specific
+   * day. Null for the header's "+ New event", which means "no opinion".
+   * One nullable value rather than a second boolean beside `editingEvent` -
+   * the same reason that one is nullable.
+   */
+  let initialDate: Date | null = null;
 
   function openCreateModal() {
     editingEvent = null;
+    initialDate = null;
     showCreateModal = true;
   }
 
   function openEditModal(event: EventWithParticipants) {
     editingEvent = event;
+    initialDate = null;
     showCreateModal = true;
   }
 
   function closeModal() {
     showCreateModal = false;
     editingEvent = null;
+    // Cleared here too: otherwise the next "+ New event" opens on whatever
+    // day was long-pressed before it.
+    initialDate = null;
   }
 
   function handleSaved() {
@@ -199,6 +212,41 @@
       return dateUtils.isSameDay(eventDate, day);
     });
 
+  /**
+   * The day whose events are listed under the grid, per the mobile mockup's
+   * "Tap a day to filter the list under it".
+   *
+   * Lives here with `selectedEvent`, `activeFilter` and `currentDate` rather
+   * than inside MonthView: it drives a list that is a sibling of the grid,
+   * not a detail of it.
+   */
+  let selectedDay: Date | null = null;
+
+  function toggleDay(day: Date) {
+    // Tapping the selected day again clears it. Without this the only way
+    // out of the filter is to find an empty day, and a busy month hasn't
+    // got one.
+    selectedDay = selectedDay && dateUtils.isSameDay(selectedDay, day) ? null : day;
+  }
+
+  // ⚠️ `selectedDay` and `eventsForDay` are both named directly in this
+  // line. Svelte's reactive dependency tracking is static - it reads the
+  // identifiers in the `$:` statement itself, not what a called function
+  // transitively touches - and this codebase has been bitten by that three
+  // times already (matchesFilter, eventsForDay, Frame's avatarUrl).
+  $: selectedDayEvents = selectedDay ? eventsForDay(selectedDay) : [];
+
+  /** Long press / double-click on a day: start an event on that date. */
+  function startEventOn(day: Date) {
+    // Keep the time of day sensible rather than midnight: a long press says
+    // "something is happening this day", not "at 00:00".
+    const start = new Date(day);
+    start.setHours(19, 0, 0, 0);
+    initialDate = start;
+    editingEvent = null;
+    showCreateModal = true;
+  }
+
   $: monthGrid = dateUtils.getMonthGrid(currentDate);
   $: weekDays = dateUtils.getWeekDays(currentDate);
   $: headerDate = (() => {
@@ -285,6 +333,9 @@
           {monthGrid}
           currentMonth={currentDate}
           {eventsForDay}
+          {selectedDay}
+          onDayClick={toggleDay}
+          onDayLongPress={startEventOn}
           onEventClick={selectEvent}
           on:showTooltip={handleShowTooltip}
           on:hideTooltip={handleHideTooltip}
@@ -298,6 +349,61 @@
           on:mouseleave={handleTooltipMouseLeave}
           on:refresh={handleRefresh}
         />
+
+        <!-- The mockup's "Tap a day to filter the list under it". Shown at
+             every width: on a phone it is the only way to read a day whose
+             cell is 52px wide, and on desktop it answers "what's on that
+             day" without having to open each chip. -->
+        {#if selectedDay}
+          <section class="mt-4 anim-fade-up" aria-live="polite">
+            <div class="mb-2 flex items-baseline gap-2">
+              <h2 class="m-0 text-[15px] font-semibold">
+                {selectedDay.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric' })}
+              </h2>
+              <span class="font-mono text-[11px] text-muted">
+                {selectedDayEvents.length}
+                {selectedDayEvents.length === 1 ? 'event' : 'events'}
+              </span>
+              <button
+                type="button"
+                on:click={() => (selectedDay = null)}
+                class="ml-auto text-[12px] font-semibold text-primary hover:underline"
+              >
+                Clear
+              </button>
+            </div>
+
+            {#if selectedDayEvents.length > 0}
+              <div class="flex flex-col gap-1.5">
+                {#each selectedDayEvents as event (event.id)}
+                  <button
+                    type="button"
+                    on:click={() => selectEvent(event)}
+                    class="flex w-full items-center gap-2.5 rounded-[11px] border border-line bg-surface px-3 py-2.5 text-left hover:bg-subtle"
+                  >
+                    <span
+                      class="h-[26px] w-[3px] shrink-0 rounded-full"
+                      style="background:{statusOf(event.my_status).bar}"
+                    ></span>
+                    <span class="min-w-0 flex-1">
+                      <span class="block truncate text-[14px] font-semibold">{event.title}</span>
+                      <span class="block font-mono text-[11px] text-muted">
+                        {new Date(event.start_time).toLocaleTimeString(undefined, {
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}{event.location ? ` · ${event.location}` : ''}
+                      </span>
+                    </span>
+                  </button>
+                {/each}
+              </div>
+            {:else}
+              <p class="m-0 text-[13px] text-muted">
+                Nothing on this day. Press and hold it — or double-click — to add something.
+              </p>
+            {/if}
+          </section>
+        {/if}
       {:else if view === 'week'}
         <WeekView {weekDays} {eventsForDay} onEventClick={selectEvent} />
       {:else if view === 'list'}
@@ -318,5 +424,10 @@
 </div>
 
 {#if showCreateModal}
-  <CreateEventModal event={editingEvent} on:close={closeModal} on:saved={handleSaved} />
+  <CreateEventModal
+    event={editingEvent}
+    {initialDate}
+    on:close={closeModal}
+    on:saved={handleSaved}
+  />
 {/if}
