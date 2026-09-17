@@ -16,11 +16,15 @@
 //!
 //! ## Where it lands
 //!
-//! In-app, and into the event's existing Discord thread. **Not** a Discord
-//! DM per person: that is the only option that unambiguously *reaches*
-//! someone who doesn't open the app, and it is also the most annoying thing
-//! this app could learn to do. It is a separate decision, deliberately not
-//! taken here.
+//! Three places: in-app, into the event's existing Discord thread, and - for
+//! people who allow it - a Discord **DM**.
+//!
+//! ⚠️ The DM is the only delivery that reaches somebody who doesn't open the
+//! app, and also the most intrusive thing this app can do. It is gated on
+//! the **recipient's** `notify_discord_dm` (migration 016), not the
+//! sender's: "a bot messaged me privately" is a change in kind, and the
+//! person receiving it is the one who should decide. A failed DM is logged
+//! and skipped - somebody may have DMs closed, which is not an error.
 
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
@@ -57,6 +61,9 @@ pub struct NudgeReport {
     pub nudged: usize,
     /// True when the Discord half failed. The in-app half still went out.
     pub discord_failed: bool,
+    /// How many of them also got a DM. Lower than `nudged` whenever someone
+    /// has DMs switched off or closed to the bot.
+    pub dms_sent: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -87,6 +94,28 @@ struct EventRow {
 async fn pending_participants(db: &PgPool, event_id: Uuid) -> Result<Vec<Uuid>> {
     let ids = sqlx::query_scalar::<_, Uuid>(
         "SELECT user_id FROM event_participants WHERE event_id = $1 AND status = 'pending'",
+    )
+    .bind(event_id)
+    .fetch_all(db)
+    .await?;
+
+    Ok(ids)
+}
+
+/// Discord ids of the people who both haven't answered **and** allow DMs.
+///
+/// The preference is read here rather than checked per-send so a person who
+/// switched DMs off never has a channel opened for them at all.
+async fn dm_recipients(db: &PgPool, event_id: Uuid) -> Result<Vec<String>> {
+    let ids = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT u.discord_id
+        FROM event_participants ep
+        JOIN users u ON u.id = ep.user_id
+        WHERE ep.event_id = $1
+          AND ep.status = 'pending'
+          AND u.notify_discord_dm = true
+        "#,
     )
     .bind(event_id)
     .fetch_all(db)
@@ -190,9 +219,36 @@ pub async fn nudge(
         }
     }
 
+    // DMs last, and per person: one closed inbox must not stop the rest.
+    let mut dms_sent = 0;
+    if let Some(bot_token) = bot_token {
+        let message = format!(
+            "👋 {} — {}",
+            format_nudge_message(&event.title, event.start_time, pending.len()),
+            "réponds quand tu peux !"
+        );
+        for discord_id in dm_recipients(db, event_id).await? {
+            match discord_feed::open_dm_channel(base_url, http, bot_token, &discord_id).await {
+                Ok(channel) => {
+                    match discord_feed::send_channel_message(
+                        base_url, http, bot_token, &channel, &message,
+                    )
+                    .await
+                    {
+                        Ok(()) => dms_sent += 1,
+                        // Closed DMs are a setting, not a failure.
+                        Err(e) => tracing::warn!("Could not DM {discord_id}: {e:?}"),
+                    }
+                }
+                Err(e) => tracing::warn!("Could not open a DM with {discord_id}: {e:?}"),
+            }
+        }
+    }
+
     Ok(Ok(NudgeReport {
         nudged,
         discord_failed,
+        dms_sent,
     }))
 }
 
@@ -507,6 +563,159 @@ mod tests {
         .unwrap();
 
         assert!(!outcome.discord_failed);
+        drop(server);
+    }
+    // --- DMs --------------------------------------------------------------
+
+    async fn dm_mocks(server: &MockServer, recipient: &str) {
+        Mock::given(method("POST"))
+            .and(path("/users/@me/channels"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": format!("dm-{recipient}")
+            })))
+            .mount(server)
+            .await;
+    }
+
+    #[sqlx::test]
+    async fn a_dm_goes_to_people_who_allow_them(db: PgPool) {
+        let creator = a_user(&db, "creator").await;
+        let event = an_event(&db, creator).await;
+        let willing = a_user(&db, "willing").await;
+        invite(&db, event, willing, "pending").await;
+
+        let server = MockServer::start().await;
+        dm_mocks(&server, "willing").await;
+        Mock::given(method("POST"))
+            .and(path("/channels/dm-willing/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id":"m"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let report = nudge(
+            &db,
+            &server.uri(),
+            &Client::new(),
+            Some("token"),
+            event,
+            creator,
+            Utc::now(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(report.dms_sent, 1);
+        drop(server);
+    }
+
+    // ⚠️ The recipient's switch, not the sender's. Nobody gets a private
+    // message from a bot because somebody else pressed a button.
+    #[sqlx::test]
+    async fn nobody_is_dmed_who_switched_dms_off(db: PgPool) {
+        let creator = a_user(&db, "creator").await;
+        let event = an_event(&db, creator).await;
+        let unwilling = a_user(&db, "unwilling").await;
+        invite(&db, event, unwilling, "pending").await;
+        sqlx::query("UPDATE users SET notify_discord_dm = false WHERE id = $1")
+            .bind(unwilling)
+            .execute(&db)
+            .await
+            .unwrap();
+
+        let server = MockServer::start().await;
+        // No channel is even opened for them.
+        Mock::given(method("POST"))
+            .and(path("/users/@me/channels"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let report = nudge(
+            &db,
+            &server.uri(),
+            &Client::new(),
+            Some("token"),
+            event,
+            creator,
+            Utc::now(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        // Still notified in-app - only the private channel is refused.
+        assert_eq!(report.nudged, 1);
+        assert_eq!(report.dms_sent, 0);
+        assert_eq!(notification_count(&db, unwilling).await, 1);
+        drop(server);
+    }
+
+    // Somebody with DMs closed to the bot is a setting, not a failure, and
+    // must not stop the others.
+    #[sqlx::test]
+    async fn a_closed_inbox_does_not_stop_the_rest(db: PgPool) {
+        let creator = a_user(&db, "creator").await;
+        let event = an_event(&db, creator).await;
+        let closed = a_user(&db, "closed").await;
+        invite(&db, event, closed, "pending").await;
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/users/@me/channels"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+
+        let report = nudge(
+            &db,
+            &server.uri(),
+            &Client::new(),
+            Some("token"),
+            event,
+            creator,
+            Utc::now(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(report.nudged, 1);
+        assert_eq!(report.dms_sent, 0);
+    }
+
+    // Answered people are not chased, by DM or otherwise.
+    #[sqlx::test]
+    async fn nobody_who_answered_gets_a_dm(db: PgPool) {
+        let creator = a_user(&db, "creator").await;
+        let event = an_event(&db, creator).await;
+        invite(&db, event, a_user(&db, "going").await, "accepted").await;
+        invite(&db, event, a_user(&db, "maybe").await, "maybe").await;
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/users/@me/channels"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let report = nudge(
+            &db,
+            &server.uri(),
+            &Client::new(),
+            Some("token"),
+            event,
+            creator,
+            Utc::now(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(report.dms_sent, 0);
         drop(server);
     }
 }

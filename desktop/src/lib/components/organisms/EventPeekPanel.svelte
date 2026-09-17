@@ -44,6 +44,11 @@
       const report = await api.nudgeNoAnswers(event.id);
       nudgeMessage =
         report.nudged === 1 ? 'Reminded 1 person.' : `Reminded ${report.nudged} people.`;
+      if (report.dms_sent > 0) {
+        // Worth saying separately: a DM reaches someone who never opens the
+        // app, which is the difference between a nudge and a shrug.
+        nudgeMessage += ` ${report.dms_sent} by Discord DM.`;
+      }
       if (report.discord_failed) {
         // Said plainly rather than swallowed: the in-app reminders did go
         // out, so this is a partial success, not a failure.

@@ -43,6 +43,7 @@
   let notifyAnnouncements = false;
   let notifyWeeklyDigest = true;
   let notifyEventReminders = true;
+  let notifyDiscordDm = true;
 
   let saving = false;
   let saveError = '';
@@ -65,6 +66,7 @@
       notifyAnnouncements = profile.notify_announcements;
       notifyWeeklyDigest = profile.notify_weekly_digest;
       notifyEventReminders = profile.notify_event_reminders;
+      notifyDiscordDm = profile.notify_discord_dm;
     } catch (err) {
       loadError = err instanceof Error ? err.message : 'Failed to load profile';
     } finally {
@@ -85,7 +87,8 @@
         notify_rsvp_changes: notifyRsvpChanges,
         notify_announcements: notifyAnnouncements,
         notify_weekly_digest: notifyWeeklyDigest,
-        notify_event_reminders: notifyEventReminders
+        notify_event_reminders: notifyEventReminders,
+        notify_discord_dm: notifyDiscordDm
       });
       profile = updated;
       userStore.set(updated);
@@ -305,6 +308,24 @@
             >
           </span>
           <input type="checkbox" bind:checked={notifyEventReminders} class="peer sr-only" />
+          <span
+            class="relative h-[22px] w-[38px] shrink-0 rounded-full bg-line transition-colors peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:absolute after:left-0.5 after:top-0.5 after:h-[18px] after:w-[18px] after:rounded-full after:bg-white after:transition-transform after:content-[''] peer-checked:after:translate-x-4"
+          ></span>
+        </label>
+
+        <!-- ⚠️ The recipient's switch for a *private* message from the bot.
+             Nudges are the only thing that uses it today. It sits with the
+             other notification toggles rather than somewhere separate,
+             because from the reader's side it is the same question: how do
+             you want to be told. -->
+        <label class="flex items-center gap-4 border-t border-subtle py-3.5">
+          <span class="min-w-0 flex-1">
+            <span class="block text-[14px]">Discord DMs</span>
+            <span class="block text-[12px] text-muted">
+              Let the bot message you privately when someone chases your answer
+            </span>
+          </span>
+          <input type="checkbox" bind:checked={notifyDiscordDm} class="peer sr-only" />
           <span
             class="relative h-[22px] w-[38px] shrink-0 rounded-full bg-line transition-colors peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:absolute after:left-0.5 after:top-0.5 after:h-[18px] after:w-[18px] after:rounded-full after:bg-white after:transition-transform after:content-[''] peer-checked:after:translate-x-4"
           ></span>

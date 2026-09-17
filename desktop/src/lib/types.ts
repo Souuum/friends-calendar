@@ -13,6 +13,8 @@ export interface User {
   notify_announcements: boolean;
   notify_weekly_digest: boolean;
   notify_event_reminders: boolean;
+  /** Whether the bot may DM you (nudges only, today). */
+  notify_discord_dm: boolean;
 }
 
 export interface UpdateProfileRequest {
@@ -24,6 +26,7 @@ export interface UpdateProfileRequest {
   notify_announcements?: boolean;
   notify_weekly_digest?: boolean;
   notify_event_reminders?: boolean;
+  notify_discord_dm?: boolean;
 }
 
 export interface BotChannelConfig {
@@ -130,6 +133,8 @@ export interface BestSlot {
 /** What a nudge reached. */
 export interface NudgeReport {
   nudged: number;
+  /** How many also got a Discord DM. */
+  dms_sent: number;
   /** The event's Discord thread couldn't be posted to; the in-app half went. */
   discord_failed: boolean;
 }

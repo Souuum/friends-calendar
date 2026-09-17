@@ -50,6 +50,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     notify_announcements: false,
     notify_weekly_digest: true,
     notify_event_reminders: true,
+    notify_discord_dm: true,
     ...overrides
   };
 }

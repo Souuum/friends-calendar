@@ -23,6 +23,8 @@ pub struct User {
     pub notify_announcements: bool,
     pub notify_weekly_digest: bool,
     pub notify_event_reminders: bool,
+    /// Whether the bot may DM this person (nudges only, today).
+    pub notify_discord_dm: bool,
 }
 
 impl User {
@@ -57,6 +59,7 @@ pub struct UpdateProfileRequest {
     pub notify_announcements: Option<bool>,
     pub notify_weekly_digest: Option<bool>,
     pub notify_event_reminders: Option<bool>,
+    pub notify_discord_dm: Option<bool>,
 }
 
 /// Deleting an account is real and immediate - this app has no "soft

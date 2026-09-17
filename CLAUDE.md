@@ -1056,10 +1056,14 @@ Run in this order; only the last pair has a real dependency.
    - ⚠️ **`pending` only.** `maybe` *is* an answer; nudging it turns a
      considerate feature into pestering. Mutation-tested, along with the
      creator check.
-   - **Delivered in-app + into the event's own Discord thread**, *not* by
-     DM. A DM is the only thing that reliably reaches someone who doesn't
-     open the app, and also the most annoying thing this app could learn to
-     do - left as a separate decision, deliberately not taken.
+   - **Delivered in-app, into the event's own Discord thread, and - since
+     2026-09-17 - by Discord DM.** ⚠️ The DM is gated on the **recipient's**
+     `notify_discord_dm` (migration 016, default true, toggle on
+     `/settings`), never the sender's: "a bot messaged me privately" is a
+     change in kind, and the person receiving it is the one who decides.
+     Someone with DMs off never has a channel opened for them at all, and a
+     closed inbox is logged and skipped - that is a setting, not a failure.
+     Mutation-tested: dropping the preference clause fails a test.
    - Notifications go through `services::notifications::create` with kind
      `event_invite`, so the preference gate applies for free. Reusing that
      column is right *here* - a nudge is a second ask about an invitation -

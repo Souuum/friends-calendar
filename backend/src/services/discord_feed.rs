@@ -436,6 +436,40 @@ pub async fn list_text_channels(
     Ok(postable.into_iter().map(|(_, _, info)| info).collect())
 }
 
+/// Opens (or reuses) the bot's DM channel with a user and returns its id.
+///
+/// Discord dedupes this server-side: calling it repeatedly for the same
+/// recipient returns the same channel, so there is nothing to cache.
+pub async fn open_dm_channel(
+    base_url: &str,
+    http: &Client,
+    bot_token: &str,
+    recipient_discord_id: &str,
+) -> Result<String> {
+    let url = format!("{base_url}/users/@me/channels");
+
+    let response = http
+        .post(&url)
+        .header("Authorization", format!("Bot {bot_token}"))
+        .json(&serde_json::json!({ "recipient_id": recipient_discord_id }))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(anyhow!("Could not open a DM ({status}): {body}"));
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Channel {
+        id: String,
+    }
+
+    let channel: Channel = response.json().await?;
+    Ok(channel.id)
+}
+
 /// Posts a message and returns Discord's id for it.
 ///
 /// The id matters for announcements: it's stored on the event, and it's also
