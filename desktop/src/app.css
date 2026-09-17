@@ -150,9 +150,9 @@ body {
      value will fail the contrast audit rather than ship broken.
      --------------------------------------------------------------------- */
   --color-red-100: oklch(28% 0.09 25);
-  --color-red-200: oklch(33% 0.10 25);
+  --color-red-200: oklch(33% 0.1 25);
   --color-red-700: oklch(80% 0.13 25);
-  --color-red-800: oklch(86% 0.10 25);
+  --color-red-800: oklch(86% 0.1 25);
 
   --color-yellow-100: oklch(30% 0.07 75);
   --color-yellow-800: oklch(88% 0.12 85);
