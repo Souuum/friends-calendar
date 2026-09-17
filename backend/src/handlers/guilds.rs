@@ -24,10 +24,13 @@ use crate::{
 ///   Read Message History     65536   (syncing the announcements feed)
 ///   Create Public Threads  34359738368
 ///   Send Messages in Threads 274877906944  (reminders, replies)
+///   Manage Webhooks           536870912   (posting as a person, not as the
+///                                          bot - see services::discord_webhook)
 ///
 /// Server Members Intent is *not* here - it's a toggle in the Discord
 /// developer portal, not a per-guild permission, and friend sync needs it.
-const BOT_PERMISSIONS: u64 = 1024 + 2048 + 64 + 65536 + 34_359_738_368 + 274_877_906_944;
+const BOT_PERMISSIONS: u64 =
+    1024 + 2048 + 64 + 65536 + 34_359_738_368 + 274_877_906_944 + 536_870_912;
 
 #[derive(serde::Serialize)]
 pub struct ServersResponse {

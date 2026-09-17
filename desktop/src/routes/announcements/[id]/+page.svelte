@@ -14,6 +14,31 @@
   // the bottom below md:, inline above it.
   let post: AnnouncementPostInfo | undefined;
   let replies: ReplyInfo[] = [];
+
+  let draft = '';
+  let sending = false;
+  let replyError = '';
+
+  async function sendReply() {
+    const content = draft.trim();
+    // postId comes from a route param, so TypeScript has it as possibly
+    // undefined; there is no thread to reply in without one.
+    if (!content || !postId) return;
+    try {
+      sending = true;
+      replyError = '';
+      // The endpoint returns the refreshed thread, so there is no second
+      // round-trip and no optimistic guess to reconcile.
+      replies = await api.postAnnouncementReply(postId, content);
+      draft = '';
+    } catch (err) {
+      // The draft is deliberately kept - retyping a lost reply is the
+      // annoying half of a failed send.
+      replyError = err instanceof Error ? err.message : 'Could not post your reply';
+    } finally {
+      sending = false;
+    }
+  }
   let loading = true;
   let error = '';
 
@@ -97,28 +122,44 @@
         </div>
       {/if}
 
-      <!-- Replies used to be posted from here, but the *bot* sent them: the
-           thread showed "friends-calendar" saying whatever a user typed, with
-           no attribution, and with no allowed_mentions guard a user could
-           make the bot ping @everyone using the bot's permissions rather
-           than their own. Reading stays; writing goes to Discord, where the
-           message is actually attributed to the person who wrote it. -->
-      {#if post?.thread_url}
-        <a
-          href={post.thread_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          class="inline-flex items-center gap-2 mt-4 px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold no-underline"
-        >
-          <Icon name="replies" size={16} />
-          Reply in Discord
-        </a>
-      {:else}
-        <p class="text-sm text-muted mt-4">
-          Open this thread in Discord to reply — no server is linked yet, so there's no link to give
-          you.
-        </p>
-      {/if}
+      <!-- Replying was removed on 2026-09-17 because the *bot* sent it: the
+           thread showed "friends-calendar" saying whatever a user typed, and
+           with no allowed_mentions guard a user could make the bot ping
+           @everyone with the bot's permissions. It is back on a webhook,
+           which carries the author's name and face and suppresses mentions -
+           see services::discord_webhook. -->
+      <form on:submit|preventDefault={sendReply} class="mt-4 flex flex-col gap-2">
+        <label for="reply" class="sr-only">Reply</label>
+        <textarea
+          id="reply"
+          bind:value={draft}
+          rows="2"
+          placeholder="Reply in the thread…"
+          class="w-full resize-y rounded-[11px] border border-line bg-surface px-3 py-2.5 text-[14px] outline-none focus:border-primary"
+        ></textarea>
+        {#if replyError}
+          <p class="m-0 text-[13px] text-red-600" role="alert">{replyError}</p>
+        {/if}
+        <div class="flex items-center gap-3">
+          <button
+            type="submit"
+            disabled={sending || draft.trim() === ''}
+            class="rounded-[9px] bg-primary px-3.5 py-[9px] text-[13px] font-semibold text-white hover:bg-primary-active disabled:opacity-50"
+          >
+            {sending ? 'Posting…' : 'Reply'}
+          </button>
+          {#if post?.thread_url}
+            <a
+              href={post.thread_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-[13px] font-semibold text-primary no-underline hover:underline"
+            >
+              Open in Discord
+            </a>
+          {/if}
+        </div>
+      </form>
     {/if}
   </div>
 </Frame>

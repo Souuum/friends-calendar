@@ -79,30 +79,74 @@ describe('announcement thread page', () => {
   // showed "friends-calendar" saying whatever a user typed, and with no
   // allowed_mentions guard a user could make the bot ping @everyone using
   // the bot's permissions rather than their own. Reading stays in the app.
-  it('offers a link to the Discord thread instead of a composer', async () => {
+  // Replying was removed on 2026-09-17 because the bot sent it: no
+  // attribution, and a user's @everyone pinged the server with the bot's
+  // permissions. It is back on a webhook, which fixes both - so these
+  // assertions moved from "the composer is gone" to "it posts as you".
+  it('posts a reply and shows the refreshed thread', async () => {
+    postAnnouncementReply.mockResolvedValue([
+      {
+        author_username: 'me',
+        author_avatar_url: undefined,
+        body: "I'm in",
+        posted_at: '2026-03-01T13:00:00Z'
+      }
+    ]);
+    render(ThreadPage);
+    await waitFor(() => expect(screen.getByText('Ski trip')).toBeInTheDocument());
+
+    await fireEvent.input(screen.getByLabelText('Reply'), { target: { value: "I'm in" } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Reply' }));
+
+    await waitFor(() =>
+      // 'p1' is the mocked route param, which is what the page posts to -
+      // not the post's own id.
+      expect(postAnnouncementReply).toHaveBeenCalledWith('p1', "I'm in")
+    );
+    // The response *is* the refreshed thread, so no second fetch.
+    expect(await screen.findByText("I'm in")).toBeInTheDocument();
+    expect(screen.getByLabelText('Reply')).toHaveValue('');
+  });
+
+  // Retyping a lost reply is the annoying half of a failed send.
+  it('keeps the draft when posting fails', async () => {
+    postAnnouncementReply.mockRejectedValue(new Error('Discord said no'));
+    render(ThreadPage);
+    await waitFor(() => expect(screen.getByText('Ski trip')).toBeInTheDocument());
+
+    await fireEvent.input(screen.getByLabelText('Reply'), { target: { value: 'worth keeping' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Reply' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Discord said no'));
+    expect(screen.getByLabelText('Reply')).toHaveValue('worth keeping');
+  });
+
+  it('will not post an empty reply', async () => {
+    render(ThreadPage);
+    await waitFor(() => expect(screen.getByText('Ski trip')).toBeInTheDocument());
+
+    expect(screen.getByRole('button', { name: 'Reply' })).toBeDisabled();
+  });
+
+  // The deep link stays alongside the composer: some people would rather
+  // answer in Discord proper.
+  it('still links out to the thread', async () => {
     render(ThreadPage);
 
-    const link = await screen.findByRole('link', { name: /Reply in Discord/i });
+    const link = await screen.findByRole('link', { name: /Open in Discord/i });
     expect(link).toHaveAttribute('href', 'https://discord.com/channels/g1/m1');
     expect(link).toHaveAttribute('target', '_blank');
   });
 
-  it('has no reply composer at all', async () => {
-    render(ThreadPage);
-    await waitFor(() => expect(screen.getByText('Ski trip')).toBeInTheDocument());
-
-    expect(screen.queryByLabelText('Reply')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Send/i })).not.toBeInTheDocument();
-  });
-
-  // No linked server means no URL to offer; say so rather than render a
-  // dead button.
-  it('explains itself when there is no thread link', async () => {
+  // No linked server means no URL to offer - but the composer still works,
+  // because posting goes through the app, not the link.
+  it('still offers the composer when there is no thread link', async () => {
     getAnnouncements.mockResolvedValue([{ ...post, thread_url: undefined }]);
 
     render(ThreadPage);
 
-    await waitFor(() => expect(screen.getByText(/no server is linked yet/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText('Reply')).toBeInTheDocument());
+    expect(screen.queryByRole('link', { name: /Open in Discord/i })).not.toBeInTheDocument();
   });
 
   it('invites a first reply when the thread is empty', async () => {

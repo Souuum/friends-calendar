@@ -349,6 +349,28 @@ class ApiClient {
    * server-side rather than reading announcement_posts.reply_count - that
    * count is whatever the last sync saw.
    */
+  /**
+   * Posts a new announcement **as you**, through a Discord webhook.
+   *
+   * Not the bot token: that had no attribution and let a user's `@everyone`
+   * ping the server with the bot's permissions. Returns the refreshed feed,
+   * so a mirror never lags its own writes.
+   */
+  async composeAnnouncement(content: string): Promise<AnnouncementPostInfo[]> {
+    return this.fetch<AnnouncementPostInfo[]>('/api/announcements/compose', {
+      method: 'POST',
+      body: JSON.stringify({ content })
+    });
+  }
+
+  /** Replies in the thread, as you. Returns the refreshed thread. */
+  async postAnnouncementReply(id: string, content: string): Promise<ReplyInfo[]> {
+    return this.fetch<ReplyInfo[]>(`/api/announcements/${id}/reply`, {
+      method: 'POST',
+      body: JSON.stringify({ content })
+    });
+  }
+
   async getAnnouncementReplies(id: string): Promise<ReplyInfo[]> {
     return this.fetch<ReplyInfo[]>(`/api/announcements/${id}/replies`);
   }

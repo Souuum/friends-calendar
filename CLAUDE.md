@@ -1435,6 +1435,46 @@ override (looks attributed, still the app's credential) or real OAuth
 message scopes. Either way `allowed_mentions` must be set to suppress
 `@everyone`/`@here`.
 
+## Posting as a person, not as the bot (2026-09-17)
+
+`services::discord_webhook`. Composing announcements (`POST
+/api/announcements/compose`) and replying in a thread (`POST
+/api/announcements/:id/reply`) both go out through a **Discord webhook**.
+
+⚠️ The reply route was **removed earlier the same day** because it used the
+bot token, which had two problems that were not cosmetic: no attribution
+(the thread showed `friends-calendar` saying whatever a user typed), and
+**mention escalation** - `post_message` sends `{"content": …}` with no
+`allowed_mentions`, so a user typing `@everyone` pinged the server with the
+*bot's* permissions. A webhook fixes both: `username`/`avatar_url` are
+per-message, and `allowed_mentions: { parse: [] }` suppresses every ping.
+That last one is mutation-tested - removing it fails
+`every_post_suppresses_mentions`.
+
+- ⚠️ **The author always comes from the signed-in user's record**, never the
+  request body. A client-supplied `username` is how you get a post
+  impersonating somebody else. `handlers::announcements::author_of` is the
+  only thing that builds it.
+- ⚠️ **A webhook is still the app's credential.** Discord marks these with a
+  BOT tag, and real per-user attribution needs OAuth message scopes. This is
+  honest attribution, not authentication.
+- **Nothing is stored.** The webhook is found-or-created per post rather
+  than cached: a webhook token is equivalent to "post anything in this
+  channel", and keeping one at rest is a secret this app does not otherwise
+  have. One extra API call on an infrequent action is the better trade.
+- ⚠️ **`MANAGE_WEBHOOKS` (536870912) was added to `BOT_PERMISSIONS`.** A
+  server that authorised the bot before this will 403 until it is
+  re-invited, so the handler turns a 403 into a message saying exactly that
+  rather than a bare failure.
+- The composer says *"Mentions won't ping anyone"* where the person writing
+  can see it - they would otherwise reasonably expect `@everyone` to work.
+- Both endpoints return the **refreshed** feed/thread, so a mirror never
+  lags its own writes and the client needs no optimistic guess.
+
+Three frontend tests and one backend test that pinned the *removal* were
+rewritten rather than deleted - they are what would have caught a silent
+regression back to the bot token.
+
 ## Discord markdown & reaction backfill (2026-09-17)
 
 **`lib/utils/discordMarkdown.ts`** renders Discord's message flavour to a

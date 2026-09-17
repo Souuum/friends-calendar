@@ -17,6 +17,34 @@
   let adopting: AnnouncementPostInfo | null = null;
   let adoptedMessage = '';
 
+  // Composing, per both mockups ("New announcement" on desktop, a pill above
+  // the tab bar on mobile). Posts through a webhook so it carries your name
+  // and cannot ping the server with the bot's permissions - see
+  // services::discord_webhook.
+  let composing = false;
+  let draft = '';
+  let posting = false;
+  let composeError = '';
+
+  async function post() {
+    const content = draft.trim();
+    if (!content) return;
+    try {
+      posting = true;
+      composeError = '';
+      // The response is the refreshed feed, so the poster sees their own
+      // message without hitting "Sync now".
+      posts = await api.composeAnnouncement(content);
+      draft = '';
+      composing = false;
+    } catch (err) {
+      // Draft kept: retyping is the annoying half of a failed post.
+      composeError = err instanceof Error ? err.message : 'Could not post';
+    } finally {
+      posting = false;
+    }
+  }
+
   async function handleAdopted(rsvps: number) {
     adopting = null;
     // Said plainly, because recovering the existing ✅ is the reason to
@@ -66,13 +94,21 @@
   <div class="max-w-2xl space-y-4 anim-fade-up">
     <div class="flex items-center justify-between">
       <h1 class="text-xl font-semibold m-0">Announcements</h1>
-      <button
-        on:click={handleSync}
-        disabled={syncing}
-        class="px-3 py-1.5 rounded-lg font-medium text-sm transition bg-discord-blurple hover:bg-blue-600 text-white disabled:opacity-50"
-      >
-        {syncing ? 'Syncing…' : 'Sync now'}
-      </button>
+      <div class="flex gap-2">
+        <button
+          on:click={handleSync}
+          disabled={syncing}
+          class="rounded-[9px] border border-line bg-surface px-3.5 py-[9px] text-[13px] font-semibold hover:bg-subtle disabled:opacity-50"
+        >
+          {syncing ? 'Syncing…' : 'Sync now'}
+        </button>
+        <button
+          on:click={() => (composing = !composing)}
+          class="rounded-[9px] bg-primary px-3.5 py-[9px] text-[13px] font-semibold text-white hover:bg-primary-active"
+        >
+          New announcement
+        </button>
+      </div>
     </div>
     <p class="text-sm text-gray-500 m-0">
       A mirror of the linked Discord channel's messages. Manage which channel this pulls from on the <a
@@ -80,6 +116,47 @@
         class="text-discord-blurple hover:underline">Discord server</a
       > page.
     </p>
+
+    {#if composing}
+      <form
+        on:submit|preventDefault={post}
+        class="flex flex-col gap-2 rounded-[14px] border border-line bg-surface p-[18px]"
+      >
+        <label for="announcement" class="text-[13px] font-medium text-body">
+          Post to the channel as you
+        </label>
+        <textarea
+          id="announcement"
+          bind:value={draft}
+          rows="3"
+          placeholder="What's happening?"
+          class="w-full resize-y rounded-[11px] border border-line bg-surface px-3 py-2.5 text-[14px] outline-none focus:border-primary"
+        ></textarea>
+        {#if composeError}
+          <p class="m-0 text-[13px] text-red-600" role="alert">{composeError}</p>
+        {/if}
+        <p class="m-0 text-[12px] text-muted">
+          Posted under your name. Mentions won't ping anyone — the app can't ping the server on your
+          behalf.
+        </p>
+        <div class="flex gap-2">
+          <button
+            type="submit"
+            disabled={posting || draft.trim() === ''}
+            class="rounded-[9px] bg-primary px-3.5 py-[9px] text-[13px] font-semibold text-white hover:bg-primary-active disabled:opacity-50"
+          >
+            {posting ? 'Posting…' : 'Post'}
+          </button>
+          <button
+            type="button"
+            on:click={() => (composing = false)}
+            class="rounded-[9px] border border-line bg-surface px-3.5 py-[9px] text-[13px] font-semibold hover:bg-subtle"
+          >
+            Cancel
+          </button>
+        </div>
+      </form>
+    {/if}
 
     {#if error}
       <p class="text-sm text-red-600" role="alert">{error}</p>

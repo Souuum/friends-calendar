@@ -213,6 +213,17 @@ pub(crate) fn build_router(state: AppState) -> Router {
             "/api/announcements/:id/replies",
             get(handlers::announcements::list_replies),
         )
+        // Composing and replying go out through a **webhook**, so they carry
+        // the author's name and cannot launder an @everyone through the bot
+        // - see services::discord_webhook.
+        .route(
+            "/api/announcements/compose",
+            post(handlers::announcements::compose_announcement),
+        )
+        .route(
+            "/api/announcements/:id/reply",
+            post(handlers::announcements::post_reply),
+        )
         // Binds an already-posted message to a new event, instead of
         // announcing one - see services::event_adoption.
         .route(

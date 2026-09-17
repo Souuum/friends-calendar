@@ -2,17 +2,21 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import type { AnnouncementPostInfo } from '$lib/types';
 
-const { getAnnouncements, syncAnnouncements, adoptAnnouncement } = vi.hoisted(() => ({
-  getAnnouncements: vi.fn(),
-  syncAnnouncements: vi.fn(),
-  adoptAnnouncement: vi.fn()
-}));
+const { getAnnouncements, syncAnnouncements, adoptAnnouncement, composeAnnouncement } = vi.hoisted(
+  () => ({
+    getAnnouncements: vi.fn(),
+    syncAnnouncements: vi.fn(),
+    adoptAnnouncement: vi.fn(),
+    composeAnnouncement: vi.fn()
+  })
+);
 
 vi.mock('$lib/api', () => ({
   api: {
     getAnnouncements,
     syncAnnouncements,
     adoptAnnouncement,
+    composeAnnouncement,
     clearToken: vi.fn(),
     getToken: vi.fn()
   }
@@ -57,6 +61,7 @@ describe('announcements page', () => {
     getAnnouncements.mockReset();
     syncAnnouncements.mockReset();
     adoptAnnouncement.mockReset();
+    composeAnnouncement.mockReset();
   });
 
   it('lists synced posts from the linked channel', async () => {
@@ -213,6 +218,56 @@ describe('announcements page', () => {
       await waitFor(() => expect(screen.getByText('Event')).toBeInTheDocument());
 
       expect(screen.queryByRole('button', { name: /Add to calendar/ })).not.toBeInTheDocument();
+    });
+  });
+  describe('composing an announcement', () => {
+    async function openComposer() {
+      getAnnouncements.mockResolvedValue([]);
+      render(AnnouncementsPage);
+      await waitFor(() => expect(screen.getByText(/Nothing synced yet/)).toBeInTheDocument());
+      await fireEvent.click(screen.getByRole('button', { name: 'New announcement' }));
+    }
+
+    it('posts as you and shows the message straight away', async () => {
+      composeAnnouncement.mockResolvedValue([makePost({ id: 'new', body: 'Ski trip is on' })]);
+      await openComposer();
+
+      await fireEvent.input(screen.getByLabelText(/Post to the channel as you/), {
+        target: { value: 'Ski trip is on' }
+      });
+      await fireEvent.click(screen.getByRole('button', { name: 'Post' }));
+
+      await waitFor(() => expect(composeAnnouncement).toHaveBeenCalledWith('Ski trip is on'));
+      // A mirror that lags its own writes looks broken, so the response is
+      // the refreshed feed rather than a second fetch.
+      expect(await screen.findByText('Ski trip is on')).toBeInTheDocument();
+    });
+
+    // The safety property, stated where the person writing the message can
+    // see it - they would otherwise expect an @everyone to work.
+    it('says that mentions will not ping', async () => {
+      await openComposer();
+
+      expect(screen.getByText(/Mentions won't ping anyone/)).toBeInTheDocument();
+    });
+
+    it('keeps the draft when posting fails', async () => {
+      composeAnnouncement.mockRejectedValue(new Error('Manage Webhooks'));
+      await openComposer();
+
+      await fireEvent.input(screen.getByLabelText(/Post to the channel as you/), {
+        target: { value: 'worth keeping' }
+      });
+      await fireEvent.click(screen.getByRole('button', { name: 'Post' }));
+
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Manage Webhooks'));
+      expect(screen.getByLabelText(/Post to the channel as you/)).toHaveValue('worth keeping');
+    });
+
+    it('will not post an empty announcement', async () => {
+      await openComposer();
+
+      expect(screen.getByRole('button', { name: 'Post' })).toBeDisabled();
     });
   });
 });

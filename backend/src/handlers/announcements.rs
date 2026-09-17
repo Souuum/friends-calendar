@@ -10,7 +10,7 @@ use crate::{
     middleware::auth::Claims,
     models::{AnnouncementPostInfo, CalendarEvent, CreateEventRequest, ReplyInfo},
     services::{
-        discord_config, discord_feed,
+        discord_config, discord_feed, discord_webhook,
         event_adoption::{self, AdoptError},
         reaction_sync,
     },
@@ -75,6 +75,185 @@ async fn resolve_thread(state: &AppState, id: Uuid) -> Result<String, AppError> 
     )
     .await
     .map_err(|e| AppError::ExternalApiError(e.to_string()))
+}
+
+#[derive(serde::Deserialize)]
+pub struct ComposeRequest {
+    pub content: String,
+}
+
+/// How a person is shown on a webhook post.
+///
+/// ⚠️ Always from the signed-in user's own record, **never** from the
+/// request body - a client-supplied name is how you get a post impersonating
+/// somebody else.
+fn author_of(user: &crate::models::User) -> discord_webhook::Author {
+    discord_webhook::Author {
+        name: user
+            .display_name
+            .clone()
+            .unwrap_or_else(|| user.username.clone()),
+        avatar_url: user.avatar.as_ref().map(|hash| {
+            format!(
+                "https://cdn.discordapp.com/avatars/{}/{}.png",
+                user.discord_id, hash
+            )
+        }),
+    }
+}
+
+/// Turns a webhook failure into something a reader can act on.
+fn webhook_error(e: anyhow::Error) -> AppError {
+    let message = e.to_string();
+    if message.contains("(403") {
+        // The most likely cause by far: the bot was authorised before
+        // MANAGE_WEBHOOKS was added to the invite.
+        AppError::ExternalApiError(
+            "The bot needs the \"Manage Webhooks\" permission to post as you - re-invite it from the Servers page.".to_string(),
+        )
+    } else {
+        AppError::ExternalApiError(message)
+    }
+}
+
+/// Posts a new announcement to the channel, **as the signed-in user**.
+///
+/// Goes out through a webhook rather than the bot token so it carries the
+/// author's name and face, and with `allowed_mentions` suppressed so nobody
+/// can ping the server using the app's permissions. See
+/// `services::discord_webhook` for why that matters and what it still
+/// doesn't give you.
+pub async fn compose_announcement(
+    claims: Claims,
+    State(state): State<AppState>,
+    Json(req): Json<ComposeRequest>,
+) -> Result<Json<Vec<AnnouncementPostInfo>>, AppError> {
+    let content = req.content.trim().to_string();
+    if content.is_empty() {
+        return Err(AppError::ValidationError(
+            "An announcement needs some text".to_string(),
+        ));
+    }
+
+    let user = crate::services::auth::get_user_by_discord_id(&state.db, &claims.sub)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+        .ok_or(AppError::Unauthorized)?;
+
+    let channel_id = resolve_channel(&state).await?;
+    let bot_token = state.discord_bot_token.as_deref().ok_or_else(|| {
+        AppError::ValidationError("DISCORD_BOT_TOKEN is not configured".to_string())
+    })?;
+
+    let webhook = discord_webhook::ensure_webhook(
+        &state.discord_api_base,
+        &state.http_client,
+        bot_token,
+        &channel_id,
+    )
+    .await
+    .map_err(webhook_error)?;
+
+    discord_webhook::post_as(
+        &state.discord_api_base,
+        &state.http_client,
+        &webhook,
+        None,
+        &author_of(&user),
+        &content,
+    )
+    .await
+    .map_err(webhook_error)?;
+
+    tracing::info!("📣 {} posted an announcement", user.username);
+
+    // Sync so the poster sees their own message in the feed without having
+    // to hit "Sync now" - the feed is a mirror, and a mirror that lags its
+    // own writes looks broken.
+    discord_feed::sync_channel(
+        &state.discord_api_base,
+        &state.db,
+        &state.http_client,
+        bot_token,
+        &channel_id,
+    )
+    .await
+    .map_err(|e| AppError::ExternalApiError(e.to_string()))?;
+
+    let posts = discord_feed::list_posts(&state.db, &channel_id)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    Ok(Json(posts))
+}
+
+/// Replies in an announcement's thread, as the signed-in user.
+///
+/// This route existed before and was **removed** on 2026-09-17 because it
+/// posted on the bot token: no attribution, and `@everyone` in a reply
+/// pinged the server with the bot's permissions. It is back on a webhook,
+/// which fixes both.
+pub async fn post_reply(
+    claims: Claims,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<ComposeRequest>,
+) -> Result<Json<Vec<ReplyInfo>>, AppError> {
+    let content = req.content.trim().to_string();
+    if content.is_empty() {
+        return Err(AppError::ValidationError(
+            "A reply needs some text".to_string(),
+        ));
+    }
+
+    let user = crate::services::auth::get_user_by_discord_id(&state.db, &claims.sub)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+        .ok_or(AppError::Unauthorized)?;
+
+    let bot_token = state.discord_bot_token.as_deref().ok_or_else(|| {
+        AppError::ValidationError("DISCORD_BOT_TOKEN is not configured".to_string())
+    })?;
+
+    // The thread hangs off the announcement's own message; the webhook has
+    // to belong to the *channel* that message is in, which is the one the
+    // feed mirrors.
+    let thread_id = resolve_thread(&state, id).await?;
+    let channel_id = resolve_channel(&state).await?;
+
+    let webhook = discord_webhook::ensure_webhook(
+        &state.discord_api_base,
+        &state.http_client,
+        bot_token,
+        &channel_id,
+    )
+    .await
+    .map_err(webhook_error)?;
+
+    discord_webhook::post_as(
+        &state.discord_api_base,
+        &state.http_client,
+        &webhook,
+        Some(&thread_id),
+        &author_of(&user),
+        &content,
+    )
+    .await
+    .map_err(webhook_error)?;
+
+    // The refreshed thread, so the client needs no second round-trip and no
+    // optimistic guess. Replies are always a live fetch - never
+    // announcement_posts.reply_count, which is whatever the last sync saw.
+    let replies = discord_feed::fetch_replies(
+        &state.discord_api_base,
+        &state.http_client,
+        bot_token,
+        &thread_id,
+    )
+    .await
+    .map_err(|e| AppError::ExternalApiError(e.to_string()))?;
+
+    Ok(Json(replies))
 }
 
 pub async fn list_replies(
@@ -578,7 +757,7 @@ mod tests {
     // The round trip the skill asks for: sync a post, open its thread, post
     // a reply, and see it come back.
     #[sqlx::test]
-    async fn replies_are_readable_but_not_writable(db: PgPool) {
+    async fn replies_go_out_on_a_webhook_carrying_the_author(db: PgPool) {
         let user = seed_user(&db, "me-discord", "me").await;
 
         let server = MockServer::start().await;
@@ -603,10 +782,26 @@ mod tests {
             })))
             .mount(&server)
             .await;
-        // Posting into it, then reading it back.
+        // The webhook: found, then posted through with the author attached.
+        Mock::given(method("GET"))
+            .and(path("/channels/123456789/webhooks"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(
+                    json!([{ "id": "w1", "token": "t1", "name": "Friends Calendar" }]),
+                ),
+            )
+            .mount(&server)
+            .await;
         Mock::given(method("POST"))
-            .and(path("/channels/thread-1/messages"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "r1" })))
+            .and(path("/webhooks/w1/t1"))
+            .respond_with(|req: &wiremock::Request| {
+                let body: Value = serde_json::from_slice(&req.body).unwrap();
+                // The signed-in user, never anything from the request body.
+                assert_eq!(body["username"], "me");
+                assert_eq!(body["allowed_mentions"]["parse"], json!([]));
+                ResponseTemplate::new(200)
+            })
+            .expect(1)
             .mount(&server)
             .await;
         Mock::given(method("GET"))
@@ -648,11 +843,11 @@ mod tests {
         // local UUID.
         assert!(posts[0].get("discord_message_id").is_none());
 
-        // Posting is gone: replies used to be sent by the bot, so the thread
-        // showed "friends-calendar" saying whatever a user typed, and with
-        // no allowed_mentions guard a user could make the bot ping
-        // @everyone with the bot's permissions. The route must be absent,
-        // not merely unused by the UI.
+        // Replying is back, but on a **webhook** rather than the bot token.
+        // It used to show "friends-calendar" saying whatever a user typed,
+        // and with no allowed_mentions guard a user could make the bot ping
+        // @everyone with the bot's permissions - which is why the route was
+        // removed on 2026-09-17 and why this asserts the author is carried.
         let response = app
             .clone()
             .oneshot(
@@ -661,12 +856,12 @@ mod tests {
                     .uri(format!("/api/announcements/{post_id}/reply"))
                     .header("Authorization", format!("Bearer {token}"))
                     .header("Content-Type", "application/json")
-                    .body(Body::from(r#"{"body":"I'm in"}"#))
+                    .body(Body::from(r#"{"content":"I'm in"}"#))
                     .unwrap(),
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.status(), StatusCode::OK);
 
         // Reading the thread still works.
         let response = app
@@ -680,5 +875,90 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+    #[sqlx::test]
+    async fn composing_posts_as_the_author_and_shows_up_in_the_feed(db: PgPool) {
+        let user = seed_user(&db, "me-discord", "me").await;
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/channels/123456789/webhooks"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(
+                    json!([{ "id": "w1", "token": "t1", "name": "Friends Calendar" }]),
+                ),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/webhooks/w1/t1"))
+            .respond_with(|req: &wiremock::Request| {
+                let body: Value = serde_json::from_slice(&req.body).unwrap();
+                assert_eq!(body["content"], "Ski trip is on");
+                assert_eq!(body["username"], "me");
+                assert_eq!(body["allowed_mentions"]["parse"], json!([]));
+                ResponseTemplate::new(200)
+            })
+            .expect(1)
+            .mount(&server)
+            .await;
+        // The sync that follows, so the poster sees their own message.
+        Mock::given(method("GET"))
+            .and(path("/channels/123456789/messages"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(vec![discord_message("msg-new", "Ski trip is on")]),
+            )
+            .mount(&server)
+            .await;
+
+        let state = AppState::for_test(db, server.uri());
+        let token = generate_jwt(&user.discord_id, &state.jwt_secret).unwrap();
+
+        let response = crate::build_router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/announcements/compose")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content":"Ski trip is on"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let posts: Value = serde_json::from_slice(&body).unwrap();
+        // A mirror that lags its own writes looks broken, so the response is
+        // the refreshed feed.
+        assert_eq!(posts[0]["body"], "Ski trip is on");
+
+        drop(server);
+    }
+
+    #[sqlx::test]
+    async fn composing_nothing_is_refused(db: PgPool) {
+        let user = seed_user(&db, "me-discord", "me").await;
+        let state = AppState::for_test(db, "http://unused.invalid".to_string());
+        let token = generate_jwt(&user.discord_id, &state.jwt_secret).unwrap();
+
+        let response = crate::build_router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/announcements/compose")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content":"   "}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }
