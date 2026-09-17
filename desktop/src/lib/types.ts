@@ -119,6 +119,14 @@ export type AnnouncementTag = 'event' | 'general';
  * ✅ to the message, and adopting recovers those answers instead of asking
  * for them again.
  */
+/** A channel the bot can post in, as the picker on /server renders it. */
+export interface ChannelInfo {
+  id: string;
+  name: string;
+  /** The Discord category it sits under, when the bot can see one. */
+  category?: string;
+}
+
 export interface AdoptionResult {
   event: CalendarEvent;
   rsvps_recorded: number;

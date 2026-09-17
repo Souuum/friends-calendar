@@ -355,6 +355,87 @@ pub(crate) async fn get_json<T: serde::de::DeserializeOwned>(
     Ok(response.json().await?)
 }
 
+/// A channel the bot can post in, ready to render.
+///
+/// `category` is the Discord category the channel sits under, resolved here
+/// rather than shipping `parent_id` for the client to join - the names only
+/// exist in the same payload, so doing it anywhere else means sending the
+/// categories too and joining them twice.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ChannelInfo {
+    pub id: String,
+    pub name: String,
+    pub category: Option<String>,
+}
+
+/// Raw channel as Discord returns it. `position` and `parent_id` only exist
+/// to order and group; neither reaches the client.
+#[derive(serde::Deserialize)]
+struct DiscordChannel {
+    id: String,
+    name: Option<String>,
+    #[serde(rename = "type")]
+    kind: u8,
+    #[serde(default)]
+    position: i64,
+    #[serde(default)]
+    parent_id: Option<String>,
+}
+
+/// Text channels in a guild, grouped by category and in the order Discord
+/// shows them.
+///
+/// ⚠️ **Only channels the bot can see.** Discord filters this response by
+/// the bot's `VIEW_CHANNEL` permission, so a channel the user expects is
+/// simply absent rather than an error - the UI has to say so, or the first
+/// question is "why isn't #general in the list".
+///
+/// Types 0 (text) and 5 (announcement) are the only ones that accept a
+/// message. Voice, category, stage and forum channels are excluded because
+/// posting to them fails, and offering an option that cannot work is the
+/// failure this whole endpoint exists to end.
+pub async fn list_text_channels(
+    base_url: &str,
+    http: &Client,
+    bot_token: &str,
+    discord_guild_id: &str,
+) -> Result<Vec<ChannelInfo>> {
+    let url = format!("{base_url}/guilds/{discord_guild_id}/channels");
+    let channels: Vec<DiscordChannel> = get_json(http, bot_token, &url).await?;
+
+    // Categories are type 4. They are never offered as a choice, but their
+    // names and positions are what make the list navigable.
+    let categories: std::collections::HashMap<&str, (&str, i64)> = channels
+        .iter()
+        .filter(|c| c.kind == 4)
+        .filter_map(|c| c.name.as_deref().map(|n| (c.id.as_str(), (n, c.position))))
+        .collect();
+
+    let mut postable: Vec<(i64, i64, ChannelInfo)> = channels
+        .iter()
+        .filter(|c| c.kind == 0 || c.kind == 5)
+        .filter_map(|c| {
+            let name = c.name.as_deref()?;
+            let parent = c.parent_id.as_deref().and_then(|p| categories.get(p));
+            Some((
+                // Uncategorised channels sort above every category, which is
+                // where Discord itself puts them.
+                parent.map_or(-1, |(_, pos)| *pos),
+                c.position,
+                ChannelInfo {
+                    id: c.id.clone(),
+                    name: name.to_string(),
+                    category: parent.map(|(name, _)| (*name).to_string()),
+                },
+            ))
+        })
+        .collect();
+
+    postable.sort_by(|a, b| (a.0, a.1, &a.2.name).cmp(&(b.0, b.1, &b.2.name)));
+
+    Ok(postable.into_iter().map(|(_, _, info)| info).collect())
+}
+
 /// Posts a message and returns Discord's id for it.
 ///
 /// The id matters for announcements: it's stored on the event, and it's also
@@ -443,7 +524,7 @@ pub(crate) fn url_encode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -931,5 +1012,133 @@ mod tests {
             vec!["first", "last"],
             "a thread reads oldest-first, and an attachment-only message has no body to show"
         );
+    }
+    // --- list_text_channels ---------------------------------------------
+
+    fn channel(id: &str, name: &str, kind: u8, position: i64, parent: Option<&str>) -> Value {
+        json!({
+            "id": id, "name": name, "type": kind,
+            "position": position, "parent_id": parent
+        })
+    }
+
+    async fn mock_channels(guild: &str, body: Value) -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/guilds/{guild}/channels")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    // Offering a channel that cannot take a message is the failure this
+    // endpoint exists to end, so the filter is the point of the feature.
+    #[tokio::test]
+    async fn only_channels_that_can_take_a_message_are_offered() {
+        let server = mock_channels(
+            "g1",
+            json!([
+                channel("1", "general", 0, 0, None),    // text
+                channel("2", "Voice chat", 2, 1, None), // voice
+                channel("3", "Category", 4, 2, None),   // category
+                channel("4", "news", 5, 3, None),       // announcement
+                channel("5", "Stage", 13, 4, None),     // stage
+                channel("6", "Forum", 15, 5, None),     // forum
+            ]),
+        )
+        .await;
+
+        let out = list_text_channels(&server.uri(), &Client::new(), "token", "g1")
+            .await
+            .unwrap();
+
+        let names: Vec<&str> = out.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["general", "news"]);
+    }
+
+    // Order is what makes a 50-channel server navigable, so assert the
+    // sequence rather than membership: uncategorised first, then categories
+    // by their own position, then channels by theirs.
+    #[tokio::test]
+    async fn channels_come_back_grouped_and_in_discord_order() {
+        let server = mock_channels(
+            "g1",
+            json!([
+                channel("cat-b", "Second category", 4, 5, None),
+                channel("cat-a", "First category", 4, 1, None),
+                channel("c3", "in-b", 0, 0, Some("cat-b")),
+                channel("c2", "second-in-a", 0, 9, Some("cat-a")),
+                channel("c1", "first-in-a", 0, 2, Some("cat-a")),
+                channel("c0", "top-level", 0, 0, None),
+            ]),
+        )
+        .await;
+
+        let out = list_text_channels(&server.uri(), &Client::new(), "token", "g1")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            out,
+            vec![
+                ChannelInfo {
+                    id: "c0".into(),
+                    name: "top-level".into(),
+                    category: None
+                },
+                ChannelInfo {
+                    id: "c1".into(),
+                    name: "first-in-a".into(),
+                    category: Some("First category".into())
+                },
+                ChannelInfo {
+                    id: "c2".into(),
+                    name: "second-in-a".into(),
+                    category: Some("First category".into())
+                },
+                ChannelInfo {
+                    id: "c3".into(),
+                    name: "in-b".into(),
+                    category: Some("Second category".into())
+                },
+            ]
+        );
+    }
+
+    // A channel whose category the bot cannot see: Discord returns the
+    // channel with a parent_id that resolves to nothing in this payload.
+    // It must still be offered, ungrouped, rather than silently dropped.
+    #[tokio::test]
+    async fn a_channel_whose_category_is_missing_is_still_offered() {
+        let server = mock_channels(
+            "g1",
+            json!([channel("c1", "orphan", 0, 0, Some("cat-we-cannot-see"))]),
+        )
+        .await;
+
+        let out = list_text_channels(&server.uri(), &Client::new(), "token", "g1")
+            .await
+            .unwrap();
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].name, "orphan");
+        assert_eq!(out[0].category, None);
+    }
+
+    #[tokio::test]
+    async fn a_discord_error_propagates_rather_than_returning_an_empty_list() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/guilds/g1/channels"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+
+        let out = list_text_channels(&server.uri(), &Client::new(), "token", "g1").await;
+
+        // An empty list would render as "this server has no channels", which
+        // is a different and wrong statement.
+        assert!(out.is_err());
     }
 }

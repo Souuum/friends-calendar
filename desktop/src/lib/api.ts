@@ -14,6 +14,7 @@ import type {
   BotChannelConfig,
   UpdateBotChannelConfigRequest,
   AdoptionResult,
+  ChannelInfo,
   AnnouncementPostInfo,
   ReplyInfo,
   ServersResponse
@@ -192,6 +193,17 @@ class ApiClient {
   }
 
   /** The servers the bot is in, plus the URL for adding another. */
+  /**
+   * Channels the bot could post in, for the /server picker.
+   *
+   * Keyed by `guilds.id`, not the Discord snowflake - the server only lists
+   * channels for guilds this app has a row for, so the bot token can't be
+   * used as a "read any server" proxy.
+   */
+  async getGuildChannels(guildId: string): Promise<ChannelInfo[]> {
+    return this.fetch<ChannelInfo[]>(`/api/guilds/${guildId}/channels`);
+  }
+
   async getServers(): Promise<ServersResponse> {
     return this.fetch<ServersResponse>('/api/guilds');
   }

@@ -1,10 +1,17 @@
-use axum::{Json, extract::State};
+use axum::{
+    Json,
+    extract::{Path, State},
+};
+use uuid::Uuid;
 
 use crate::{
     config::AppState,
     error::AppError,
     middleware::auth::Claims,
-    services::guilds::{self, GuildInfo},
+    services::{
+        discord_feed::{self, ChannelInfo},
+        guilds::{self, GuildInfo},
+    },
 };
 
 /// Permissions the bot needs, as a Discord permissions bitfield.
@@ -50,6 +57,42 @@ pub async fn list_servers(
     );
 
     Ok(Json(ServersResponse { guilds, invite_url }))
+}
+
+/// The channels the bot could post in, for the picker on `/server`.
+///
+/// Addressed by `guilds.id`, not by the Discord snowflake, for two reasons:
+/// it matches what `GET /api/guilds` hands out, and it means the only guilds
+/// reachable here are ones this app has a row for. Taking a snowflake
+/// straight from the client would turn the bot token into a general-purpose
+/// "list any server's channels" proxy for anyone with a session.
+pub async fn list_channels(
+    _claims: Claims,
+    State(state): State<AppState>,
+    Path(guild_id): Path<Uuid>,
+) -> Result<Json<Vec<ChannelInfo>>, AppError> {
+    let bot_token = state.discord_bot_token.as_deref().ok_or_else(|| {
+        AppError::ValidationError("DISCORD_BOT_TOKEN is not configured".to_string())
+    })?;
+
+    // NotFound rather than a validation error: from the caller's side an
+    // unknown guild id is an unknown resource, and saying anything more
+    // would confirm which ids exist.
+    let discord_guild_id = guilds::discord_id_of(&state.db, guild_id)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+        .ok_or(AppError::NotFound)?;
+
+    let channels = discord_feed::list_text_channels(
+        &state.discord_api_base,
+        &state.http_client,
+        bot_token,
+        &discord_guild_id,
+    )
+    .await
+    .map_err(|e| AppError::ExternalApiError(e.to_string()))?;
+
+    Ok(Json(channels))
 }
 
 #[cfg(test)]
@@ -151,6 +194,100 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/guilds")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+    // --- GET /api/guilds/:id/channels ------------------------------------
+
+    async fn channels_response(body: serde_json::Value) -> wiremock::MockServer {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/guilds/111/channels"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    #[sqlx::test]
+    async fn lists_the_channels_the_bot_can_post_in(db: PgPool) {
+        let user = seed_user(&db).await;
+        let guild = crate::services::guilds::ensure_guild(&db, "111")
+            .await
+            .unwrap();
+
+        let server = channels_response(serde_json::json!([
+            { "id": "c1", "name": "general", "type": 0, "position": 0, "parent_id": null },
+            { "id": "c2", "name": "Voice", "type": 2, "position": 1, "parent_id": null }
+        ]))
+        .await;
+
+        let state = AppState::for_test(db, server.uri());
+        let token = generate_jwt(&user.discord_id, &state.jwt_secret).unwrap();
+
+        let response = crate::build_router(state)
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/guilds/{guild}/channels"))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let channels: Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(channels.as_array().unwrap().len(), 1);
+        assert_eq!(channels[0]["name"], "general");
+        assert_eq!(channels[0]["id"], "c1");
+    }
+
+    // A snowflake taken straight from the client would make the bot token a
+    // "list any server's channels" proxy for anyone with a session. The id
+    // is ours, and an unknown one is simply not found.
+    #[sqlx::test]
+    async fn an_unregistered_guild_is_not_found(db: PgPool) {
+        let user = seed_user(&db).await;
+        let state = AppState::for_test(db, "http://unused.invalid".to_string());
+        let token = generate_jwt(&user.discord_id, &state.jwt_secret).unwrap();
+
+        let response = crate::build_router(state)
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/guilds/{}/channels", uuid::Uuid::new_v4()))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[sqlx::test]
+    async fn listing_channels_requires_auth(db: PgPool) {
+        let guild = crate::services::guilds::ensure_guild(&db, "111")
+            .await
+            .unwrap();
+        let state = AppState::for_test(db, "http://unused.invalid".to_string());
+
+        let response = crate::build_router(state)
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/guilds/{guild}/channels"))
                     .body(Body::empty())
                     .unwrap(),
             )

@@ -990,11 +990,32 @@ gap below was checked against the code, not inferred.
 
 Run in this order; only the last pair has a real dependency.
 
-1. `.claude/skills/discord-channel-picker/SKILL.md` - ⚠️ **`/server` asks
-   for a raw Discord snowflake in a text box.** You need Developer Mode to
-   get one, nothing validates it, and a wrong-but-plausible id fails
-   silently because announcing is best-effort. Highest value per unit of
-   work on this list. Both mockups show a picker.
+1. `.claude/skills/discord-channel-picker/SKILL.md` - **done 2026-09-17.**
+   `/server` used to ask for a raw Discord snowflake in a text box: you
+   needed Developer Mode to get one, nothing validated it, and a
+   wrong-but-plausible id failed silently because announcing is
+   best-effort. Now `GET /api/guilds/:id/channels` +
+   `discord_feed::list_text_channels`, and the page offers the channels
+   grouped by category in Discord's own order.
+   - ⚠️ **Keyed by `guilds.id`, not the Discord snowflake.** A snowflake
+     taken from the client would make the bot token a "list any server's
+     channels" proxy for anyone with a session. `/server` holds the
+     snowflake, so it resolves one to the other through `GET /api/guilds` -
+     one extra request on a settings page, and it keeps a client-supplied
+     id out of the path.
+   - **Types 0 and 5 only** (text, announcement). Voice, category, stage and
+     forum channels cannot take a message, and offering an option that
+     cannot work is the failure the picker exists to end.
+   - ⚠️ **Discord only returns channels the bot has `VIEW_CHANNEL` on**, so a
+     channel the user expects is simply absent rather than an error. The
+     page says so outright.
+   - **The raw id field survives as the fallback** when there's no guild, no
+     bot token, or Discord refuses - a deployment whose bot is offline still
+     has to be configurable. The existing tests, written against that field,
+     now cover that path.
+   - The label is a `<span id>` + `aria-labelledby`, not `<label for>`: which
+     control it names depends on the branch, and a `for` pointing at an input
+     that doesn't exist names nothing.
 2. `.claude/skills/calendar-day-interactions/SKILL.md` - ⚠️ **month day
    cells carry `role="button"`, `tabindex="0"` and `cursor-pointer` with no
    click handler.** 35 fake buttons per screen. The mockup wants tap-to-

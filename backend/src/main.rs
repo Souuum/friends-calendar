@@ -112,6 +112,12 @@ pub(crate) fn build_router(state: AppState) -> Router {
         )
         // Servers the bot is in
         .route("/api/guilds", get(handlers::guilds::list_servers))
+        // Channels the bot can post in, for the /server picker - so nobody
+        // has to paste a snowflake.
+        .route(
+            "/api/guilds/:id/channels",
+            get(handlers::guilds::list_channels),
+        )
         // Friends routes
         .route("/api/friends", get(handlers::friends::list_friends))
         .route("/api/friends/sync", post(handlers::friends::sync_friends))
