@@ -1,6 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/svelte';
-import { writable } from 'svelte/store';
 import { dateUtils } from '$lib/utils/dateUtils';
 import type { EventWithParticipants, FriendInfo } from '$lib/types';
 
@@ -21,10 +20,17 @@ vi.mock('$lib/api', () => ({
 // The component reads $user for the default-visibility preselect. Mocked
 // so the preselect is deterministic rather than depending on whatever the
 // real store was last set to.
-vi.mock('$lib/stores', () => ({
-  user: writable({ default_visibility: 'friends' })
-}));
+// The component reads $user for the default-visibility preselect. An async
+// factory so the store is built after imports resolve - a hoisted one cannot
+// reference `writable` yet.
+vi.mock('$lib/stores', async () => {
+  const { writable } = await import('svelte/store');
+  return { user: writable({ default_visibility: 'friends' }) };
+});
 
+const { user: userStore } = (await import('$lib/stores')) as unknown as {
+  user: import('svelte/store').Writable<{ default_visibility: string }>;
+};
 const { default: CreateEventModal } = await import('./CreateEventModal.svelte');
 
 const alice: FriendInfo = {
@@ -41,9 +47,15 @@ const bob: FriendInfo = {
 };
 
 async function fillRequiredFields() {
-  await fireEvent.input(screen.getByLabelText('Event Title *'), { target: { value: 'Board games' } });
-  await fireEvent.input(screen.getByLabelText('Start Time *'), { target: { value: '2026-03-01T19:00' } });
-  await fireEvent.input(screen.getByLabelText('End Time *'), { target: { value: '2026-03-01T22:00' } });
+  await fireEvent.input(screen.getByLabelText('Event Title *'), {
+    target: { value: 'Board games' }
+  });
+  await fireEvent.input(screen.getByLabelText('Start Time *'), {
+    target: { value: '2026-03-01T19:00' }
+  });
+  await fireEvent.input(screen.getByLabelText('End Time *'), {
+    target: { value: '2026-03-01T22:00' }
+  });
 }
 
 function makeEvent(overrides: Partial<EventWithParticipants> = {}): EventWithParticipants {
@@ -388,9 +400,18 @@ describe('CreateEventModal server picker', () => {
     expect(createEvent.mock.calls[0][0].guild_ids).toEqual([]);
   });
 
+  /** The server chips only exist once you've chosen to announce. */
+  async function chooseAnnounce() {
+    await fireEvent.click(screen.getByRole('button', { name: /Announce in a server/ }));
+  }
+
   it('sends every server the creator picked', async () => {
     render(CreateEventModal, { props: { event: null } });
-    await waitFor(() => expect(screen.getByRole('button', { name: /The Hangout/ })).toBeInTheDocument());
+    await waitFor(() => expect(getServers).toHaveBeenCalled());
+    await chooseAnnounce();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /The Hangout/ })).toBeInTheDocument()
+    );
 
     await fireEvent.click(screen.getByRole('button', { name: /The Hangout/ }));
     await fireEvent.click(screen.getByRole('button', { name: /Board Club/ }));
@@ -403,6 +424,8 @@ describe('CreateEventModal server picker', () => {
 
   it('deselects on a second click', async () => {
     render(CreateEventModal, { props: { event: null } });
+    await waitFor(() => expect(getServers).toHaveBeenCalled());
+    await chooseAnnounce();
     const chip = await screen.findByRole('button', { name: /The Hangout/ });
 
     await fireEvent.click(chip);
@@ -411,21 +434,83 @@ describe('CreateEventModal server picker', () => {
     expect(chip).toHaveAttribute('aria-pressed', 'false');
   });
 
-  // Reach is scoped to publications, so "public" plus "nowhere" means nobody
-  // outside the guest list sees it. Saying so beats letting someone wonder.
-  it('warns when a shared event is going nowhere', async () => {
+  // ⚠️ Invite-only is the default and always was supported - an empty
+  // guild_ids means the backend announces nothing. What changed is that it
+  // is now a choice you make rather than one you forget.
+  it('defaults to invite-only and announces nothing', async () => {
     render(CreateEventModal, { props: { event: null } });
     await waitFor(() => expect(getServers).toHaveBeenCalled());
 
-    expect(screen.getByText(/only people you invite will see this/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Invite only/ })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    // No chips to accidentally leave unset.
+    expect(screen.queryByRole('button', { name: /The Hangout/ })).not.toBeInTheDocument();
 
-    await fireEvent.click(screen.getByRole('button', { name: /The Hangout/ }));
-    expect(screen.queryByText(/only people you invite will see this/i)).not.toBeInTheDocument();
+    await fillRequiredFields();
+    await fireEvent.click(screen.getByRole('button', { name: 'Create Event' }));
+
+    await waitFor(() => expect(createEvent).toHaveBeenCalled());
+    expect(createEvent.mock.calls[0][0].guild_ids).toEqual([]);
+  });
+
+  // It used to warn here, which read as "you've made a mistake" for the
+  // ordinary case of inviting a few friends and nobody else.
+  it('does not warn about an invite-only event', async () => {
+    render(CreateEventModal, { props: { event: null } });
+    await waitFor(() => expect(getServers).toHaveBeenCalled());
+
+    expect(screen.getByText(/Only the people you invite below will see this/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Pick a server/i)).not.toBeInTheDocument();
+  });
+
+  // Asking to announce and then naming nowhere *is* incomplete.
+  it('prompts when you chose to announce but picked no server', async () => {
+    render(CreateEventModal, { props: { event: null } });
+    await waitFor(() => expect(getServers).toHaveBeenCalled());
+
+    await chooseAnnounce();
+
+    expect(screen.getByText(/Pick a server/i)).toBeInTheDocument();
+  });
+
+  // Switching back must not leave a selection behind, or what gets
+  // submitted stops matching what the form says.
+  it('clears any picked servers when switching back to invite-only', async () => {
+    render(CreateEventModal, { props: { event: null } });
+    await waitFor(() => expect(getServers).toHaveBeenCalled());
+    await chooseAnnounce();
+    await fireEvent.click(await screen.findByRole('button', { name: /The Hangout/ }));
+
+    await fireEvent.click(screen.getByRole('button', { name: /Invite only/ }));
+    await fillRequiredFields();
+    await fireEvent.click(screen.getByRole('button', { name: 'Create Event' }));
+
+    await waitFor(() => expect(createEvent).toHaveBeenCalled());
+    expect(createEvent.mock.calls[0][0].guild_ids).toEqual([]);
+  });
+
+  // The one genuine contradiction: public reach comes *from* being
+  // announced somewhere.
+  it('flags a public event that is announced nowhere', async () => {
+    // ⚠️ Driven through the preference rather than the <select>: happy-dom's
+    // select support can't be made to change the bound value (CLAUDE.md
+    // records the same limitation as the reason the reminder picker uses
+    // buttons), and the preselect is a real path anyway.
+    userStore.set({ default_visibility: 'public' });
+    render(CreateEventModal, { props: { event: null } });
+    await waitFor(() => expect(getServers).toHaveBeenCalled());
+
+    expect(screen.getByText(/reaches your invitees and nobody else/i)).toBeInTheDocument();
   });
 
   it('says so when the bot is in no servers at all', async () => {
     getServers.mockResolvedValue({ guilds: [], invite_url: 'https://invite' });
     render(CreateEventModal, { props: { event: null } });
+    await waitFor(() => expect(getServers).toHaveBeenCalled());
+
+    await chooseAnnounce();
 
     await waitFor(() =>
       expect(screen.getByText(/bot isn't in any server yet/i)).toBeInTheDocument()

@@ -67,12 +67,38 @@
       : [...selectedGuildIds, id];
   }
 
-  // Picking no servers while asking for a non-private visibility is a
-  // contradiction worth surfacing: reach is scoped to where an event was
-  // published, so "public" plus "nowhere" means nobody outside the guest
-  // list sees it.
-  $: publishedNowhereButShared =
-    !isEditing && selectedGuildIds.length === 0 && visibility !== 'private';
+  /**
+   * Whether this event is announced at all.
+   *
+   * ⚠️ Not announcing has always been supported - an absent or empty
+   * `guild_ids` means the backend posts nothing - but it used to be the
+   * *absence* of a choice: the section said "Announce in", offered server
+   * chips, and picking none produced a warning. So the invite-only case,
+   * which is a perfectly ordinary thing to want, read as a mistake you had
+   * forgotten to correct.
+   *
+   * Making it an explicit option costs nothing on the wire and turns
+   * "I left it blank" into "I chose this".
+   */
+  let announceMode: 'none' | 'servers' = 'none';
+
+  // Clearing the chips when switching to invite-only, so what is submitted
+  // always matches what the form says.
+  $: if (announceMode === 'none' && selectedGuildIds.length > 0) {
+    selectedGuildIds = [];
+  }
+
+  // Now only fires on a genuinely incomplete state: you asked to announce
+  // and then named nowhere. Choosing invite-only is not that.
+  $: announceWithoutServer =
+    !isEditing && announceMode === 'servers' && selectedGuildIds.length === 0;
+
+  /**
+   * ⚠️ The one real contradiction left. Reach is scoped to where an event
+   * was published, so "public" plus "announced nowhere" means nobody
+   * outside the guest list - which is the opposite of what public reads as.
+   */
+  $: publicButUnannounced = !isEditing && announceMode === 'none' && visibility === 'public';
 
   function toggleReminder(value: number) {
     reminderLeads = reminderLeads.includes(value)
@@ -474,10 +500,56 @@
 
           {#if !isEditing}
             <fieldset class="border-0 p-0 m-0">
-              <legend class="block text-sm font-medium text-gray-700 mb-1">Announce in</legend>
-              {#if servers.length === 0}
+              <legend class="block text-sm font-medium text-gray-700 mb-1">Who can join</legend>
+
+              <div class="mb-2 flex flex-col gap-2 sm:flex-row">
+                <button
+                  type="button"
+                  aria-pressed={announceMode === 'none'}
+                  on:click={() => (announceMode = 'none')}
+                  class="flex-1 rounded-[11px] border p-3 text-left transition-colors {announceMode ===
+                  'none'
+                    ? 'border-primary bg-tint'
+                    : 'border-line bg-surface hover:bg-subtle'}"
+                >
+                  <span class="block text-sm font-semibold">Invite only</span>
+                  <span class="block text-xs text-muted">
+                    Nothing is posted to Discord. Only the people you add below can see it.
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={announceMode === 'servers'}
+                  on:click={() => (announceMode = 'servers')}
+                  class="flex-1 rounded-[11px] border p-3 text-left transition-colors {announceMode ===
+                  'servers'
+                    ? 'border-primary bg-tint'
+                    : 'border-line bg-surface hover:bg-subtle'}"
+                >
+                  <span class="block text-sm font-semibold">Announce in a server</span>
+                  <span class="block text-xs text-muted">
+                    Posted to Discord, where anyone in the channel can react to join.
+                  </span>
+                </button>
+              </div>
+
+              {#if publicButUnannounced}
+                <p class="mb-2 text-xs text-yellow-700">
+                  This is set to <strong>public</strong>, but an event only reaches people through
+                  the servers it's announced in — with no announcement it reaches your invitees and
+                  nobody else.
+                </p>
+              {/if}
+              {#if announceMode === 'none'}
+                <!-- Stated as a fact, not warned about: this is what the
+                     person just chose. -->
                 <p class="text-sm text-gray-500">
-                  The bot isn't in any server yet, so this event won't be announced.
+                  Only the people you invite below will see this event.
+                </p>
+              {:else if servers.length === 0}
+                <p class="text-sm text-gray-500">
+                  The bot isn't in any server yet, so this event can't be announced. Add it from the
+                  Servers page, or keep this invite-only.
                 </p>
               {:else}
                 <div class="flex flex-wrap gap-2">
@@ -498,10 +570,9 @@
                     </button>
                   {/each}
                 </div>
-                {#if publishedNowhereButShared}
-                  <p class="text-xs text-gray-500 mt-1">
-                    Not announcing anywhere — only people you invite will see this, even though it's
-                    set to {visibility}.
+                {#if announceWithoutServer}
+                  <p class="text-xs text-yellow-700 mt-1">
+                    Pick a server, or switch to <strong>Invite only</strong>.
                   </p>
                 {/if}
               {/if}
