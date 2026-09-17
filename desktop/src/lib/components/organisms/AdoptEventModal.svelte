@@ -57,15 +57,26 @@
     Boolean
   ) as string[];
 
+  /**
+   * Names what's missing rather than saying "required fields": the whole
+   * reason a field is blank here is that the parser couldn't find it in the
+   * post, so the reader has no idea which one it means.
+   */
+  function validate(): string {
+    const missingNow = [
+      title ? null : 'a title',
+      startTime ? null : 'a start time',
+      endTime ? null : 'an end time'
+    ].filter(Boolean);
+
+    if (missingNow.length > 0) return `This event still needs ${missingNow.join(', ')}.`;
+    if (new Date(endTime) <= new Date(startTime)) return 'End time must be after start time';
+    return '';
+  }
+
   async function handleSubmit() {
-    if (!title || !startTime || !endTime) {
-      error = 'Please fill in all required fields';
-      return;
-    }
-    if (new Date(endTime) <= new Date(startTime)) {
-      error = 'End time must be after start time';
-      return;
-    }
+    error = validate();
+    if (error) return;
 
     try {
       loading = true;
@@ -123,7 +134,14 @@
         </div>
       {/if}
 
-      <form on:submit|preventDefault={handleSubmit} class="space-y-4">
+      <!-- novalidate, deliberately. The fields are `required` and the date
+           often can't be parsed out of a post, so the browser was refusing
+           the submit before `on:submit` ever ran: no request, no error, no
+           visible reason - the modal just sat there. Constraint validation
+           reports through a native tooltip that is easy to miss inside a
+           scrolling container, and it bypasses the error box entirely. This
+           form validates itself, in one place, visibly. -->
+      <form on:submit|preventDefault={handleSubmit} novalidate class="space-y-4">
         <div>
           <label for="adopt-title" class="block text-sm font-medium text-gray-700 mb-1">
             Title *

@@ -103,6 +103,20 @@ const ANNOUNCEMENTS = [
     posted_at: AGO_1H
   },
   {
+    // Deliberately unparseable: no <t:...> timestamp, which is the normal
+    // case for a hand-written post and the one that exposed the adopt form
+    // refusing to submit with nothing to show for it. A fixture set where
+    // every post parses cleanly makes that bug invisible.
+    id: 'a3',
+    author_username: 'Julioo',
+    body: 'Concert samedi soir au Bikini, 20h. Qui vient ?',
+    tag: 'general',
+    reaction_count: 5,
+    reply_count: 0,
+    pinned: false,
+    posted_at: AGO_1H
+  },
+  {
     id: 'a2',
     author_username: 'brigitte_also_quite_long',
     body: 'Court.',

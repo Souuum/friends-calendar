@@ -607,6 +607,13 @@ rather than re-deriving the patterns. Summary:
 - **Layout tests (`desktop/e2e/`, Playwright + Chromium, added 2026-09-16).**
   Run `yarn test:layout` from `desktop/`; `yarn test:layout:ui` for the
   interactive runner. Gated in CI by its own `Layout Tests` job.
+  - ⚠️ **happy-dom also implements no HTML5 constraint validation.** A
+    `required` field the browser refuses to submit past is, to happy-dom, an
+    ordinary attribute - so `fireEvent.click` on the submit button runs the
+    handler that a real Chrome would never have reached. The adopt modal
+    shipped stuck-on-submit with eight passing component tests over it,
+    including ones that clicked submit. Anything that asserts a form
+    *submits* - or refuses to - needs a real browser, same as layout.
   - **Why a third tier exists:** happy-dom computes *no layout*. A div with
     an explicit `width: 402px` reports `getBoundingClientRect()` 0×0,
     `offsetWidth` 0, `scrollWidth` 0, and `window.innerWidth` is a fixed
@@ -1271,6 +1278,19 @@ visibility lets the server see it.
   entirely today, announcing happens in the handler, and a mutation test
   confirmed removing the line changes nothing observable. The guarantee that
   holds is the `.expect(0)` above.
+- ⚠️ **The adopt form is `novalidate`, deliberately.** Its fields are
+  `required`, and the date frequently *can't* be parsed out of a post - so
+  Chrome refused the submit before `on:submit` ever ran. No request, no
+  error, no visible reason: the modal just sat there, which is exactly how
+  it was reported ("the modal stays no matter what"). Constraint validation
+  reports through a native tooltip that is easy to miss inside a scrolling
+  container, and it bypasses the component's own error box entirely. The
+  form validates itself instead, in one place, naming the field it wants -
+  "This event still needs a start time" rather than "required fields",
+  because the reason it's blank is that the parser couldn't find it.
+  `CreateEventModal` was checked for the same trap and is safe: its
+  `validateStep1` means the mobile wizard can't reach the submit button with
+  an unfilled required field sitting in the `hidden` step.
 - UI: `AnnouncementPostCard` takes an optional `onAdopt`, and shows "Add to
   calendar" only when a handler is supplied *and* the post isn't already an
   event. `AdoptEventModal` (organisms) is a **separate** component rather
