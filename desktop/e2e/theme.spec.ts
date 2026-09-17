@@ -261,3 +261,53 @@ test('the view switcher follows the theme', async ({ page }) => {
   const bg = await luminanceOf(page, '[data-testid="view-switcher"]', 'background-color');
   expect(bg, `switcher background lightness ${bg} - should be dark`).toBeLessThan(0.4);
 });
+
+/**
+ * Native controls are painted by the browser, not by CSS.
+ *
+ * ⚠️ No selector reaches inside a `<select>`'s dropdown - the one thing
+ * that steers it is `color-scheme`. Without it the root stayed `normal`
+ * (light) however dark the page was, so Tailwind's preflight
+ * (`color: inherit; background-color: transparent` on form controls) left
+ * each `<option>` inheriting near-white text on the popup's light-scheme
+ * white background. The create-event Visibility picker was white on white.
+ *
+ * This is unassertable in vitest: happy-dom paints nothing and resolves no
+ * system colours.
+ */
+test('native controls follow the theme', async ({ page }) => {
+  await visit(page, '/', 'dark');
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme)).toBe(
+    'dark'
+  );
+
+  await visit(page, '/', 'light');
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme)).toBe(
+    'light'
+  );
+});
+
+// The control that actually broke. ⚠️ The dropdown itself cannot be
+// asserted on: it is an OS-level window that headless Chromium neither
+// paints nor screenshots, and the *closed* select measures the same dark
+// fill with or without the fix (a pixel-sampling version of this test
+// passed with the bug present, which is why it isn't here). What is
+// checkable is the pair that made it white-on-white: the option text
+// inherits near-white, so the popup behind it has to be dark-scheme too.
+test('the visibility dropdown will not render light text on a light popup', async ({ page }) => {
+  await visit(page, '/', 'dark');
+  await page.getByRole('button', { name: '+ New Event' }).click();
+
+  const { scheme, optionLightness } = await page.evaluate(() => {
+    const select = document.querySelector('#visibility') as HTMLSelectElement;
+    const option = select.querySelector('option')!;
+    const colour = getComputedStyle(option).color;
+    return {
+      scheme: getComputedStyle(select).colorScheme,
+      optionLightness: Number(colour.match(/^okl(?:ch|ab)\(\s*([\d.]+)/i)?.[1] ?? 0)
+    };
+  });
+
+  expect(optionLightness, 'options inherit near-white text in dark mode').toBeGreaterThan(0.8);
+  expect(scheme, 'so the popup behind that text must be dark-scheme').toBe('dark');
+});

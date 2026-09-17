@@ -16,84 +16,148 @@
  * - **Tapping the backdrop**, which is the near-universal convention.
  * - **The back gesture**, which is how a phone user closes anything.
  *
- * ## The history entry
+ * ## ⚠️ One history entry per *session*, not per modal
  *
- * Back only closes the modal if the modal *is* a history entry, so opening
- * one pushes a state and closing it pops that state back off. Two details
- * matter:
+ * The obvious design - each instance pushes its own entry on mount and pops
+ * it on unmount - cannot survive one modal opening another, because
+ * `history.back()` is **asynchronous**: it queues a pop that lands a task
+ * later, by which time the replacement modal has pushed an entry of its
+ * own. The invite sheet on `/friends/[id]` opening the create-event form
+ * produced exactly that:
  *
- * 1. **SvelteKit's own state is preserved** (`...history.state`). The
- *    router keys navigation off an index it stores there; replacing the
- *    state object wholesale would strip it and confuse the next real
- *    navigation.
- * 2. **The entry is cleaned up on close.** Dismissing via a button pops it
- *    with `history.back()`, so a modal opened and closed doesn't leave a
- *    dead entry that makes the user press back twice to leave the page.
- *    `poppedByBrowser` distinguishes the two, so we never call `back()`
- *    for an entry the browser has already removed - that would navigate
- *    away, which is the bug being fixed.
+ *     pushState   sheet opens
+ *     back()      sheet destroyed, pop queued
+ *     pushState   create-event form opens, pushes its own entry
+ *     popstate    the queued pop lands and eats the FORM's entry
+ *
+ * The form appeared for one frame and vanished - reported as "the create
+ * event modal never appear". Suppressing that stray popstate is not enough
+ * on its own: the entry is still gone, so the back gesture would navigate
+ * off the page again, which is the bug this whole module exists to fix.
+ *
+ * So the *stack* owns the entry, not the instance. One entry is pushed when
+ * the first modal opens and popped once the last one closes, and a handoff
+ * between two modals touches history not at all - the teardown pop is
+ * deferred by a task, which is long enough for the replacement to cancel
+ * it. `selfInitiatedPops` still guards the pop we do eventually make, since
+ * a popstate says nothing about which entry it removed.
  */
 
-/** Marks our own history entries so a popstate can be attributed. */
+/** Marks our own history entry so a popstate can be attributed. */
 const MODAL_STATE_KEY = '__modal';
 
-export function dismissable(node: HTMLElement, onDismiss: () => void) {
-  let dismiss = onDismiss;
+type Instance = {
+  dismiss: () => void;
+};
 
-  // True while the entry we pushed is still on the stack. Goes false the
-  // moment the browser pops it, so teardown knows not to pop it again.
-  let ourEntryIsLive = false;
+/** Mounted instances, oldest first. The last one is the topmost modal. */
+const stack: Instance[] = [];
 
-  const browser = typeof window !== 'undefined';
+/** Whether the entry we push for an open session is currently on the stack. */
+let weOwnAnEntry = false;
 
-  function onKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape') {
-      event.stopPropagation();
-      dismiss();
-    }
+/**
+ * Pops *we* queued while closing a session. A popstate arriving while this
+ * is non-zero is our own cleanup, not the user pressing back.
+ */
+let selfInitiatedPops = 0;
+
+/** Set while a teardown pop is waiting out the task that lets a handoff
+ *  cancel it. */
+let pendingRelease: ReturnType<typeof setTimeout> | null = null;
+
+let sharedListenersInstalled = false;
+
+function pushOurEntry() {
+  try {
+    history.pushState({ ...history.state, [MODAL_STATE_KEY]: true }, '');
+    weOwnAnEntry = true;
+  } catch {
+    // Some embedded webviews refuse pushState. The modal still works; only
+    // the back gesture falls back to normal navigation.
   }
+}
+
+/** Takes our entry back off, so leaving the page still takes one press of
+ *  back. Deferred, so a modal replacing another can cancel it. */
+function scheduleRelease() {
+  if (pendingRelease !== null) return;
+  pendingRelease = setTimeout(() => {
+    pendingRelease = null;
+    if (stack.length > 0 || !weOwnAnEntry) return;
+    weOwnAnEntry = false;
+    selfInitiatedPops += 1;
+    history.back();
+  }, 0);
+}
+
+function onPopState() {
+  if (selfInitiatedPops > 0) {
+    selfInitiatedPops -= 1;
+    return;
+  }
+  const top = stack[stack.length - 1];
+  if (!top) return;
+  // The browser has taken our entry; don't try to pop it again.
+  weOwnAnEntry = false;
+  top.dismiss();
+  // Modals left underneath still need an entry to absorb the next press,
+  // or back would navigate off the page with one still open.
+  if (stack.length > 0 && !weOwnAnEntry) pushOurEntry();
+}
+
+function onKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return;
+  const top = stack[stack.length - 1];
+  if (!top) return;
+  event.stopPropagation();
+  top.dismiss();
+}
+
+function installSharedListeners() {
+  if (sharedListenersInstalled) return;
+  window.addEventListener('keydown', onKeydown);
+  window.addEventListener('popstate', onPopState);
+  sharedListenersInstalled = true;
+}
+
+export function dismissable(node: HTMLElement, onDismiss: () => void) {
+  const browser = typeof window !== 'undefined';
+  const instance: Instance = { dismiss: onDismiss };
 
   // Only the backdrop itself - a click that started inside the dialog must
   // not close it, or dragging to select text and releasing outside would.
   function onPointerDown(event: PointerEvent) {
-    if (event.target === node) {
-      const onUp = (up: PointerEvent) => {
-        if (up.target === node) dismiss();
-      };
-      node.addEventListener('pointerup', onUp, { once: true });
-    }
-  }
-
-  function onPopState() {
-    ourEntryIsLive = false;
-    dismiss();
+    if (event.target !== node) return;
+    const onUp = (up: PointerEvent) => {
+      if (up.target === node) instance.dismiss();
+    };
+    node.addEventListener('pointerup', onUp, { once: true });
   }
 
   if (browser) {
-    try {
-      history.pushState({ ...history.state, [MODAL_STATE_KEY]: true }, '');
-      ourEntryIsLive = true;
-    } catch {
-      // Some embedded webviews refuse pushState. The modal still works;
-      // only the back gesture falls back to normal navigation.
+    // A modal replacing another one: keep the entry the session already has
+    // rather than releasing and re-pushing it.
+    if (pendingRelease !== null) {
+      clearTimeout(pendingRelease);
+      pendingRelease = null;
     }
-    window.addEventListener('keydown', onKeydown);
-    window.addEventListener('popstate', onPopState);
+    stack.push(instance);
+    if (!weOwnAnEntry) pushOurEntry();
+    installSharedListeners();
     node.addEventListener('pointerdown', onPointerDown);
   }
 
   return {
     update(next: () => void) {
-      dismiss = next;
+      instance.dismiss = next;
     },
     destroy() {
       if (!browser) return;
-      window.removeEventListener('keydown', onKeydown);
-      window.removeEventListener('popstate', onPopState);
       node.removeEventListener('pointerdown', onPointerDown);
-      // Closed by a control rather than by the browser: take our entry back
-      // off, so leaving the page still takes one press of back.
-      if (ourEntryIsLive) history.back();
+      const at = stack.indexOf(instance);
+      if (at !== -1) stack.splice(at, 1);
+      if (stack.length === 0) scheduleRelease();
     }
   };
 }

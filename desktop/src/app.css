@@ -14,6 +14,31 @@ body {
   box-sizing: border-box;
 }
 
+/* ---------------------------------------------------------------------
+   Native controls have to be told about the theme separately.
+
+   ⚠️ A `<select>`'s dropdown is painted by the browser, not by CSS - no
+   selector reaches inside it. What it *does* honour is `color-scheme`, and
+   without this declaration the root stays `normal` (i.e. light) however
+   dark the page is.
+
+   That broke the create-event Visibility picker: Tailwind's preflight sets
+   `color: inherit; background-color: transparent` on form controls, so in
+   dark mode each `<option>` inherited near-white text while the popup kept
+   its light-scheme white background - white on white. The closed control
+   was painted white too, alone among the inputs on a dark card.
+
+   This also fixes the scrollbars, the `datetime-local` picker and the
+   checkbox in the same stroke, for the same reason.
+   --------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+}
+
+:root.dark {
+  color-scheme: dark;
+}
+
 @theme {
   --color-primary: #5030e5;
   --color-secondary: #d81159;

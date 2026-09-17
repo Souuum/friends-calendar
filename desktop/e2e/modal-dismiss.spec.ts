@@ -267,3 +267,58 @@ test.describe('event peek sheet', () => {
     await expect(page.getByTestId('event-peek').getByText('Cost per person')).toBeVisible();
   });
 });
+
+/**
+ * Handing off from one dismissable to another.
+ *
+ * ⚠️ `history.back()` is asynchronous and a popstate says nothing about
+ * which entry it removed, so a per-instance listener cannot tell the user
+ * pressing back from another modal's teardown pop arriving late. The invite
+ * sheet closing to open the create-event form produced exactly that:
+ *
+ *     pushState / back() / pushState / popstate
+ *
+ * and the queued pop closed the *form*, which was reported as "the create
+ * event modal never appear". Invisible to vitest - happy-dom has no history
+ * for any of this to happen in.
+ */
+test.describe('one modal opening another', () => {
+  test('the create-event form survives the sheet that opened it', async ({ page }) => {
+    await page.goto('/friends/u1');
+    await page
+      .getByRole('button', { name: /invite/i })
+      .first()
+      .click();
+
+    const sheet = page.getByRole('button', { name: /New event with/i });
+    await expect(sheet).toBeVisible();
+    await sheet.click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    // The teardown pop lands a task later, so a snapshot taken immediately
+    // would pass even with the bug present.
+    await page.waitForTimeout(600);
+    await expect(dialog).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe('/friends/u1');
+  });
+
+  // The handoff must not cost a history entry either, or leaving the page
+  // starts taking two presses of back.
+  test('leaving afterwards still takes one press of back', async ({ page }) => {
+    await page.goto('/settings');
+    await page.goto('/friends/u1');
+    await page
+      .getByRole('button', { name: /invite/i })
+      .first()
+      .click();
+    await page.getByRole('button', { name: /New event with/i }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.waitForTimeout(600);
+
+    await page.goBack();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/settings$/);
+  });
+});

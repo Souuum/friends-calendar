@@ -1883,6 +1883,26 @@ writes a new component.
   `'system'` stays reachable from `/settings`. The icon shows the mode you'd
   switch **to**, with an `aria-label` that says so outright.
 
+⚠️ **Native controls need `color-scheme`; nothing else reaches them.**
+`:root { color-scheme: light }` / `:root.dark { color-scheme: dark }` in
+`app.css`. A `<select>`'s dropdown is painted by the browser, not by CSS -
+no selector gets inside it - and without this the root stays `normal`
+(light) however dark the page is. Tailwind's preflight sets
+`color: inherit; background-color: transparent` on form controls, so in dark
+mode every `<option>` inherited near-white text onto the popup's
+light-scheme white background: the create-event Visibility picker was white
+on white. Scrollbars, the `datetime-local` picker and checkboxes were all
+wrong for the same reason and are fixed by the same two declarations.
+
+⚠️ **The dropdown itself is unassertable here.** It is an OS-level window
+headless Chromium neither paints nor screenshots, and the *closed* select
+measures the same dark fill with or without the fix - a pixel-sampling test
+was written, **passed with the bug present**, and was deleted rather than
+kept. `theme.spec.ts` asserts the pair that actually made it white-on-white
+instead: options inherit near-white text, so the scheme behind them must be
+dark. Don't trust a downscaled screenshot for this either; reading one is
+what produced two wrong calls about this control in a row.
+
 ⚠️ **A test-tooling trap this surfaced**: Chrome's `getComputedStyle`
 returns colours authored as `oklch()` **as `oklch()`**, not converted to
 rgb. The first version of `theme.spec.ts`'s luminance helper regexed three
@@ -2037,6 +2057,43 @@ and is what the codebase already does for `max-h`/`w-[1.25em]`.)
 the server command is `yarn build && yarn preview`. **A preview server left
 running locally serves a stale build**, so a CSS change appears to have no
 effect. Kill port 4173 before concluding a style fix didn't work.
+
+### ⚠️ One history entry per modal *session*, not per modal (2026-09-18)
+
+Reported as "on friend screen when clicking on invite => create event, the
+create event modal never appear". The invite sheet and the create-event form
+both `use:dismissable`, and the obvious design - each instance pushes an
+entry on mount and pops it on unmount - cannot survive one opening the
+other, because **`history.back()` is asynchronous**:
+
+```
+pushState   sheet opens
+back()      sheet destroyed, pop queued
+pushState   form opens, pushes its own entry
+popstate    the queued pop lands and eats the FORM's entry
+```
+
+A popstate says nothing about which entry it removed, so a per-instance
+listener hands it to whatever is mounted when it lands. The form appeared
+for one frame and vanished.
+
+- **Suppressing the stray popstate is not enough** - that was the first fix
+  and it was wrong. The modal then survived, but its entry was still gone,
+  so the back gesture navigated off the page: exactly the bug this module
+  exists to prevent. Caught because the second test asserted history
+  hygiene and landed on `about:blank`.
+- So the **stack** owns the entry. One is pushed when the first modal opens
+  and released once the last closes; the release is deferred by a task, so a
+  handoff cancels it and touches history not at all. `selfInitiatedPops`
+  still guards the pop we do eventually make.
+- After a back press dismisses the top modal, a fresh entry is pushed if any
+  modal is still open underneath - otherwise the next press would leave the
+  page with one still up.
+- Escape and popstate both go through the stack and act on the **topmost**
+  instance only, so a back press peels one layer instead of collapsing every
+  open modal at once.
+- ⚠️ Browser-only, necessarily: happy-dom has no `history` for any of this
+  to happen in, and all 276 component tests passed throughout.
 
 ⚠️ **`actions/clickOutside.ts` leaked every listener it ever added** - found
 while reading it for this work, unrelated to the reported bug. It added on
