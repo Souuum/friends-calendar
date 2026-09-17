@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { renderDiscordMarkdown } from '$lib/utils/discordMarkdown';
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
@@ -111,7 +112,9 @@
                   <span class="font-mono text-[10px] text-muted">{formatDate(reply.posted_at)}</span
                   >
                 </div>
-                <p class="text-sm text-body whitespace-pre-wrap m-0 mt-1">{reply.body}</p>
+                <p class="text-sm text-body m-0 mt-1">
+                  {@html renderDiscordMarkdown(reply.body)}
+                </p>
               </div>
             </div>
           {/each}

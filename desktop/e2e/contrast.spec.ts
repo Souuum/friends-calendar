@@ -65,14 +65,27 @@ async function auditPage(page: Page) {
       const style = getComputedStyle(el);
       if (style.visibility === 'hidden' || style.opacity === '0') continue;
 
-      // The background it is actually painted on: its own, or the nearest
-      // ancestor that paints one.
+      // The background it is actually painted on. Translucent layers must be
+      // composited over what is behind them, not treated as opaque: a
+      // `bg-gray-500/20` chip over a dark card renders dark, but reading its
+      // raw rgb reports a mid grey and invents a contrast failure that isn't
+      // on screen.
       let background: number[] | null = null;
       let node: Element | null = el;
-      while (node && !background) {
-        const c = toRgb(getComputedStyle(node).backgroundColor);
-        if (c[3] > 0) background = c;
+      let acc: number[] = [0, 0, 0];
+      let accAlpha = 0;
+      while (node && accAlpha < 1) {
+        const [r, g, b, a] = toRgb(getComputedStyle(node).backgroundColor);
+        if (a > 0) {
+          const weight = a * (1 - accAlpha);
+          acc = [acc[0] + r * weight, acc[1] + g * weight, acc[2] + b * weight];
+          accAlpha += weight;
+        }
         node = node.parentElement;
+      }
+      if (accAlpha > 0) {
+        // Whatever is still uncovered is the page's own ground.
+        background = acc.map((c) => c / accAlpha);
       }
       if (!background) continue;
 

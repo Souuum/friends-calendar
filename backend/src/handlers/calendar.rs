@@ -419,6 +419,33 @@ pub async fn link_discord_message(
     Ok(Json(event))
 }
 
+/// Records every ✅ already sitting on announcement messages.
+///
+/// `bot.rs` only sees reactions added while it is connected, so anything
+/// ticked before an event was announced through this app - or during any
+/// downtime - never became an RSVP. This reconciles from Discord's own
+/// state, and is safe to run repeatedly: the underlying upsert is
+/// idempotent.
+pub async fn sync_reactions(
+    _claims: Claims,
+    State(state): State<AppState>,
+) -> Result<Json<crate::services::reaction_sync::SyncReport>, AppError> {
+    let bot_token = state.discord_bot_token.as_deref().ok_or_else(|| {
+        AppError::ValidationError("DISCORD_BOT_TOKEN is not configured".to_string())
+    })?;
+
+    let report = crate::services::reaction_sync::sync_all(
+        &state.db,
+        &state.discord_api_base,
+        &state.http_client,
+        bot_token,
+    )
+    .await
+    .map_err(|e| AppError::ExternalApiError(e.to_string()))?;
+
+    Ok(Json(report))
+}
+
 #[cfg(test)]
 mod tests {
     use axum::body::Body;

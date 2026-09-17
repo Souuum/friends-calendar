@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { renderDiscordMarkdown } from '$lib/utils/discordMarkdown';
   import Icon from '$lib/components/atoms/Icon.svelte';
   import type { AnnouncementPostInfo } from '$lib/types';
   import Avatar from '$lib/components/atoms/Avatar.svelte';
@@ -77,8 +78,12 @@
     <h3 class="font-bold text-lg m-0 {featured ? 'text-white' : 'text-gray-900'}">{post.title}</h3>
   {/if}
 
-  <p class="text-sm whitespace-pre-wrap m-0 {featured ? 'text-on-invert' : 'text-gray-700'}">
-    {post.body}
+  <!-- {@html} is safe here specifically because renderDiscordMarkdown
+       escapes first and emits a closed set of tags - see its module doc.
+       whitespace-pre-wrap is gone: line breaks are <br /> now, and
+       pre-wrap would double the spacing around block elements. -->
+  <p class="text-sm m-0 {featured ? 'text-on-invert' : 'text-gray-700'}">
+    {@html renderDiscordMarkdown(post.body)}
   </p>
 
   <div

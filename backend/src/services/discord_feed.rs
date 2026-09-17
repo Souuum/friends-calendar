@@ -300,7 +300,7 @@ pub async fn fetch_replies(
     Ok(replies)
 }
 
-async fn get_json<T: serde::de::DeserializeOwned>(
+pub(crate) async fn get_json<T: serde::de::DeserializeOwned>(
     http: &Client,
     bot_token: &str,
     url: &str,
@@ -401,7 +401,7 @@ pub async fn add_reaction(
 
 /// Minimal percent-encoding for a path segment. Enough for emoji, which is
 /// all this is used for - not a general-purpose URL encoder.
-fn url_encode(s: &str) -> String {
+pub(crate) fn url_encode(s: &str) -> String {
     s.bytes().map(|b| format!("%{b:02X}")).collect()
 }
 

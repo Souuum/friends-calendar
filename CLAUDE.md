@@ -1119,6 +1119,49 @@ looked at with content in it.
   rows cascade cannot identify. The cost is that the calendar's "Created by
   me" filter stays empty.
 
+## Discord markdown & reaction backfill (2026-09-17)
+
+**`lib/utils/discordMarkdown.ts`** renders Discord's message flavour to a
+closed set of HTML tags. The announcements mirror showed raw markup before -
+`**Date :**`, `<t:1795806000:F>`, `<:hmm3:141715...>`, `[OKAY](url)` - because
+the body was rendered as plain text.
+
+- ⚠️ **The output goes through `{@html}` and the input is whatever anyone in
+  the server typed.** Safety comes from ordering: every `<...>` construct and
+  code span is lifted into placeholders *first*, everything left is escaped,
+  formatting is applied to the escaped text, then the placeholders are
+  substituted with HTML this module built from validated values. Emoji ids
+  must be digits (they go into a CDN URL); hrefs must be http(s), so
+  `javascript:` and `data:` stay inert text. Written by hand rather than
+  pulled from npm because a general markdown library renders far more than
+  Discord does and would need sanitising anyway.
+- Chips use **translucent** neutrals (`bg-gray-500/20`), not a fixed grey:
+  this HTML lands inside ordinary cards *and* the inverted featured card.
+  The contrast audit measured the timestamp chip at **1.08:1** with a fixed
+  `bg-gray-100` - it caught brand-new code minutes after it was written.
+- ⚠️ **The contrast audit had to learn alpha compositing** for that fix. It
+  stopped at the first non-transparent ancestor and used its raw rgb, so a
+  20%-alpha chip over a dark card reported 2.15:1 for something that renders
+  fine. It now composites down the ancestor chain until opaque. Verified it
+  still catches the real 1.08:1 case afterwards.
+
+**`services/reaction_sync.rs`** backfills RSVPs from reactions already on
+announcement messages. `bot.rs` only ever sees reactions added *while it is
+connected*, so anything ticked before an event was announced through this
+app - or during downtime - never became an RSVP, which is why a ✅ could
+leave the calendar empty.
+
+- Reuses `bot::record_attendance`, so a backfilled RSVP and a live one take
+  exactly the same path: same publication lookup, same idempotent upsert,
+  same handling of a previous "declined".
+- ⚠️ **Skips reactors flagged `bot`.** The bot adds the ✅ itself, so without
+  that check it would become a participant in every event it announced.
+- Runs once at startup (spawned, not awaited - one Discord call per
+  announced message) and is exposed as `POST /api/events/sync-reactions`.
+  Idempotent, so booting repeatedly is harmless.
+- A failing message is logged and skipped rather than abandoning the run: a
+  single deleted message should not stop the rest.
+
 ## Icons (2026-09-17)
 
 **`atoms/Icon.svelte` replaced every emoji in the UI with outline SVGs** -

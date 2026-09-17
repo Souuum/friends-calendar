@@ -88,6 +88,10 @@ pub(crate) fn build_router(state: AppState) -> Router {
             "/api/events/announcement-preview",
             post(handlers::calendar::preview_announcement),
         )
+        .route(
+            "/api/events/sync-reactions",
+            post(handlers::calendar::sync_reactions),
+        )
         .route("/api/events", post(handlers::calendar::create_event))
         .route("/api/events", get(handlers::calendar::list_events))
         .route("/api/events/:id", get(handlers::calendar::get_event))
@@ -268,6 +272,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             state.http_client.clone(),
             bot_token.clone(),
         ));
+    }
+
+    // One backfill pass at startup, so reactions that arrived while the bot
+    // was down - or that predate the event ever being announced through this
+    // app - become RSVPs without anyone having to ask. Spawned rather than
+    // awaited: it makes one Discord call per announced message, and the
+    // server should not wait on that to start listening. Idempotent, so
+    // running it on every boot is harmless.
+    if let Some(bot_token) = &state.discord_bot_token {
+        let db = state.db.clone();
+        let base = state.discord_api_base.clone();
+        let http = state.http_client.clone();
+        let token = bot_token.clone();
+        tokio::spawn(async move {
+            match services::reaction_sync::sync_all(&db, &base, &http, &token).await {
+                Ok(report) => tracing::info!(
+                    "✅ Reaction backfill: {} message(s), {} reaction(s), {} RSVP(s) recorded",
+                    report.messages_checked,
+                    report.reactions_seen,
+                    report.rsvps_recorded
+                ),
+                Err(e) => tracing::warn!("⚠️  Reaction backfill failed: {e}"),
+            }
+        });
     }
 
     let app = build_router(state);

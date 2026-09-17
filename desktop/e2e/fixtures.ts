@@ -85,7 +85,16 @@ const ANNOUNCEMENTS = [
     id: 'a1',
     author_username: 'alexandre_the_longest_name',
     title: 'Règles du serveur mises à jour pour la rentrée',
-    body: 'Un message assez long, parce que les cartes doivent tenir à 402px de large sans provoquer de défilement horizontal, et un texte court ne le prouverait pas.',
+    // Real Discord markup, so the screenshots and the contrast audit both
+    // exercise the renderer rather than plain prose.
+    body:
+      "@everyone\n__Proposition d'activité :__\n\n" +
+      '**Date :** <t:1795806000:F>\n' +
+      '**Activité :** EsdeeKid\n' +
+      "**Lieu :** L'Olympia\n" +
+      '**Prix :** 59e20 fosse\n' +
+      '**Lien :** [OKAY](https://www.ticketmaster.fr/en/manifestation/esdeekid-ticket/idmanif/668111)\n\n' +
+      '**Réagissez avec ✅ pour participer !**',
     tag: 'general',
     reaction_count: 12,
     reply_count: 4,
