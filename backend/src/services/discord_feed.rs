@@ -187,12 +187,28 @@ pub async fn list_posts(db: &PgPool, channel_id: &str) -> Result<Vec<Announcemen
     .fetch_all(db)
     .await?;
 
-    // One lookup for the whole list rather than per row. Absent config just
-    // means no deep link - the feed still reads fine without one.
-    let guild_id: Option<String> =
-        sqlx::query_scalar("SELECT guild_id FROM discord_bot_config LIMIT 1")
-            .fetch_optional(db)
-            .await?;
+    // From `guilds`, not `discord_bot_config`. The latter only has a row once
+    // somebody saves the /server form, and the announcements feed does not
+    // need that - `resolve_announcement_channel_id` falls back to the env
+    // var - so reading it here reported "no server is linked" on a perfectly
+    // working deployment. `guilds` is populated automatically by the
+    // gateway's guild_create.
+    //
+    // Prefers a guild that has actually published into this channel, since
+    // with several servers the first registered one need not be the right
+    // one; falls back to the oldest, which is correct for a single guild.
+    let guild_id: Option<String> = sqlx::query_scalar(
+        r#"
+        SELECT g.discord_guild_id
+        FROM guilds g
+        LEFT JOIN event_publications p ON p.guild_id = g.id AND p.channel_id = $1
+        ORDER BY (p.id IS NOT NULL) DESC, g.added_at
+        LIMIT 1
+        "#,
+    )
+    .bind(channel_id)
+    .fetch_optional(db)
+    .await?;
 
     Ok(rows
         .into_iter()
@@ -430,6 +446,52 @@ mod tests {
     use serde_json::json;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    // --- thread_url ------------------------------------------------------
+
+    async fn seed_post(db: &PgPool, channel: &str, message: &str) {
+        sqlx::query(
+            r#"
+            INSERT INTO announcement_posts
+              (id, discord_message_id, channel_id, author_discord_id, author_username,
+               body, tag, posted_at, synced_at)
+            VALUES (gen_random_uuid(), $1, $2, 'a', 'alice', 'hi', 'general', now(), now())
+            "#,
+        )
+        .bind(message)
+        .bind(channel)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+
+    // The bug this replaced: the guild came from discord_bot_config, which
+    // only has a row once somebody saves the /server form. The feed itself
+    // does not need that - the channel falls back to the env var - so a
+    // working deployment reported "no server is linked".
+    #[sqlx::test]
+    async fn thread_url_uses_the_guild_the_bot_registered(db: PgPool) {
+        crate::services::guilds::upsert_guild_metadata(&db, "999", "Royal Family", None)
+            .await
+            .unwrap();
+        seed_post(&db, "chan-1", "msg-7").await;
+
+        let posts = list_posts(&db, "chan-1").await.unwrap();
+
+        assert_eq!(
+            posts[0].thread_url.as_deref(),
+            Some("https://discord.com/channels/999/msg-7")
+        );
+    }
+
+    #[sqlx::test]
+    async fn thread_url_is_absent_when_no_guild_is_registered(db: PgPool) {
+        seed_post(&db, "chan-1", "msg-7").await;
+
+        let posts = list_posts(&db, "chan-1").await.unwrap();
+
+        assert!(posts[0].thread_url.is_none());
+    }
 
     // --- unit: split_title -----------------------------------------------
 

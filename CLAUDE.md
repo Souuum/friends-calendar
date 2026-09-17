@@ -1142,6 +1142,13 @@ client - there is a test asserting that - so the URL is assembled in
 `list_posts` rather than exposing `discord_message_id`. Absent config means
 no link, and the page says so rather than rendering a dead button.
 
+⚠️ **`thread_url` resolves the guild from `guilds`, not `discord_bot_config`.**
+The first version read the latter, which only has a row once somebody saves
+the `/server` form - and the announcements feed never needs that, because
+`resolve_announcement_channel_id` falls back to the env var. So a perfectly
+working deployment reported "no server is linked yet". `guilds` is populated
+automatically by the gateway's `guild_create`.
+
 A functional test asserts the route returns **404**, not merely that the UI
 stopped calling it.
 
