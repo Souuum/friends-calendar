@@ -3,18 +3,21 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import Calendar from './Calendar.svelte';
 import type { EventWithParticipants, FriendInfo } from '$lib/types';
 
-const { getFreeFriendsNow, getFriends, getServers, previewAnnouncement } = vi.hoisted(() => ({
-  getFreeFriendsNow: vi.fn(),
-  getFriends: vi.fn(),
-  // CreateEventModal loads these on mount. Stubbed here because opening the
-  // create form is now reachable from the calendar itself (double-click a
-  // day), not only from a test that renders the modal directly.
-  getServers: vi.fn(),
-  previewAnnouncement: vi.fn()
-}));
+const { getFreeFriendsNow, getFriends, getServers, previewAnnouncement, getBestSlots } = vi.hoisted(
+  () => ({
+    getFreeFriendsNow: vi.fn(),
+    getFriends: vi.fn(),
+    getBestSlots: vi.fn(),
+    // CreateEventModal loads these on mount. Stubbed here because opening the
+    // create form is now reachable from the calendar itself (double-click a
+    // day), not only from a test that renders the modal directly.
+    getServers: vi.fn(),
+    previewAnnouncement: vi.fn()
+  })
+);
 
 vi.mock('$lib/api', () => ({
-  api: { getFreeFriendsNow, getFriends, getServers, previewAnnouncement }
+  api: { getFreeFriendsNow, getFriends, getServers, previewAnnouncement, getBestSlots }
 }));
 
 const alice: FriendInfo = {
@@ -60,6 +63,7 @@ describe('Calendar', () => {
     getFriends.mockResolvedValue([]);
     getFreeFriendsNow.mockResolvedValue([]);
     getServers.mockResolvedValue({ guilds: [], invite_url: '' });
+    getBestSlots.mockResolvedValue([]);
     previewAnnouncement.mockResolvedValue('');
   });
 
@@ -276,6 +280,61 @@ describe('Calendar', () => {
       // And an end time, so the form is submittable without inventing one.
       const end = screen.getByLabelText(/End Time/i) as HTMLInputElement;
       expect(end.value).toBe(`${localDay}T21:00`);
+    });
+  });
+  describe('the best-overlap suggestion', () => {
+    /** Tomorrow at 20:00 local, which is what the backend would return. */
+    function tomorrowEvening() {
+      const d = new Date();
+      d.setDate(d.getDate() + 1);
+      d.setHours(20, 0, 0, 0);
+      return d;
+    }
+
+    it('shows when the group could actually meet', async () => {
+      getBestSlots.mockResolvedValue([
+        { start: tomorrowEvening().toISOString(), free_count: 7, free_friend_ids: [] }
+      ]);
+
+      render(Calendar, { props: { events: [] } });
+
+      await waitFor(() => expect(screen.getByText(/Best overlap this week/)).toBeInTheDocument());
+      expect(screen.getByText(/7 free/)).toBeInTheDocument();
+    });
+
+    // A suggestion the button ignores is decoration.
+    it('"Propose a time" opens the form on the suggested slot', async () => {
+      const slot = tomorrowEvening();
+      getBestSlots.mockResolvedValue([
+        { start: slot.toISOString(), free_count: 3, free_friend_ids: [] }
+      ]);
+
+      render(Calendar, { props: { events: [] } });
+      await waitFor(() => expect(screen.getByText(/Best overlap this week/)).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Propose a time' }));
+
+      const start = (await screen.findByLabelText(/Start Time/i)) as HTMLInputElement;
+      const day = [
+        slot.getFullYear(),
+        String(slot.getMonth() + 1).padStart(2, '0'),
+        String(slot.getDate()).padStart(2, '0')
+      ].join('-');
+      expect(start.value).toBe(`${day}T20:00`);
+    });
+
+    // The bar did something useful before this existed, and has to keep
+    // doing it when the suggestion can't be computed.
+    it('still shows who is free when no slot comes back', async () => {
+      getBestSlots.mockRejectedValue(new Error('nope'));
+
+      render(Calendar, { props: { events: [] } });
+
+      await waitFor(() => expect(screen.getByText('Free tonight')).toBeInTheDocument());
+      expect(screen.queryByText(/Best overlap/)).not.toBeInTheDocument();
+      // And the button still opens an empty form.
+      await fireEvent.click(screen.getByRole('button', { name: 'Propose a time' }));
+      expect(await screen.findByLabelText(/Start Time/i)).toBeInTheDocument();
     });
   });
 });

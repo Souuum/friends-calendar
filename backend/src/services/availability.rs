@@ -1,5 +1,6 @@
 use anyhow::Result;
-use chrono::{DateTime, Duration, Utc};
+use chrono::Duration;
+use chrono::{DateTime, Datelike, DurationRound, Timelike, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -93,6 +94,149 @@ fn compute_free_users_per_day(
             }
         })
         .collect()
+}
+
+// --- Slot ranking -------------------------------------------------------
+//
+// ⚠️ Everything above is **day granularity on purpose** (see
+// `compute_free_users_per_day`'s doc): it backs the mockup's weekly strip,
+// one coloured cell per day, and it is correct as it stands. It cannot
+// answer "Fri **20:00**" - somebody with a 09:00 dentist appointment is
+// "busy Friday" and would be excluded from every Friday-evening suggestion,
+// which is exactly the population this feature exists to find.
+//
+// So this is a second computation *beside* it, not a replacement.
+
+/// A candidate time, and who is free for the whole of it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct Slot {
+    pub start: DateTime<Utc>,
+    pub free_user_ids: Vec<Uuid>,
+}
+
+/// Local hours a suggestion may start at.
+///
+/// Not "every 30 minutes across the week": that is 336 candidates of mostly
+/// nonsense (03:00 Tuesday), and a suggestion nobody would act on is noise.
+/// Evenings every day, plus weekend afternoons - the shape of when this kind
+/// of group actually meets.
+fn candidate_local_hours(weekday: chrono::Weekday) -> &'static [u32] {
+    use chrono::Weekday::{Sat, Sun};
+    match weekday {
+        Sat | Sun => &[12, 14, 16, 18, 19, 20, 21],
+        _ => &[18, 19, 20, 21],
+    }
+}
+
+/// Free for the **whole** slot, not merely at its start - a slot that
+/// begins in a gap and runs into an event is not a time you can meet.
+fn free_for_interval(
+    busy: &[(Uuid, DateTime<Utc>, DateTime<Utc>)],
+    user_id: Uuid,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> bool {
+    // Half-open on both sides, matching `compute_free_users_at` above: an
+    // event that ends exactly when the slot starts does not block it.
+    !busy.iter().any(|(busy_user, busy_start, busy_end)| {
+        *busy_user == user_id && *busy_start < end && start < *busy_end
+    })
+}
+
+/// Pure: candidate slots in `[from, to)` ranked by how many of `user_ids`
+/// are free for all of each one.
+///
+/// `tz_offset_minutes` is the **requester's** offset from UTC, so "evening"
+/// means their evening. ⚠️ It is a fixed offset rather than a timezone, so a
+/// window spanning a daylight-saving change is out by an hour on the far
+/// side of it. Within the week this is asked about that is a rounding error,
+/// and the alternative is a timezone database for one hour a year.
+///
+/// Ties break toward the **soonest** slot, and the order is total, so the
+/// suggestion doesn't shuffle between page loads for no reason.
+pub fn rank_slots(
+    busy: &[(Uuid, DateTime<Utc>, DateTime<Utc>)],
+    user_ids: &[Uuid],
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    slot_minutes: i64,
+    tz_offset_minutes: i64,
+) -> Vec<Slot> {
+    if user_ids.is_empty() || slot_minutes <= 0 || to <= from {
+        return Vec::new();
+    }
+
+    let offset = Duration::minutes(tz_offset_minutes);
+    let duration = Duration::minutes(slot_minutes);
+
+    // Walk hour by hour and keep the candidates. At most ~168 steps for a
+    // week, which costs nothing and avoids fiddly local-midnight arithmetic
+    // around the ends of the window.
+    let mut slots: Vec<Slot> = Vec::new();
+    let mut cursor = from
+        .with_timezone(&Utc)
+        .duration_trunc(Duration::hours(1))
+        .unwrap_or(from);
+    if cursor < from {
+        cursor += Duration::hours(1);
+    }
+
+    while cursor < to {
+        let local = cursor + offset;
+        let hour = local.time().hour();
+        let weekday = local.weekday();
+
+        if candidate_local_hours(weekday).contains(&hour) {
+            let end = cursor + duration;
+            let free: Vec<Uuid> = user_ids
+                .iter()
+                .copied()
+                .filter(|id| free_for_interval(busy, *id, cursor, end))
+                .collect();
+            slots.push(Slot {
+                start: cursor,
+                free_user_ids: free,
+            });
+        }
+
+        cursor += Duration::hours(1);
+    }
+
+    slots.sort_by(|a, b| {
+        b.free_user_ids
+            .len()
+            .cmp(&a.free_user_ids.len())
+            .then(a.start.cmp(&b.start))
+    });
+
+    slots
+}
+
+/// The best times for `user_ids` to meet in `[from, to)`.
+///
+/// Returns several rather than one: the calendar bar shows the top slot but
+/// the create form wants alternatives, and two endpoints for one computation
+/// would drift.
+pub async fn best_slots(
+    db: &PgPool,
+    user_ids: &[Uuid],
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    slot_minutes: i64,
+    tz_offset_minutes: i64,
+    limit: usize,
+) -> Result<Vec<Slot>> {
+    if user_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Reuses the one query the day path already has - no second query shape
+    // for the same facts.
+    let busy = fetch_busy_intervals(db, user_ids, from, to).await?;
+    let mut ranked = rank_slots(&busy, user_ids, from, to, slot_minutes, tz_offset_minutes);
+    ranked.truncate(limit);
+
+    Ok(ranked)
 }
 
 /// Which of `candidate_ids` are free right now.
@@ -321,5 +465,225 @@ mod tests {
         assert_eq!(days.len(), 7);
         assert!(days[2].free_user_ids.is_empty());
         assert_eq!(days[0].free_user_ids, vec![alice]);
+    }
+    // --- rank_slots: a pure interval problem, which is where the bugs are ---
+
+    /// 2026-03-02 is a Monday. UTC throughout unless a test says otherwise.
+    fn mon(hour: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 3, 2, hour, 0, 0).unwrap()
+    }
+    fn sat(hour: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 3, 7, hour, 0, 0).unwrap()
+    }
+
+    fn rank(
+        busy: &[(Uuid, DateTime<Utc>, DateTime<Utc>)],
+        users: &[Uuid],
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Vec<Slot> {
+        rank_slots(busy, users, from, to, 120, 0)
+    }
+
+    #[test]
+    fn someone_with_nothing_on_is_free_in_every_candidate_slot() {
+        let user = Uuid::new_v4();
+
+        let slots = rank(&[], &[user], mon(0), mon(23));
+
+        // Monday: 18, 19, 20, 21.
+        assert_eq!(slots.len(), 4);
+        assert!(slots.iter().all(|s| s.free_user_ids == vec![user]));
+    }
+
+    // The whole point of hour granularity: a morning appointment must not
+    // rule someone out of the evening.
+    #[test]
+    fn a_morning_event_does_not_block_that_evening() {
+        let user = Uuid::new_v4();
+        let busy = vec![(user, mon(9), mon(10))];
+
+        let slots = rank(&busy, &[user], mon(0), mon(23));
+
+        assert!(slots.iter().all(|s| s.free_user_ids == vec![user]));
+    }
+
+    // Free *at the start* is not enough - a slot that runs into an event is
+    // not a time you can meet.
+    #[test]
+    fn a_slot_that_runs_into_an_event_is_not_free() {
+        let user = Uuid::new_v4();
+        // Busy 20:00-22:00. The 19:00 slot (19-21) overlaps it even though
+        // 19:00 itself is free.
+        let busy = vec![(user, mon(20), mon(22))];
+
+        let slots = rank(&busy, &[user], mon(0), mon(23));
+
+        let at = |h: u32| {
+            slots
+                .iter()
+                .find(|s| s.start == mon(h))
+                .map(|s| s.free_user_ids.len())
+        };
+        assert_eq!(at(18), Some(1)); // 18-20, ends exactly as the event starts
+        assert_eq!(at(19), Some(0)); // 19-21 overlaps
+        assert_eq!(at(20), Some(0)); // 20-22 is the event
+    }
+
+    // Half-open intervals, matching compute_free_users_at above.
+    #[test]
+    fn an_event_ending_exactly_when_a_slot_starts_does_not_block_it() {
+        let user = Uuid::new_v4();
+        let busy = vec![(user, mon(16), mon(18))];
+
+        let slots = rank(&busy, &[user], mon(0), mon(23));
+
+        assert_eq!(
+            slots
+                .iter()
+                .find(|s| s.start == mon(18))
+                .unwrap()
+                .free_user_ids,
+            vec![user]
+        );
+    }
+
+    #[test]
+    fn an_all_day_event_blocks_every_slot_that_day() {
+        let user = Uuid::new_v4();
+        let busy = vec![(user, mon(0), mon(23))];
+
+        let slots = rank(&busy, &[user], mon(0), mon(23));
+
+        assert!(slots.iter().all(|s| s.free_user_ids.is_empty()));
+    }
+
+    #[test]
+    fn slots_are_ranked_by_how_many_are_free() {
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        // `b` is busy 20:00-22:00. With two-hour slots that leaves 18:00
+        // (18-20, ending exactly as the event starts) free for both, and
+        // 19:00 / 20:00 / 21:00 free for `a` alone.
+        let busy = vec![(b, mon(20), mon(22))];
+
+        let slots = rank(&busy, &[a, b], mon(0), mon(23));
+
+        assert_eq!(slots[0].start, mon(18));
+        assert_eq!(slots[0].free_user_ids.len(), 2);
+        // And the rest scored lower, rather than merely being later.
+        assert!(slots[1..].iter().all(|s| s.free_user_ids.len() == 1));
+    }
+
+    // Several slots will tie. Without a deterministic tiebreak the
+    // suggestion shuffles between page loads for no reason.
+    #[test]
+    fn ties_resolve_to_the_soonest_slot() {
+        let user = Uuid::new_v4();
+
+        let slots = rank(&[], &[user], mon(0), mon(23));
+
+        assert_eq!(slots[0].start, mon(18));
+        let starts: Vec<_> = slots.iter().map(|s| s.start).collect();
+        let mut sorted = starts.clone();
+        sorted.sort();
+        assert_eq!(
+            starts, sorted,
+            "equal-scoring slots should be chronological"
+        );
+    }
+
+    // A suggestion at 03:00 is noise; the candidate set is deliberately the
+    // shape of when this kind of group meets.
+    #[test]
+    fn small_hours_are_never_suggested() {
+        let user = Uuid::new_v4();
+
+        let slots = rank(&[], &[user], mon(0), mon(23));
+
+        assert!(slots.iter().all(|s| s.start.hour() >= 18));
+    }
+
+    #[test]
+    fn weekends_also_offer_afternoons() {
+        let user = Uuid::new_v4();
+
+        let slots = rank(&[], &[user], sat(0), sat(23));
+
+        assert!(slots.iter().any(|s| s.start.hour() == 12));
+        assert!(slots.iter().any(|s| s.start.hour() == 20));
+    }
+
+    // "Evening" means the requester's evening. At UTC+2, their 20:00 is
+    // 18:00 UTC.
+    #[test]
+    fn candidate_hours_follow_the_requesters_offset() {
+        let user = Uuid::new_v4();
+
+        let slots = rank_slots(&[], &[user], mon(0), mon(23), 120, 120);
+
+        let hours: Vec<u32> = slots.iter().map(|s| s.start.hour()).collect();
+        assert_eq!(hours, vec![16, 17, 18, 19]);
+    }
+
+    #[test]
+    fn an_empty_user_list_yields_nothing_rather_than_panicking() {
+        assert!(rank(&[], &[], mon(0), mon(23)).is_empty());
+    }
+
+    #[test]
+    fn a_backwards_or_zero_window_yields_nothing() {
+        let user = Uuid::new_v4();
+        assert!(rank(&[], &[user], mon(23), mon(0)).is_empty());
+        assert!(rank_slots(&[], &[user], mon(0), mon(23), 0, 0).is_empty());
+    }
+
+    // Same rule the day path already has a test for; the two are read as a
+    // pair, so the slot-level twin has to exist.
+    #[sqlx::test]
+    async fn declined_and_pending_do_not_block_a_slot(db: PgPool) {
+        use crate::models::ParticipationStatus;
+        let creator = seed_user(&db, "creator-d", "creator").await;
+        let declined = seed_user(&db, "declined-d", "declined").await;
+        let pending = seed_user(&db, "pending-d", "pending").await;
+
+        // A six-hour event covering the whole evening, that neither of them
+        // agreed to.
+        let start = Utc::now() + Duration::days(1);
+        seed_event(
+            &db,
+            creator,
+            declined,
+            ParticipationStatus::Declined,
+            start,
+            start + Duration::hours(24),
+        )
+        .await;
+        seed_event(
+            &db,
+            creator,
+            pending,
+            ParticipationStatus::Pending,
+            start,
+            start + Duration::hours(24),
+        )
+        .await;
+
+        let slots = best_slots(
+            &db,
+            &[declined, pending],
+            Utc::now(),
+            Utc::now() + Duration::days(7),
+            120,
+            0,
+            5,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            slots.iter().any(|s| s.free_user_ids.len() == 2),
+            "declined/pending should not make anyone busy"
+        );
     }
 }

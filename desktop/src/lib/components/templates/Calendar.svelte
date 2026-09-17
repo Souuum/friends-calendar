@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import type { EventWithParticipants, FriendInfo } from '$lib/types';
+  import type { BestSlot, EventWithParticipants, FriendInfo } from '$lib/types';
   import CalendarHeader from '$lib/components/molecules/CalendarHeader.svelte';
   import MonthView from '$lib/components/organisms/MonthView.svelte';
   import WeekView from '$lib/components/organisms/WeekView.svelte';
@@ -110,7 +110,10 @@
     }
   }
 
-  onMount(loadFreeTonight);
+  onMount(() => {
+    loadFreeTonight();
+    loadBestSlot();
+  });
 
   function handleShowTooltip(event: CustomEvent) {
     tooltipEvents = event.detail.events;
@@ -236,6 +239,33 @@
   // times already (matchesFilter, eventsForDay, Frame's avatarUrl).
   $: selectedDayEvents = selectedDay ? eventsForDay(selectedDay) : [];
 
+  /**
+   * The mockup's "Best overlap this week: Fri 20:00, 7 free".
+   *
+   * Not fatal if it fails - the bar still says who is free now, which is all
+   * it did before this existed.
+   */
+  let bestSlot: BestSlot | null = null;
+
+  async function loadBestSlot() {
+    try {
+      const from = new Date();
+      const to = new Date(from.getTime() + 7 * 24 * 60 * 60 * 1000);
+      [bestSlot] = await api.getBestSlots(from, to, 120);
+    } catch {
+      bestSlot = null;
+    }
+  }
+
+  /** "Propose a time", with the suggestion already in the form. */
+  function proposeTime() {
+    // The point of suggesting a slot is that the button applies it - a
+    // suggestion the button ignores is decoration. There's a test for this.
+    initialDate = bestSlot ? new Date(bestSlot.start) : null;
+    editingEvent = null;
+    showCreateModal = true;
+  }
+
   /** Long press / double-click on a day: start an event on that date. */
   function startEventOn(day: Date) {
     // Keep the time of day sensible rather than midnight: a long press says
@@ -303,8 +333,24 @@
         </div>
         <span class="text-[13px]">{freeFriends.length} friends have nothing on</span>
       {/if}
+
+      {#if bestSlot}
+        <span class="hidden h-4 w-px bg-line sm:block"></span>
+        <span class="text-[13px] text-muted">
+          Best overlap this week:
+          <strong class="font-semibold text-ink">
+            {new Date(bestSlot.start).toLocaleString(undefined, {
+              weekday: 'short',
+              hour: '2-digit',
+              minute: '2-digit'
+            })}
+          </strong>,
+          {bestSlot.free_count} free
+        </span>
+      {/if}
+
       <button
-        on:click={openCreateModal}
+        on:click={proposeTime}
         class="ml-auto px-3 py-[7px] border border-primary text-primary rounded-lg text-xs font-semibold hover:bg-primary-hover"
       >
         Propose a time

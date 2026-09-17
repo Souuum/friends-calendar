@@ -15,6 +15,7 @@ import type {
   UpdateBotChannelConfigRequest,
   AdoptionResult,
   ChannelInfo,
+  BestSlot,
   NudgeReport,
   AnnouncementPostInfo,
   ReplyInfo,
@@ -207,6 +208,30 @@ class ApiClient {
    * Creator-only and rate-limited server-side - the button's disabled state
    * is a convenience, not the guard.
    */
+  /**
+   * When the group could meet, best first.
+   *
+   * ⚠️ Timestamps go as `toISOString()` (`…Z`). `+00:00` would be decoded as
+   * a space in a query string and rejected.
+   *
+   * The timezone offset is sent rather than read from `users.timezone`: that
+   * column is free text, defaults to UTC and almost nobody fills it in,
+   * while the browser knows the real answer. `getTimezoneOffset()` is
+   * minutes *behind* UTC, so it's negated here.
+   */
+  async getBestSlots(from: Date, to: Date, durationMinutes: number): Promise<BestSlot[]> {
+    const params = new URLSearchParams({
+      from: from.toISOString(),
+      to: to.toISOString(),
+      duration_minutes: String(durationMinutes),
+      tz_offset_minutes: String(-new Date().getTimezoneOffset())
+    });
+    const { slots } = await this.fetch<{ slots: BestSlot[] }>(
+      `/api/availability/best-slot?${params}`
+    );
+    return slots;
+  }
+
   async nudgeNoAnswers(eventId: string): Promise<NudgeReport> {
     return this.fetch<NudgeReport>(`/api/events/${eventId}/nudge`, { method: 'POST' });
   }

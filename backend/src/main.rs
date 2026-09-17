@@ -179,6 +179,12 @@ pub(crate) fn build_router(state: AppState) -> Router {
             get(handlers::availability::friends_now),
         )
         .route("/api/availability/week", get(handlers::availability::week))
+        // When the group could actually meet - the mockup's "Best overlap
+        // this week", and the create form's suggested slot.
+        .route(
+            "/api/availability/best-slot",
+            get(handlers::availability::best_slot),
+        )
         // Discord bot channel config
         .route(
             "/api/discord/config",

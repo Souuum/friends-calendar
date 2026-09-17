@@ -119,6 +119,14 @@ export type AnnouncementTag = 'event' | 'general';
  * ✅ to the message, and adopting recovers those answers instead of asking
  * for them again.
  */
+/** A time the group could actually meet. */
+export interface BestSlot {
+  start: string;
+  /** How many *friends* are free - the caller isn't counted. */
+  free_count: number;
+  free_friend_ids: string[];
+}
+
 /** What a nudge reached. */
 export interface NudgeReport {
   nudged: number;

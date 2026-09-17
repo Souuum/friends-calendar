@@ -1075,13 +1075,39 @@ Run in this order; only the last pair has a real dependency.
      existing event**, and re-applied to confirm it's a no-op. The
      `#[sqlx::test]` harness only ever migrates empty databases, so nothing
      in the suite covers that.
-4. `.claude/skills/availability-best-overlap/SKILL.md` - the mockup's
-   "Best overlap this week: Fri 20:00, 7 free", and the create form's
-   suggested slot. ⚠️ `services::availability` is **day-granularity on
-   purpose** and cannot answer this; the skill adds a slot-level
-   computation beside it rather than changing the weekly strip, which is
-   correct as it stands. Carries a real timezone decision - this would be
-   the first feature to read `users.timezone`.
+4. `.claude/skills/availability-best-overlap/SKILL.md` - **done 2026-09-17.**
+   `GET /api/availability/best-slot` + `availability::rank_slots`. The
+   mockup's "Best overlap this week: Fri 20:00, 7 free" now renders on the
+   calendar bar, and "Propose a time" opens the create form **on that slot**.
+   - ⚠️ **A slot-level computation beside the day one, not a replacement.**
+     `compute_free_users_per_day` is day-granularity on purpose (it backs
+     the weekly strip) and is correct as it stands - but it cannot answer
+     "Fri 20:00": someone with a 09:00 dentist appointment is "busy Friday"
+     and would be excluded from every Friday evening, which is exactly the
+     population this feature exists to find.
+   - ⚠️ **Free for the whole slot, not just at its start.** A slot that
+     begins in a gap and runs into an event is not a time you can meet.
+     Half-open at both ends, matching `compute_free_users_at`, so an event
+     ending exactly when a slot starts does not block it. Mutation-tested.
+   - **Candidate slots are evenings every day plus weekend afternoons**, not
+     every 30 minutes across the week - that would be 336 candidates of
+     mostly nonsense (03:00 Tuesday), and a suggestion nobody would act on
+     is noise.
+   - **Ties break toward the soonest**, and the order is total - otherwise
+     the suggestion shuffles between page loads for no reason.
+   - ⚠️ **Timezone: the client sends its UTC offset; `users.timezone` is
+     still unread.** That column is free text, defaults to UTC and almost
+     nobody fills it in, while the browser knows the real answer. The offset
+     is fixed rather than a timezone, so a window spanning a DST change is
+     out by an hour on the far side - a rounding error within the week this
+     is asked about, versus a timezone database for one hour a year.
+   - **Ranked over the caller's friends, filtered to slots the caller is
+     also free for** - suggesting a time you're busy is worse than
+     suggesting nothing - and the caller is not in the count, because "7
+     free" meaning six friends plus yourself is a worse number.
+   - ⚠️ **Send `toISOString()` (`…Z`), not `+00:00`**, for the `from`/`to`
+     query params: a bare `+` decodes as a space and the request 400s. Cost
+     two test runs to spot.
 5. `.claude/skills/invite-friend-to-event/SKILL.md` - ⚠️ `/friends/[id]`
    has **no invite action at all** (zero hits for "invite"). Both mockups
    make it that screen's primary action. Works standalone; much better
