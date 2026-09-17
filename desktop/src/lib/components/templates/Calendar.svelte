@@ -228,7 +228,7 @@
 
   <div class="px-6">
     <div
-      class="flex items-center gap-3 flex-wrap bg-white border border-line rounded-[11px] px-3.5 py-[11px] mb-3"
+      class="flex items-center gap-3 flex-wrap bg-surface border border-line rounded-[11px] px-3.5 py-[11px] mb-3"
     >
       <span class="font-mono text-[10px] tracking-widest uppercase text-muted">Free tonight</span>
       {#if freeTonightError}
@@ -269,7 +269,7 @@
           on:click={() => (activeFilter = filter.key)}
           class="px-3 py-[7px] rounded-lg text-xs font-semibold border {activeFilter === filter.key
             ? 'border-primary bg-tint text-primary'
-            : 'border-line bg-white text-muted'}"
+            : 'border-line bg-surface text-muted'}"
         >
           {filter.label}
         </button>

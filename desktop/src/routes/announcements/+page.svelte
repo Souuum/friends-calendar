@@ -54,8 +54,10 @@
       </button>
     </div>
     <p class="text-sm text-gray-500 m-0">
-      A mirror of the linked Discord channel's messages. Manage which channel this pulls from on
-      the <a href="/server" class="text-discord-blurple hover:underline">Discord server</a> page.
+      A mirror of the linked Discord channel's messages. Manage which channel this pulls from on the <a
+        href="/server"
+        class="text-discord-blurple hover:underline">Discord server</a
+      > page.
     </p>
 
     {#if error}

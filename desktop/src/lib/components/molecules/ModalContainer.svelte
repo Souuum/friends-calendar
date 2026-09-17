@@ -47,7 +47,7 @@
     <div
       role="button"
       tabindex="0"
-      class="bg-white rounded-lg shadow-xl w-full {sizeClasses[
+      class="bg-surface rounded-lg shadow-xl w-full {sizeClasses[
         size
       ]} max-h-[90vh] overflow-hidden anim-pop"
       on:click={(e) => e.stopPropagation()}

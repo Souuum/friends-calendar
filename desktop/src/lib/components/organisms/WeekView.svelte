@@ -95,7 +95,7 @@
 
 <!-- Wide: the real seven-column week, unchanged. -->
 <div class="hidden md:block p-6" data-testid="week-view-desktop">
-  <div class="grid grid-cols-[80px_repeat(7,1fr)] gap-0 mb-2 sticky top-0 bg-white z-10">
+  <div class="grid grid-cols-[80px_repeat(7,1fr)] gap-0 mb-2 sticky top-0 bg-surface z-10">
     <div></div>
     {#each weekDays as day (day.toISOString())}
       <div class="text-center py-3 border-b border-gray-200">

@@ -1191,6 +1191,23 @@ writes a new component.
 - Buttons, not a `<select>`: happy-dom can't match `<select>` options by
   value, which is how the reminder-picker tests once passed by accident (see
   the Testing section).
+- ⚠️ **`--color-white` is NOT overridden in `.dark`, on purpose.** It backs
+  `text-white`, which means "ink on a coloured fill" and must stay light in
+  both themes. Dark mode originally redefined it to serve as the card
+  surface, which rendered every such label near-black - measured
+  `oklch(0.22)` on an `oklch(0.62)` purple button, so "Save changes" and
+  "Delete my account" were dark-on-colour app-wide. The surface meaning now
+  has its own token, **`--color-surface`**, and all 39 `bg-white` usages
+  became `bg-surface`. One variable cannot mean both a surface and its ink.
+- ⚠️ **Never write an arbitrary colour** (`bg-[#f4f4f7]`). Tailwind compiles
+  it to a literal — `.bg-\[\#f4f4f7\]{background-color:#f4f4f7}` — not to
+  `var(--color-*)`, so the theme swap is structurally unable to reach it and
+  it silently stays light. That is how the view switcher shipped with a
+  white background in dark mode. `src/lib/theming.test.ts` is a lint that
+  fails with file and line if one reappears; add a `@theme` token instead.
+  The tokens added for the ones that existed: `--color-invert` /
+  `--color-on-invert` (the featured announcement card, values from the
+  mockup's own `--invert`) and `--color-primary-active`.
 - **Switching themes cross-fades** (`.theme-transition` in app.css, driven
   by `applyTheme`). The class is added for the duration of a change and
   removed again - never left on. A standing `* { transition }` would animate

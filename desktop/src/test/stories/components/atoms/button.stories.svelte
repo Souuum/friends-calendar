@@ -8,6 +8,4 @@
   });
 </script>
 
-<Story name="Default">
-  My button
-</Story>
+<Story name="Default">My button</Story>

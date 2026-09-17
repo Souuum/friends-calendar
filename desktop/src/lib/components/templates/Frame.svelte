@@ -70,7 +70,7 @@
   <div class="flex">
     <!-- testid: EventPeekPanel is also an <aside>, so the tag alone can't
          identify the sidebar for the layout tests. -->
-    <aside data-testid="sidebar" class="hidden md:flex w-48 bg-white flex-col p-3 gap-2 h-full">
+    <aside data-testid="sidebar" class="hidden md:flex w-48 bg-surface flex-col p-3 gap-2 h-full">
       {#each navItems as item}
         {@const current = $page.url.pathname === item.view}
         <ViewButton on:click={() => goto(item.view)} {item} {current} />

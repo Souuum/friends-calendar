@@ -46,7 +46,7 @@
   $: username = $user?.username;
 </script>
 
-<header class="bg-white">
+<header class="bg-surface">
   <div class="mx-auto px-4 pt-2 sm:px-6 lg:px-8 flex items-center justify-end gap-3">
     {#if user}
       <!-- Icon shows what you'd switch TO, which is the prevailing
@@ -83,7 +83,7 @@
     {#if show}
       {console.log('showing profile menu')}
       <div
-        class="absolute w-48 bg-white shadow-lg rounded-lg p-2 top-16 z-50"
+        class="absolute w-48 bg-surface shadow-lg rounded-lg p-2 top-16 z-50"
         use:clickOutside={() => (show = false)}
       >
         <ProfileMenu on:settings={goToSettings} on:logout={handleLogout} />

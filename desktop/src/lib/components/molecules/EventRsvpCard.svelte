@@ -51,7 +51,7 @@
   }
 </script>
 
-<div class="bg-white rounded-lg shadow p-5 space-y-3">
+<div class="bg-surface rounded-lg shadow p-5 space-y-3">
   <div class="flex justify-between items-start gap-3">
     <h3 class="font-bold text-lg text-gray-900">{event.title}</h3>
     <span

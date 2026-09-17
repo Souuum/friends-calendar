@@ -53,7 +53,8 @@
   // contradiction worth surfacing: reach is scoped to where an event was
   // published, so "public" plus "nowhere" means nobody outside the guest
   // list sees it.
-  $: publishedNowhereButShared = !isEditing && selectedGuildIds.length === 0 && visibility !== 'private';
+  $: publishedNowhereButShared =
+    !isEditing && selectedGuildIds.length === 0 && visibility !== 'private';
 
   function toggleReminder(value: number) {
     reminderLeads = reminderLeads.includes(value)
@@ -218,10 +219,7 @@
       // One event for both paths - the parent just reloads either way.
       dispatch('saved');
     } catch (err) {
-      error =
-        err instanceof Error
-          ? err.message
-          : `Failed to ${event ? 'update' : 'create'} event`;
+      error = err instanceof Error ? err.message : `Failed to ${event ? 'update' : 'create'} event`;
     } finally {
       loading = false;
     }
@@ -232,8 +230,12 @@
   }
 </script>
 
-<div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 anim-scrim">
-  <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto anim-pop">
+<div
+  class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 anim-scrim"
+>
+  <div
+    class="bg-surface rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto anim-pop"
+  >
     <div class="p-6">
       <div class="flex justify-between items-center mb-6">
         <h2 class="text-2xl font-bold text-gray-900">
@@ -258,228 +260,227 @@
              render everything regardless of `step`, and keeping both steps
              mounted is what lets "Back" return to filled-in fields. -->
         <div class="space-y-4 {showStep1 ? '' : 'hidden md:block'}">
-        <div>
-          <label for="title" class="block text-sm font-medium text-gray-700 mb-1">
-            Event Title *
-          </label>
-          <input
-            id="title"
-            type="text"
-            bind:value={title}
-            required
-            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
-            placeholder="Team Meeting"
-          />
-        </div>
+          <div>
+            <label for="title" class="block text-sm font-medium text-gray-700 mb-1">
+              Event Title *
+            </label>
+            <input
+              id="title"
+              type="text"
+              bind:value={title}
+              required
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
+              placeholder="Team Meeting"
+            />
+          </div>
 
-        <div>
-          <label for="description" class="block text-sm font-medium text-gray-700 mb-1">
-            Description
-          </label>
-          <textarea
-            id="description"
-            bind:value={description}
-            rows="3"
-            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple
+          <div>
+            <label for="description" class="block text-sm font-medium text-gray-700 mb-1">
+              Description
+            </label>
+            <textarea
+              id="description"
+              bind:value={description}
+              rows="3"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple
             focus:border-transparent"
-            placeholder="What's this event about?"
-          >
-          </textarea>
-        </div>
+              placeholder="What's this event about?"
+            >
+            </textarea>
+          </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label for="startTime" class="block text-sm font-medium text-gray-700 mb-1">
+                Start Time *
+              </label>
+              <input
+                id="startTime"
+                type="datetime-local"
+                bind:value={startTime}
+                required
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
+              />
+            </div>
+
+            <div>
+              <label for="endTime" class="block text-sm font-medium text-gray-700 mb-1">
+                End Time *
+              </label>
+              <input
+                id="endTime"
+                type="datetime-local"
+                bind:value={endTime}
+                required
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
+              />
+            </div>
+          </div>
+
           <div>
-            <label for="startTime" class="block text-sm font-medium text-gray-700 mb-1">
-              Start Time *
+            <label for="location" class="block text-sm font-medium text-gray-700 mb-1">
+              Location
             </label>
             <input
-              id="startTime"
-              type="datetime-local"
-              bind:value={startTime}
-              required
+              id="location"
+              type="text"
+              bind:value={location}
               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
+              placeholder="Conference Room A"
+            />
+          </div>
+          <div>
+            <label for="price" class="block text-sm font-medium text-gray-700 mb-1"> Prix </label>
+            <input
+              id="price"
+              type="text"
+              bind:value={price}
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
+              placeholder="20€ ou Gratuit"
             />
           </div>
 
           <div>
-            <label for="endTime" class="block text-sm font-medium text-gray-700 mb-1">
-              End Time *
-            </label>
+            <label for="link" class="block text-sm font-medium text-gray-700 mb-1"> Lien </label>
             <input
-              id="endTime"
-              type="datetime-local"
-              bind:value={endTime}
-              required
+              id="link"
+              type="url"
+              bind:value={link}
               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
+              placeholder="https://example.com"
             />
           </div>
-        </div>
 
-        <div>
-          <label for="location" class="block text-sm font-medium text-gray-700 mb-1">
-            Location
-          </label>
-          <input
-            id="location"
-            type="text"
-            bind:value={location}
-            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
-            placeholder="Conference Room A"
-          />
-        </div>
-        <div>
-          <label for="price" class="block text-sm font-medium text-gray-700 mb-1"> Prix </label>
-          <input
-            id="price"
-            type="text"
-            bind:value={price}
-            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
-            placeholder="20€ ou Gratuit"
-          />
-        </div>
+          <div>
+            <label for="visibility" class="block text-sm font-medium text-gray-700 mb-1">
+              Visibility
+            </label>
+            <select
+              id="visibility"
+              bind:value={visibility}
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
+            >
+              <option value="private">Private (only you)</option>
+              <option value="friends">Friends</option>
+              <option value="public">Public</option>
+            </select>
+          </div>
 
-        <div>
-          <label for="link" class="block text-sm font-medium text-gray-700 mb-1"> Lien </label>
-          <input
-            id="link"
-            type="url"
-            bind:value={link}
-            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
-            placeholder="https://example.com"
-          />
-        </div>
-
-        <div>
-          <label for="visibility" class="block text-sm font-medium text-gray-700 mb-1">
-            Visibility
-          </label>
-          <select
-            id="visibility"
-            bind:value={visibility}
-            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
-          >
-            <option value="private">Private (only you)</option>
-            <option value="friends">Friends</option>
-            <option value="public">Public</option>
-          </select>
-        </div>
-
-        <fieldset class="border-0 p-0 m-0">
-          <legend class="block text-sm font-medium text-gray-700 mb-1">
-            Remind everyone going
-          </legend>
-          <!-- Checkboxes, not a dropdown: several reminders per event are
+          <fieldset class="border-0 p-0 m-0">
+            <legend class="block text-sm font-medium text-gray-700 mb-1">
+              Remind everyone going
+            </legend>
+            <!-- Checkboxes, not a dropdown: several reminders per event are
                allowed, and "none" is nothing ticked rather than a special
                option. -->
-          <div class="flex flex-wrap gap-2">
-            {#each REMINDER_CHOICES as choice (choice.value)}
-              {@const selected = reminderLeads.includes(choice.value)}
-              <button
-                type="button"
-                on:click={() => toggleReminder(choice.value)}
-                aria-pressed={selected}
-                class="rounded-full px-3 py-1.5 text-sm font-medium border transition {selected
-                  ? 'bg-primary text-white border-primary'
-                  : 'bg-gray-100 text-gray-700 border-transparent hover:bg-gray-200'}"
-              >
-                {choice.label} before
-              </button>
-            {/each}
-          </div>
-          <p class="text-xs text-gray-500 mt-1">
-            {reminderLeads.length === 0
-              ? 'No reminders for this event.'
-              : "Sent in the app, and in this event's Discord thread."}
-          </p>
-        </fieldset>
-
-        </div>
-        <!-- Step 2: who's coming, and what lands in Discord. -->
-        <div class="space-y-4 {showStep2 ? '' : 'hidden md:block'}">
-        <!-- Invite picker is create-only: PUT /api/events/:id doesn't touch
-             the guest list (participants have their own endpoints), so
-             showing it while editing would imply changes that never save. -->
-        <div class:hidden={isEditing}>
-          <span class="block text-sm font-medium text-gray-700 mb-1">Invite</span>
-          {#if friendsError}
-            <p class="text-sm text-red-600" role="alert">{friendsError}</p>
-          {:else if friends.length === 0}
-            <p class="text-sm text-gray-500">No friends synced yet.</p>
-          {:else}
             <div class="flex flex-wrap gap-2">
-              {#each friends as friend (friend.user_id)}
-                {@const selected = selectedFriendIds.has(friend.user_id)}
+              {#each REMINDER_CHOICES as choice (choice.value)}
+                {@const selected = reminderLeads.includes(choice.value)}
                 <button
                   type="button"
-                  on:click={() => toggleFriend(friend.user_id)}
+                  on:click={() => toggleReminder(choice.value)}
                   aria-pressed={selected}
-                  class="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium border transition {selected
+                  class="rounded-full px-3 py-1.5 text-sm font-medium border transition {selected
                     ? 'bg-primary text-white border-primary'
                     : 'bg-gray-100 text-gray-700 border-transparent hover:bg-gray-200'}"
                 >
-                  {#if friend.avatar_url}
-                    <img src={friend.avatar_url} alt="" class="w-5 h-5 rounded-full" />
-                  {/if}
-                  {friend.username}
+                  {choice.label} before
                 </button>
               {/each}
             </div>
-          {/if}
+            <p class="text-xs text-gray-500 mt-1">
+              {reminderLeads.length === 0
+                ? 'No reminders for this event.'
+                : "Sent in the app, and in this event's Discord thread."}
+            </p>
+          </fieldset>
         </div>
-
-        {#if !isEditing}
-          <fieldset class="border-0 p-0 m-0">
-            <legend class="block text-sm font-medium text-gray-700 mb-1">Announce in</legend>
-            {#if servers.length === 0}
-              <p class="text-sm text-gray-500">
-                The bot isn't in any server yet, so this event won't be announced.
-              </p>
+        <!-- Step 2: who's coming, and what lands in Discord. -->
+        <div class="space-y-4 {showStep2 ? '' : 'hidden md:block'}">
+          <!-- Invite picker is create-only: PUT /api/events/:id doesn't touch
+             the guest list (participants have their own endpoints), so
+             showing it while editing would imply changes that never save. -->
+          <div class:hidden={isEditing}>
+            <span class="block text-sm font-medium text-gray-700 mb-1">Invite</span>
+            {#if friendsError}
+              <p class="text-sm text-red-600" role="alert">{friendsError}</p>
+            {:else if friends.length === 0}
+              <p class="text-sm text-gray-500">No friends synced yet.</p>
             {:else}
               <div class="flex flex-wrap gap-2">
-                {#each servers as server (server.id)}
-                  {@const selected = selectedGuildIds.includes(server.id)}
+                {#each friends as friend (friend.user_id)}
+                  {@const selected = selectedFriendIds.has(friend.user_id)}
                   <button
                     type="button"
-                    on:click={() => toggleServer(server.id)}
+                    on:click={() => toggleFriend(friend.user_id)}
                     aria-pressed={selected}
                     class="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium border transition {selected
                       ? 'bg-primary text-white border-primary'
                       : 'bg-gray-100 text-gray-700 border-transparent hover:bg-gray-200'}"
                   >
-                    {#if server.icon_url}
-                      <img src={server.icon_url} alt="" class="w-5 h-5 rounded" />
+                    {#if friend.avatar_url}
+                      <img src={friend.avatar_url} alt="" class="w-5 h-5 rounded-full" />
                     {/if}
-                    {server.name ?? server.discord_guild_id}
+                    {friend.username}
                   </button>
                 {/each}
               </div>
-              {#if publishedNowhereButShared}
-                <p class="text-xs text-gray-500 mt-1">
-                  Not announcing anywhere — only people you invite will see this, even though
-                  it's set to {visibility}.
-                </p>
-              {/if}
             {/if}
-          </fieldset>
+          </div>
 
-          <div>
-            <span class="block text-sm font-medium text-gray-700 mb-1">Discord preview</span>
-            {#if previewError}
-              <p class="text-sm text-red-600" role="alert">{previewError}</p>
-            {:else if preview}
-              <!-- The raw message source, not a rendering of it: this is
+          {#if !isEditing}
+            <fieldset class="border-0 p-0 m-0">
+              <legend class="block text-sm font-medium text-gray-700 mb-1">Announce in</legend>
+              {#if servers.length === 0}
+                <p class="text-sm text-gray-500">
+                  The bot isn't in any server yet, so this event won't be announced.
+                </p>
+              {:else}
+                <div class="flex flex-wrap gap-2">
+                  {#each servers as server (server.id)}
+                    {@const selected = selectedGuildIds.includes(server.id)}
+                    <button
+                      type="button"
+                      on:click={() => toggleServer(server.id)}
+                      aria-pressed={selected}
+                      class="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium border transition {selected
+                        ? 'bg-primary text-white border-primary'
+                        : 'bg-gray-100 text-gray-700 border-transparent hover:bg-gray-200'}"
+                    >
+                      {#if server.icon_url}
+                        <img src={server.icon_url} alt="" class="w-5 h-5 rounded" />
+                      {/if}
+                      {server.name ?? server.discord_guild_id}
+                    </button>
+                  {/each}
+                </div>
+                {#if publishedNowhereButShared}
+                  <p class="text-xs text-gray-500 mt-1">
+                    Not announcing anywhere — only people you invite will see this, even though it's
+                    set to {visibility}.
+                  </p>
+                {/if}
+              {/if}
+            </fieldset>
+
+            <div>
+              <span class="block text-sm font-medium text-gray-700 mb-1">Discord preview</span>
+              {#if previewError}
+                <p class="text-sm text-red-600" role="alert">{previewError}</p>
+              {:else if preview}
+                <!-- The raw message source, not a rendering of it: this is
                    exactly what gets posted, and Discord is what turns the
                    markdown and <t:…> timestamps into formatted text. Faking
                    that rendering here would misrepresent it. -->
-              <pre
-                class="bg-gray-50 border border-line rounded-lg p-3 text-xs whitespace-pre-wrap font-mono text-body overflow-x-auto">{preview}</pre>
-            {:else}
-              <p class="text-sm text-gray-500">
-                Fill in the details above to see what the bot will post.
-              </p>
-            {/if}
-          </div>
-        {/if}
+                <pre
+                  class="bg-gray-50 border border-line rounded-lg p-3 text-xs whitespace-pre-wrap font-mono text-body overflow-x-auto">{preview}</pre>
+              {:else}
+                <p class="text-sm text-gray-500">
+                  Fill in the details above to see what the bot will post.
+                </p>
+              {/if}
+            </div>
+          {/if}
         </div>
 
         {#if wizard}

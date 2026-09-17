@@ -101,7 +101,7 @@
       </div>
 
       {#if availability.length === 7}
-        <div class="bg-white border border-gray-200 rounded-xl p-4 mb-6">
+        <div class="bg-surface border border-gray-200 rounded-xl p-4 mb-6">
           <h2 class="text-sm font-semibold mb-1">Free this week</h2>
           <p class="text-xs text-gray-500 mb-3">Overlap with your calendar</p>
           <div class="flex gap-1.5">

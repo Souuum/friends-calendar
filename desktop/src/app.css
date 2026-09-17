@@ -43,6 +43,17 @@ body {
      (`from-discord-blurple to-discord-fuchsia`), and never defined - so
      half that gradient silently resolved to nothing. */
   --color-discord-fuchsia: #eb459e;
+  /* The card surface, split out from `white`. They were the same variable,
+     which is why dark mode broke `text-white`: `bg-white` means "a card"
+     and has to darken, while `text-white` means "ink on a coloured fill"
+     and must stay light. One token cannot be both. */
+  --color-surface: #ffffff;
+  /* Deliberately-inverted surfaces (the featured announcement card) and the
+     ink on them. Values are the mockup's own --invert / --on-invert. */
+  --color-invert: #171719;
+  --color-on-invert: #ebebeb;
+  /* Pressed/hover state for the primary button. */
+  --color-primary-active: #3b1fc4;
   --font-mono: 'JetBrains Mono', monospace;
 }
 
@@ -87,8 +98,17 @@ body {
      `--color-gray-50` at 21%, which is a luminance difference of 0.000004 -
      every card boundary in the app silently vanished. There is a test for
      exactly this now. Keep white meaningfully above gray-50. */
-  --color-white: oklch(22% 0.006 285);
+  /* `--color-white` is NOT overridden here, on purpose. It backs
+     `text-white`, which sits on primary/red/green fills and must stay
+     light - overriding it rendered every such label near-black
+     (measured: oklch(0.22) on an oklch(0.62) purple button). The surface
+     meaning moved to --color-surface below. */
   --color-black: oklch(98% 0 0);
+  --color-surface: oklch(22% 0.006 285);
+  /* Lighter than the surface rather than darker: the mockup's dark theme
+     treats "inverted" as raised, since it cannot invert further down. */
+  --color-invert: #232329;
+  --color-on-invert: #e4e4e8;
 
   /* Inverted grey ramp. gray-50 is the page ground: the *darkest* value
      here, because in light mode it is the lightest. */
@@ -118,6 +138,7 @@ body {
      surface. */
   --color-primary: oklch(62% 0.19 285);
   --color-primary-hover: oklch(35% 0.05 285 / 0.55);
+  --color-primary-active: oklch(70% 0.19 285);
   --color-secondary: oklch(60% 0.19 4);
   --color-discord-blurple: oklch(65% 0.18 274);
   --color-red: oklch(65% 0.2 25);

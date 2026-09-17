@@ -19,7 +19,10 @@
   ];
 </script>
 
-<div class="flex bg-[#f4f4f7] rounded-[9px] p-[3px]" data-testid="view-switcher">
+<!-- bg-gray-100, not an arbitrary hex: an arbitrary hex value compiles to a
+     literal colour rather than var(--color-*), so dark mode could not
+     touch it and the whole control stayed light with pale text on it. -->
+<div class="flex bg-gray-100 rounded-[9px] p-[3px]" data-testid="view-switcher">
   {#each views as viewOption}
     {@const isActive = view === viewOption.value}
     <!-- Day and Week used to be `hidden md:block`: their grids assumed a
@@ -29,7 +32,7 @@
     <button
       on:click={() => onChange(viewOption.value)}
       class="px-2.5 md:px-[13px] py-1.5 text-[13px] rounded-[7px] transition-colors cursor-pointer"
-      class:bg-white={isActive}
+      class:bg-surface={isActive}
       class:shadow-sm={isActive}
       class:font-semibold={isActive}
       class:text-primary={isActive}

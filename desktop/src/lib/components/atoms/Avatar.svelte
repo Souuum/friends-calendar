@@ -11,8 +11,8 @@
   /**
    * Extra class
    */
-  export { className as class }
-  let className = ""
+  export { className as class };
+  let className = '';
 </script>
 
 <button on:click class={className}>

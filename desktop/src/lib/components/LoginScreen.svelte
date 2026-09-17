@@ -66,7 +66,7 @@
 <div
   class="flex items-center justify-center min-h-screen bg-gradient-to-br from-discord-blurple to-discord-fuchsia"
 >
-  <div class="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4">
+  <div class="bg-surface rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4">
     <div class="text-center mb-8">
       <h1 class="text-4xl font-bold text-discord-blurple mb-2">Friends Calendar</h1>
       <p class="text-gray-600">Sync your schedule with friends</p>

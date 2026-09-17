@@ -42,8 +42,8 @@
 
 <div
   class="rounded-lg shadow p-5 space-y-3 anim-fade-up-stagger {featured
-    ? 'bg-[#171719] text-white'
-    : 'bg-white'}"
+    ? 'bg-invert text-on-invert'
+    : 'bg-surface'}"
   style="animation-delay: {index * 60}ms"
 >
   <div class="flex justify-between items-start gap-3">
@@ -77,7 +77,7 @@
     <h3 class="font-bold text-lg m-0 {featured ? 'text-white' : 'text-gray-900'}">{post.title}</h3>
   {/if}
 
-  <p class="text-sm whitespace-pre-wrap m-0 {featured ? 'text-[#ebebeb]' : 'text-gray-700'}">
+  <p class="text-sm whitespace-pre-wrap m-0 {featured ? 'text-on-invert' : 'text-gray-700'}">
     {post.body}
   </p>
 

@@ -125,7 +125,7 @@
           <a
             href={`/friends/${friend.user_id}`}
             style="animation-delay: {i * 45}ms"
-            class="block text-left bg-white border border-gray-200 rounded-xl p-4 transition no-underline anim-fade-up-stagger hover:border-primary hover:shadow-[0_6px_18px_rgba(80,48,229,0.12)] hover:-translate-y-0.5"
+            class="block text-left bg-surface border border-gray-200 rounded-xl p-4 transition no-underline anim-fade-up-stagger hover:border-primary hover:shadow-[0_6px_18px_rgba(80,48,229,0.12)] hover:-translate-y-0.5"
           >
             <div class="flex items-center gap-3 mb-3">
               {#if friend.avatar_url}
@@ -135,7 +135,9 @@
               {/if}
               <span class="font-semibold text-gray-900 truncate flex-1">{friend.username}</span>
               {#if freeNowIds.has(friend.user_id)}
-                <span class="text-xs font-semibold text-green-700 bg-green-100 rounded-full px-2 py-0.5 whitespace-nowrap">
+                <span
+                  class="text-xs font-semibold text-green-700 bg-green-100 rounded-full px-2 py-0.5 whitespace-nowrap"
+                >
                   Free now
                 </span>
               {/if}

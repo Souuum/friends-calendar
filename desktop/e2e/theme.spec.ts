@@ -94,16 +94,16 @@ test('light mode is still light', async ({ page }) => {
   expect(fg).toBeLessThan(0.5);
 });
 
-// The failure mode that inverting a ramp invites: `bg-white` cards and the
+// The failure mode that inverting a ramp invites: `bg-surface` cards and the
 // `bg-gray-50` page ground both land on near-identical darks, and every
 // card boundary disappears.
 test('cards stay distinguishable from the page behind them', async ({ page }) => {
   await visit(page, '/servers', 'dark');
 
   const pageBg = await luminanceOf(page, 'body', 'background-color');
-  const card = page.locator('.bg-white').first();
+  const card = page.locator('.bg-surface').first();
   await expect(card).toBeVisible();
-  const cardBg = await luminanceOf(page, '.bg-white', 'background-color');
+  const cardBg = await luminanceOf(page, '.bg-surface', 'background-color');
 
   expect(
     Math.abs(cardBg - pageBg),
@@ -217,4 +217,42 @@ test('reduced motion still overrides the cross-fade', async ({ page }) => {
   // the formatted string.
   const seconds = Number(String(duration).replace(/s$/, ''));
   expect(seconds, `expected effectively zero, got "${duration}"`).toBeLessThan(0.01);
+});
+
+/**
+ * `text-white` means "ink on a coloured fill" and must stay light in both
+ * themes. Dark mode originally redefined `--color-white` to use it as the
+ * card surface, which rendered every such label near-black - measured
+ * oklch(0.22) on an oklch(0.62) purple button. Surface now has its own
+ * token; this guards the split.
+ */
+test('text-white stays light in dark mode', async ({ page }) => {
+  await visit(page, '/settings', 'dark');
+
+  const samples = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('[class~="text-white"]'))
+      .filter((el) => el.getBoundingClientRect().width > 0)
+      .map((el) => ({
+        text: (el.textContent ?? '').trim().slice(0, 24),
+        color: getComputedStyle(el).color
+      }))
+  );
+
+  expect(samples.length, 'expected some text-white elements to check').toBeGreaterThan(0);
+  for (const s of samples) {
+    const l = Number(String(s.color).match(/^okl(?:ch|ab)\(\s*([\d.]+)/i)?.[1] ?? 1);
+    expect(l, `"${s.text}" renders at lightness ${l} - it should be near-white`).toBeGreaterThan(
+      0.8
+    );
+  }
+});
+
+// The reported bug: the switcher's background was an arbitrary hex, which
+// compiles to a literal colour rather than var(--color-*), so the theme
+// swap could not reach it and the control stayed light with pale text.
+test('the view switcher follows the theme', async ({ page }) => {
+  await visit(page, '/', 'dark');
+
+  const bg = await luminanceOf(page, '[data-testid="view-switcher"]', 'background-color');
+  expect(bg, `switcher background lightness ${bg} - should be dark`).toBeLessThan(0.4);
 });

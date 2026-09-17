@@ -28,7 +28,7 @@
 
 <nav
   data-testid="bottom-tab-bar"
-  class="md:hidden fixed bottom-0 inset-x-0 z-30 flex items-start gap-0.5 bg-white border-t border-gray-200 px-2 pt-2"
+  class="md:hidden fixed bottom-0 inset-x-0 z-30 flex items-start gap-0.5 bg-surface border-t border-gray-200 px-2 pt-2"
 >
   {#each tabs as tab}
     {@const current = $page.url.pathname === tab.view}

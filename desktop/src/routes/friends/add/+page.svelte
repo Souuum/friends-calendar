@@ -109,7 +109,7 @@
       <p class="text-sm text-gray-500 m-0 mt-1">Send a request by their username.</p>
     </div>
 
-    <section class="bg-white border border-gray-200 rounded-xl p-5">
+    <section class="bg-surface border border-gray-200 rounded-xl p-5">
       <label for="username" class="block text-sm font-semibold mb-2">Username</label>
       <form on:submit|preventDefault={handleSend} class="flex gap-2 flex-wrap">
         <input
@@ -135,7 +135,7 @@
       {/if}
     </section>
 
-    <section class="bg-white border border-gray-200 rounded-xl p-5">
+    <section class="bg-surface border border-gray-200 rounded-xl p-5">
       <h2 class="text-sm font-semibold mb-3">
         Pending requests {#if requests.length > 0}<span class="text-gray-400 font-normal"
             >{requests.length}</span

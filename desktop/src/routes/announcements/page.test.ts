@@ -118,7 +118,7 @@ describe('announcements page', () => {
 
     // A feed of inverted cards would defeat the point of singling one out,
     // so exactly one gets the treatment.
-    const featured = container.querySelectorAll('.bg-\\[\\#171719\\]');
+    const featured = container.querySelectorAll('.bg-invert');
     expect(featured).toHaveLength(1);
   });
 
@@ -128,6 +128,6 @@ describe('announcements page', () => {
     const { container } = render(AnnouncementsPage);
     await waitFor(() => expect(screen.getByText('Just a post')).toBeInTheDocument());
 
-    expect(container.querySelectorAll('.bg-\\[\\#171719\\]')).toHaveLength(0);
+    expect(container.querySelectorAll('.bg-invert')).toHaveLength(0);
   });
 });

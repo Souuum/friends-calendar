@@ -11,7 +11,7 @@
   const dispatch = createEventDispatcher();
 </script>
 
-<div class="bg-white rounded-lg shadow hover:shadow-lg transition p-5">
+<div class="bg-surface rounded-lg shadow hover:shadow-lg transition p-5">
   <div class="flex justify-between items-start mb-3">
     <h3 class="font-bold text-lg text-gray-900">{event.title}</h3>
     {#if event.is_creator}

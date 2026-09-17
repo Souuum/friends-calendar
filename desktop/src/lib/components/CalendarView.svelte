@@ -51,7 +51,7 @@
         No events yet — create your first one with “+ New Event”.
       </p>
     {/if}
-    <div class="bg-white rounded-lg shadow-sm relative">
+    <div class="bg-surface rounded-lg shadow-sm relative">
       <Calendar {events} on:refresh={loadEvents} />
     </div>
   {/if}

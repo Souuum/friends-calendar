@@ -81,7 +81,7 @@
      confirm()/alert(), has no edit affordance and no is_participant
      handling, so reusing it would have reintroduced all four. -->
 <aside
-  class="bg-white border border-line p-[18px]
+  class="bg-surface border border-line p-[18px]
          fixed inset-x-0 bottom-0 z-40 max-h-[70vh] overflow-y-auto rounded-t-2xl shadow-[0_-14px_40px_rgba(0,0,0,0.18)] anim-sheet
          md:static md:z-auto md:max-h-none md:overflow-visible md:w-[296px] md:shrink-0 md:rounded-xl md:shadow-none md:animate-none
          {event ? '' : 'hidden md:block'}"
@@ -94,153 +94,153 @@
          DOM in place (Svelte would otherwise just update text nodes) -
          matches the mockup's peek panel animating in fresh per selection. -->
     {#key event.id}
-    <div class="anim-fade">
-    <div
-      class="h-1 rounded-full mb-3.5 anim-grow"
-      style="background:{statusOf(event.my_status).bar}"
-    ></div>
+      <div class="anim-fade">
+        <div
+          class="h-1 rounded-full mb-3.5 anim-grow"
+          style="background:{statusOf(event.my_status).bar}"
+        ></div>
 
-    <div class="flex items-center gap-2 mb-2">
-      <span class="font-mono text-[11px] text-muted">{formatDate(event.start_time)}</span>
-      {#if event.my_status}
-        {@const s = statusOf(event.my_status)}
-        <span
-          class="rounded-full px-2.5 text-[11px] font-semibold py-1"
-          style="background:{s.bg}; color:{s.fg}"
-        >
-          {s.label}
-        </span>
-      {/if}
-    </div>
+        <div class="flex items-center gap-2 mb-2">
+          <span class="font-mono text-[11px] text-muted">{formatDate(event.start_time)}</span>
+          {#if event.my_status}
+            {@const s = statusOf(event.my_status)}
+            <span
+              class="rounded-full px-2.5 text-[11px] font-semibold py-1"
+              style="background:{s.bg}; color:{s.fg}"
+            >
+              {s.label}
+            </span>
+          {/if}
+        </div>
 
-    <h2 class="text-[17px] font-bold tracking-[-0.01em] text-gray-900 mb-2.5">{event.title}</h2>
-    <div class="flex flex-col gap-[5px] text-xs text-body mb-3.5">
-      {#if event.location}
-        <div>{event.location}</div>
-      {/if}
-      {#if event.price}
-        <div>Cost per person: {event.price}</div>
-      {/if}
-    </div>
+        <h2 class="text-[17px] font-bold tracking-[-0.01em] text-gray-900 mb-2.5">{event.title}</h2>
+        <div class="flex flex-col gap-[5px] text-xs text-body mb-3.5">
+          {#if event.location}
+            <div>{event.location}</div>
+          {/if}
+          {#if event.price}
+            <div>Cost per person: {event.price}</div>
+          {/if}
+        </div>
 
-    {#if error}
-      <p class="text-xs text-red-600 mb-2" role="alert">{error}</p>
-    {/if}
+        {#if error}
+          <p class="text-xs text-red-600 mb-2" role="alert">{error}</p>
+        {/if}
 
-    {#if !event.is_creator && !event.is_participant}
-      <!-- Visible to you (public, or a friend's friends-visible event) but
+        {#if !event.is_creator && !event.is_participant}
+          <!-- Visible to you (public, or a friend's friends-visible event) but
            you're not on the guest list. No RSVP row: there's nothing to
            answer, and update_participation assumes a participant row. -->
-      <div class="text-xs text-muted border border-line rounded-lg px-3 py-2 mb-4">
-        You're not invited to this one — it's visible to you because
-        {event.visibility === 'public' ? "it's public" : "you're friends with the organiser"}.
-      </div>
-    {:else if !event.is_creator}
-      <!-- Going is always the solid primary CTA here - it does not
+          <div class="text-xs text-muted border border-line rounded-lg px-3 py-2 mb-4">
+            You're not invited to this one — it's visible to you because
+            {event.visibility === 'public' ? "it's public" : "you're friends with the organiser"}.
+          </div>
+        {:else if !event.is_creator}
+          <!-- Going is always the solid primary CTA here - it does not
            reflect "currently selected", the mockup has no tint/fg
            selected-state on these three buttons (that pattern belongs to
            the status pill above and the filter chips, not this row). -->
-      <div class="flex gap-1.5 mb-4">
-        <button
-          on:click={() => handleStatusChange('accepted')}
-          disabled={updating}
-          class="flex-1 py-2 rounded-lg text-xs font-semibold bg-primary text-white disabled:opacity-50"
-        >
-          Going
-        </button>
-        <button
-          on:click={() => handleStatusChange('maybe')}
-          disabled={updating}
-          class="flex-1 py-2 rounded-lg text-xs font-semibold border border-line bg-white text-muted hover:bg-gray-50 disabled:opacity-50"
-        >
-          Maybe
-        </button>
-        <button
-          on:click={() => handleStatusChange('declined')}
-          disabled={updating}
-          class="flex-1 py-2 rounded-lg text-xs font-semibold border border-line bg-white text-muted hover:border-red-600 hover:text-red-600 disabled:opacity-50"
-        >
-          Can't
-        </button>
-      </div>
-    {:else}
-      <!-- Creator's own event: "Edit"/"Nudge no-answers" per the mockup,
+          <div class="flex gap-1.5 mb-4">
+            <button
+              on:click={() => handleStatusChange('accepted')}
+              disabled={updating}
+              class="flex-1 py-2 rounded-lg text-xs font-semibold bg-primary text-white disabled:opacity-50"
+            >
+              Going
+            </button>
+            <button
+              on:click={() => handleStatusChange('maybe')}
+              disabled={updating}
+              class="flex-1 py-2 rounded-lg text-xs font-semibold border border-line bg-surface text-muted hover:bg-gray-50 disabled:opacity-50"
+            >
+              Maybe
+            </button>
+            <button
+              on:click={() => handleStatusChange('declined')}
+              disabled={updating}
+              class="flex-1 py-2 rounded-lg text-xs font-semibold border border-line bg-surface text-muted hover:border-red-600 hover:text-red-600 disabled:opacity-50"
+            >
+              Can't
+            </button>
+          </div>
+        {:else}
+          <!-- Creator's own event: "Edit"/"Nudge no-answers" per the mockup,
            not RSVP buttons. "Nudge no-answers" is still a placeholder -
            there is no endpoint that pings pending participants, and
            inventing one (a Discord DM path plus rate-limiting) is its own
            feature, not a side effect of wiring up Edit. -->
-      <div class="flex gap-1.5 mb-4">
-        <button
-          on:click={() => dispatch('edit', event)}
-          disabled={updating}
-          class="flex-1 py-2 rounded-lg text-xs font-semibold border border-line bg-white text-muted hover:bg-gray-50 disabled:opacity-50"
-        >
-          Edit
-        </button>
-        <button
-          disabled
-          title="Not built yet - there's no endpoint to nudge pending participants"
-          class="flex-1 py-2 rounded-lg text-xs font-semibold border border-line bg-white text-muted opacity-50 cursor-not-allowed"
-        >
-          Nudge no-answers
-        </button>
-      </div>
+          <div class="flex gap-1.5 mb-4">
+            <button
+              on:click={() => dispatch('edit', event)}
+              disabled={updating}
+              class="flex-1 py-2 rounded-lg text-xs font-semibold border border-line bg-surface text-muted hover:bg-gray-50 disabled:opacity-50"
+            >
+              Edit
+            </button>
+            <button
+              disabled
+              title="Not built yet - there's no endpoint to nudge pending participants"
+              class="flex-1 py-2 rounded-lg text-xs font-semibold border border-line bg-surface text-muted opacity-50 cursor-not-allowed"
+            >
+              Nudge no-answers
+            </button>
+          </div>
 
-      <!-- Delete lives here because this panel is the only event detail UI
+          <!-- Delete lives here because this panel is the only event detail UI
            in week and day view - the month-view hover tooltip
            (EventCardImpl) has had the only delete affordance, so there was
            no way to delete an event from the other two views at all. -->
-      {#if confirmingDelete}
-        <div class="flex gap-1.5 mb-4">
-          <button
-            on:click={handleDelete}
-            disabled={updating}
-            class="flex-1 py-2 rounded-lg text-xs font-semibold bg-red-600 text-white disabled:opacity-50"
-          >
-            {updating ? 'Deleting…' : 'Really delete'}
-          </button>
-          <button
-            on:click={() => (confirmingDelete = false)}
-            disabled={updating}
-            class="flex-1 py-2 rounded-lg text-xs font-semibold border border-line bg-white text-muted hover:bg-gray-50 disabled:opacity-50"
-          >
-            Cancel
-          </button>
-        </div>
-      {:else}
-        <button
-          on:click={() => (confirmingDelete = true)}
-          disabled={updating}
-          class="w-full py-2 mb-4 rounded-lg text-xs font-semibold border border-line bg-white text-muted hover:border-red-600 hover:text-red-600 disabled:opacity-50"
-        >
-          Delete event
-        </button>
-      {/if}
-    {/if}
-
-    <div class="font-mono text-[10px] tracking-widest uppercase text-muted mb-2">
-      {event.participants.length} invited
-    </div>
-    <div class="flex flex-col gap-2">
-      {#each event.participants as participant}
-        {@const s = statusOf(participant.status)}
-        <div class="flex items-center gap-2">
-          {#if participant.avatar_url}
-            <img src={participant.avatar_url} alt="" class="w-7 h-7 rounded-full" />
+          {#if confirmingDelete}
+            <div class="flex gap-1.5 mb-4">
+              <button
+                on:click={handleDelete}
+                disabled={updating}
+                class="flex-1 py-2 rounded-lg text-xs font-semibold bg-red-600 text-white disabled:opacity-50"
+              >
+                {updating ? 'Deleting…' : 'Really delete'}
+              </button>
+              <button
+                on:click={() => (confirmingDelete = false)}
+                disabled={updating}
+                class="flex-1 py-2 rounded-lg text-xs font-semibold border border-line bg-surface text-muted hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
           {:else}
-            <div class="w-7 h-7 rounded-full bg-gray-300"></div>
+            <button
+              on:click={() => (confirmingDelete = true)}
+              disabled={updating}
+              class="w-full py-2 mb-4 rounded-lg text-xs font-semibold border border-line bg-surface text-muted hover:border-red-600 hover:text-red-600 disabled:opacity-50"
+            >
+              Delete event
+            </button>
           {/if}
-          <span class="flex-1 text-sm text-gray-800 truncate">{participant.username}</span>
-          <span
-            class="text-[11px] px-2.5 py-1 rounded-full font-semibold"
-            style="background:{s.bg}; color:{s.fg}"
-          >
-            {s.label}
-          </span>
+        {/if}
+
+        <div class="font-mono text-[10px] tracking-widest uppercase text-muted mb-2">
+          {event.participants.length} invited
         </div>
-      {/each}
-    </div>
-    </div>
+        <div class="flex flex-col gap-2">
+          {#each event.participants as participant}
+            {@const s = statusOf(participant.status)}
+            <div class="flex items-center gap-2">
+              {#if participant.avatar_url}
+                <img src={participant.avatar_url} alt="" class="w-7 h-7 rounded-full" />
+              {:else}
+                <div class="w-7 h-7 rounded-full bg-gray-300"></div>
+              {/if}
+              <span class="flex-1 text-sm text-gray-800 truncate">{participant.username}</span>
+              <span
+                class="text-[11px] px-2.5 py-1 rounded-full font-semibold"
+                style="background:{s.bg}; color:{s.fg}"
+              >
+                {s.label}
+              </span>
+            </div>
+          {/each}
+        </div>
+      </div>
     {/key}
   {/if}
 </aside>

@@ -11,7 +11,9 @@
   class="text-xs px-2 py-1 rounded truncate {event.is_participant
     ? 'bg-primary-hover bg-opacity-10 text-primary'
     : 'border border-dashed border-line text-muted'}"
-  title={event.is_participant ? undefined : "You're not invited to this one - it's just visible to you"}
+  title={event.is_participant
+    ? undefined
+    : "You're not invited to this one - it's just visible to you"}
 >
   {event.title || 'Untitled Event'}
 </div>

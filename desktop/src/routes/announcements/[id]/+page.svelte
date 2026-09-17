@@ -99,7 +99,7 @@
       {:else}
         <div class="flex flex-col gap-3">
           {#each replies as reply, i (`${reply.posted_at}-${i}`)}
-            <div class="flex gap-3 bg-white border border-line rounded-xl p-3.5">
+            <div class="flex gap-3 bg-surface border border-line rounded-xl p-3.5">
               {#if reply.author_avatar_url}
                 <img src={reply.author_avatar_url} alt="" class="w-8 h-8 rounded-full shrink-0" />
               {:else}
@@ -108,7 +108,8 @@
               <div class="min-w-0 flex-1">
                 <div class="flex items-baseline gap-2">
                   <span class="text-sm font-semibold text-gray-900">{reply.author_username}</span>
-                  <span class="font-mono text-[10px] text-muted">{formatDate(reply.posted_at)}</span>
+                  <span class="font-mono text-[10px] text-muted">{formatDate(reply.posted_at)}</span
+                  >
                 </div>
                 <p class="text-sm text-body whitespace-pre-wrap m-0 mt-1">{reply.body}</p>
               </div>
@@ -127,7 +128,7 @@
       <form
         on:submit|preventDefault={send}
         class="flex gap-2 mt-4
-               fixed inset-x-0 bottom-[68px] z-30 bg-white border-t border-line px-3 py-3
+               fixed inset-x-0 bottom-[68px] z-30 bg-surface border-t border-line px-3 py-3
                md:static md:z-auto md:border-0 md:bg-transparent md:px-0 md:py-0"
       >
         <input

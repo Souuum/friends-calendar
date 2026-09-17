@@ -61,7 +61,10 @@
     rsvpErrors = { ...rsvpErrors, [notification.id]: '' };
 
     try {
-      await api.updateParticipation(notification.event_id, status as 'accepted' | 'declined' | 'maybe');
+      await api.updateParticipation(
+        notification.event_id,
+        status as 'accepted' | 'declined' | 'maybe'
+      );
       await markRead(notification.id);
     } catch (err) {
       // Scoped to this card. The event may have been deleted, or you may
@@ -132,12 +135,12 @@
           {group.label}
         </h2>
         <div
-          class="bg-white border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100"
+          class="bg-surface border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100"
         >
           {#each group.notifications as notification, i (notification.id)}
             <div
               style="animation-delay: {i * 45}ms"
-              class="anim-slide-left {notification.read ? 'bg-white' : 'bg-indigo-50'}"
+              class="anim-slide-left {notification.read ? 'bg-surface' : 'bg-indigo-50'}"
             >
               <button
                 on:click={() => markRead(notification.id)}
@@ -177,14 +180,14 @@
                   <button
                     on:click={() => respond(notification, 'maybe')}
                     disabled={rsvpPending.has(notification.id)}
-                    class="flex-1 py-2 rounded-lg text-xs font-semibold border border-line bg-white text-muted hover:bg-gray-50 disabled:opacity-50"
+                    class="flex-1 py-2 rounded-lg text-xs font-semibold border border-line bg-surface text-muted hover:bg-gray-50 disabled:opacity-50"
                   >
                     Maybe
                   </button>
                   <button
                     on:click={() => respond(notification, 'declined')}
                     disabled={rsvpPending.has(notification.id)}
-                    class="shrink-0 px-3 py-2 rounded-lg text-xs font-semibold border border-line bg-white text-muted hover:border-red-600 hover:text-red-600 disabled:opacity-50"
+                    class="shrink-0 px-3 py-2 rounded-lg text-xs font-semibold border border-line bg-surface text-muted hover:border-red-600 hover:text-red-600 disabled:opacity-50"
                   >
                     Can't
                   </button>

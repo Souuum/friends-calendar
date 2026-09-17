@@ -51,7 +51,7 @@
       {:else}
         <div class="flex flex-col gap-2">
           {#each guilds as guild (guild.id)}
-            <div class="flex items-center gap-3 bg-white border border-line rounded-xl px-4 py-3">
+            <div class="flex items-center gap-3 bg-surface border border-line rounded-xl px-4 py-3">
               {#if guild.icon_url}
                 <img src={guild.icon_url} alt="" class="w-10 h-10 rounded-xl shrink-0" />
               {:else}

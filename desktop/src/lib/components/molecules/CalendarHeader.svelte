@@ -22,7 +22,7 @@
   <h2 class="text-2xl tracking-[-0.02em] font-bold">{title}</h2>
   <button
     on:click={onToday}
-    class="border border-line bg-white rounded-lg px-3 py-[7px] text-xs font-semibold hover:bg-gray-50 transition-colors"
+    class="border border-line bg-surface rounded-lg px-3 py-[7px] text-xs font-semibold hover:bg-gray-50 transition-colors"
   >
     Today
   </button>
@@ -31,7 +31,7 @@
     <ViewSwitcher {view} on:view-change />
     <button
       on:click={onNewEvent}
-      class="bg-primary text-white px-3.5 py-[9px] rounded-[9px] text-[13px] font-semibold transition hover:bg-[#3b1fc4]"
+      class="bg-primary text-white px-3.5 py-[9px] rounded-[9px] text-[13px] font-semibold transition hover:bg-primary-active"
     >
       + New Event
     </button>

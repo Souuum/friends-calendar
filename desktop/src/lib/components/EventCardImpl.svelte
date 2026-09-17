@@ -29,10 +29,10 @@
   }
 </script>
 
-<EventCard 
+<EventCard
   {event}
   on:delete={() => handleDelete()}
-  on:accepted={() => handleStatusChange("accepted")}
-  on:maybe={() => handleStatusChange("maybe")}
-  on:declined={() => handleStatusChange("declined")}
+  on:accepted={() => handleStatusChange('accepted')}
+  on:maybe={() => handleStatusChange('maybe')}
+  on:declined={() => handleStatusChange('declined')}
 />

@@ -191,7 +191,7 @@
            harmless duplication of the sidebar link on desktop. -->
       <a
         href="/server"
-        class="flex items-center gap-3 bg-white border border-line rounded-xl px-4 py-3 no-underline hover:bg-gray-50"
+        class="flex items-center gap-3 bg-surface border border-line rounded-xl px-4 py-3 no-underline hover:bg-gray-50"
       >
         <Icon name="bot" size={20} />
         <span class="flex-1 min-w-0">

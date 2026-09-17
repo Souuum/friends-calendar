@@ -32,7 +32,7 @@
     tabindex="-1"
   >
     <div
-      class="bg-white rounded-lg shadow-xl border border-gray-200 p-4 w-96 max-h-[500px] overflow-y-auto anim-pop"
+      class="bg-surface rounded-lg shadow-xl border border-gray-200 p-4 w-96 max-h-[500px] overflow-y-auto anim-pop"
     >
       <div class="space-y-3">
         {#each events as event}

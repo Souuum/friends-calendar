@@ -31,7 +31,7 @@
             {#each group.events as event (event.id)}
               <button
                 on:click={() => onEventClick?.(event)}
-                class="w-full text-left flex items-center gap-3 bg-white border rounded-[11px] px-3.5 py-3 hover:bg-gray-50 {event.is_participant
+                class="w-full text-left flex items-center gap-3 bg-surface border rounded-[11px] px-3.5 py-3 hover:bg-gray-50 {event.is_participant
                   ? 'border-line'
                   : 'border-dashed border-line'}"
               >

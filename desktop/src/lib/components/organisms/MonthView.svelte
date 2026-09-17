@@ -99,7 +99,7 @@
       <div
         role="button"
         tabindex="0"
-        class="bg-white min-h-[120px] p-3 hover:bg-gray-50 transition-colors cursor-pointer relative"
+        class="bg-surface min-h-[120px] p-3 hover:bg-gray-50 transition-colors cursor-pointer relative"
         class:opacity-40={!isCurrentMonth(day)}
         class:rounded-tl-lg={i === 0}
         class:rounded-tr-lg={i === 6}
@@ -112,7 +112,13 @@
           <CalendarDay date={day} isToday={isToday(day)} isCurrentMonth={isCurrentMonth(day)} />
         </div>
 
-        <EventList events={dayEvents} variant="compact" maxVisible={3} showMore={true} {onEventClick} />
+        <EventList
+          events={dayEvents}
+          variant="compact"
+          maxVisible={3}
+          showMore={true}
+          {onEventClick}
+        />
       </div>
     {/each}
   </div>
