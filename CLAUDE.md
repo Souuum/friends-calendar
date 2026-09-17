@@ -204,9 +204,6 @@ DELETE /api/events/:id/participants/:user_id    handlers::calendar::remove_parti
 GET    /api/friends                              handlers::friends::list_friends
 POST   /api/friends/sync                         handlers::friends::sync_friends
 
-# Discord bot
-POST   /api/events/:id/link-discord             handlers::calendar::link_discord_message
-
 # Discord server info
 GET    /api/discord/server                       handlers::discord::get_linked_server
 
@@ -236,6 +233,7 @@ PUT    /api/discord/config                         handlers::discord_config::upd
 # old event-RSVP-tracking /announcements)
 GET    /api/announcements                          handlers::announcements::list_announcements
 POST   /api/announcements/sync                      handlers::announcements::sync_announcements
+POST   /api/announcements/:id/adopt                 handlers::announcements::adopt_announcement
 ```
 
 Frontend (`desktop/src/lib/api.ts`) targets `http://localhost:8080` by
@@ -1218,6 +1216,72 @@ leave the calendar empty.
 - A failing message is logged and skipped rather than abandoning the run: a
   single deleted message should not stop the rest.
 
+## Adopting an existing announcement (2026-09-17)
+
+`POST /api/announcements/:id/adopt` turns a message that is **already in
+Discord** into a calendar event, binding the event to that message instead
+of posting a new one. `services::event_adoption`.
+
+The gap it closes: `create_event` only ever announces *outwards*, so the app
+has a row for exactly the events it posted itself. Everything else - posts
+people write by hand, and every event created before a deployment had a
+database - is a message carrying ✅ reactions that nothing can resolve.
+`reaction_sync` walks `event_publications`, finds nothing, and correctly
+records nothing. That is why a ✅ on the EsdeeKid post left the calendar
+empty on the first real deployment: production's database is fresh, the
+events were created on a dev machine, and the post is tagged "General"
+because no publication row matches it.
+
+Adoption is the same wiring run backwards, so nothing downstream needs a
+special case: once the publication row exists, `bot.rs` resolves new
+reactions, `reaction_sync` backfills the old ones, `discord_feed` tags the
+post as an event, reminders find the thread, and publication-scoped
+visibility lets the server see it.
+
+- ⚠️ **Nothing server-side parses the message.** The event's fields come
+  from the request, which the user confirmed in a form. The *client* guesses
+  them (`lib/utils/announcementParse.ts`) to prefill that form, but a regex
+  over someone's free-form French is not something to write into a calendar
+  unreviewed. The parser handles both styles in use - the bot's
+  `> Activité : **X**` (value bold) and the hand-written `**Activité :** X`
+  (label bold, so its closing `**` lands at the *start* of the value) - and
+  returns `undefined` per field rather than guessing; the modal then names
+  what it couldn't read instead of showing an empty required field.
+- **Refused twice over.** `resolve_target` rejects a message that already
+  backs an event, using `guilds::event_for_message` - the same lookup
+  `discord_feed::infer_tag` makes to decide whether a post shows as "Event",
+  so the hidden button and the server's refusal are driven by one fact
+  rather than two that can disagree. Adopting twice would leave two events
+  competing for one message's reactions, and `event_for_message` returns
+  only one of them.
+- **Adopting posts nothing.** A functional test mounts the "create message"
+  endpoint with wiremock's `.expect(0)`, so a regression that announced an
+  adopted event fails the test rather than spamming the channel. (Verified
+  by flipping it to `.expect(1)` and watching it fail - `.expect` is checked
+  when the mock server drops.)
+- **Binding failure rolls the event back.** An event with no publication is
+  invisible to everyone but its participants, *and* a retry would create a
+  duplicate, since the already-adopted guard keys off the publication row.
+- The guild is resolved the same way `list_posts` resolves it for thread
+  links: prefer a guild that has published into this channel, else the
+  oldest registered. With no guild at all it refuses rather than creating an
+  event published nowhere.
+- ⚠️ `req.guild_ids` is cleared in `adopt()` but that is **belt and braces,
+  not a tested guarantee** - `calendar::create_event` ignores the field
+  entirely today, announcing happens in the handler, and a mutation test
+  confirmed removing the line changes nothing observable. The guarantee that
+  holds is the `.expect(0)` above.
+- UI: `AnnouncementPostCard` takes an optional `onAdopt`, and shows "Add to
+  calendar" only when a handler is supplied *and* the post isn't already an
+  event. `AdoptEventModal` (organisms) is a **separate** component rather
+  than a third mode on `CreateEventModal` - the three things that component
+  does most prominently are all wrong here: the server picker (the server is
+  wherever the message lives), the Discord preview (previewing a message
+  that will never be sent is a lie), and the invite picker (adoption doesn't
+  invite - the ✅ already do). Reminders aren't offered either; the backend's
+  default single reminder applies and is editable afterwards like any
+  event's.
+
 ## Icons (2026-09-17)
 
 **`atoms/Icon.svelte` replaced every emoji in the UI with outline SVGs** -
@@ -1803,9 +1867,13 @@ Originated on `feat(DiscordBot)`, merged into `master` via `6047c67`.
   configured; `handlers::calendar::create_event` auto-announces new events
   to Discord if configured (both read `AppState.discord_bot_token` /
   `discord_announcement_channel_id`, not raw env vars — see below).
-  `POST /api/events/:id/link-discord` (`handlers::calendar::link_discord_message`)
-  exists for manually linking an event to an existing Discord message
-  instead.
+  ⚠️ `POST /api/events/:id/link-discord` used to exist for manually linking
+  an event to an existing Discord message. **It was removed 2026-09-17**:
+  migration 014 moved `discord_message_id`/`discord_channel_id` off
+  `calendar_events` onto `event_publications`, and the handler was never
+  updated, so it had been writing to two columns that no longer exist - a
+  guaranteed 500. Nothing called it (no frontend caller, no test), which is
+  why it went unnoticed. Adoption replaces it; see below.
 
 **What changed from the original branch during the merge** (see `6047c67`'s
 full commit message for the complete list):

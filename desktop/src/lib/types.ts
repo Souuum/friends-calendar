@@ -112,6 +112,20 @@ export interface LinkedServerInfo {
 
 export type AnnouncementTag = 'event' | 'general';
 
+/**
+ * The result of turning an existing Discord announcement into an event.
+ *
+ * `rsvps_recorded` is the point of the feature: people had already reacted
+ * ✅ to the message, and adopting recovers those answers instead of asking
+ * for them again.
+ */
+export interface AdoptionResult {
+  event: CalendarEvent;
+  rsvps_recorded: number;
+  /** The event was created, but the existing reactions could not be read. */
+  backfill_failed: boolean;
+}
+
 export interface AnnouncementPostInfo {
   id: string;
   author_username: string;

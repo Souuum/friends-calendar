@@ -3,12 +3,33 @@
   import { api } from '$lib/api';
   import Frame from '$lib/components/templates/Frame.svelte';
   import AnnouncementPostCard from '$lib/components/molecules/AnnouncementPostCard.svelte';
+  import AdoptEventModal from '$lib/components/organisms/AdoptEventModal.svelte';
   import type { AnnouncementPostInfo } from '$lib/types';
 
   let posts: AnnouncementPostInfo[] = [];
   let loading = true;
   let error = '';
   let syncing = false;
+
+  // Which post is being turned into an event. Null = the modal is closed;
+  // one nullable value rather than a separate boolean, so the two can't
+  // disagree about what's on screen.
+  let adopting: AnnouncementPostInfo | null = null;
+  let adoptedMessage = '';
+
+  async function handleAdopted(rsvps: number) {
+    adopting = null;
+    // Said plainly, because recovering the existing ✅ is the reason to
+    // adopt rather than re-create: if nobody had reacted, say that too
+    // instead of reporting a bare success and leaving it ambiguous.
+    adoptedMessage =
+      rsvps > 0
+        ? `Added to your calendar, with ${rsvps} ${rsvps === 1 ? 'person' : 'people'} already going.`
+        : 'Added to your calendar. Reactions on the post will now count as RSVPs.';
+    // Reload so the post shows its new "Event" tag rather than going stale
+    // until the next sync.
+    await load();
+  }
 
   async function load() {
     try {
@@ -64,6 +85,12 @@
       <p class="text-sm text-red-600" role="alert">{error}</p>
     {/if}
 
+    {#if adoptedMessage}
+      <p class="text-sm text-green-700 bg-green-100 rounded-lg px-3 py-2" role="status">
+        {adoptedMessage}
+      </p>
+    {/if}
+
     {#if loading}
       <p class="text-sm text-gray-500">Loading…</p>
     {:else if posts.length > 0}
@@ -71,7 +98,15 @@
         <!-- Only the first pinned post is featured. The list already comes
              back pinned-first from the backend, so this is the top one when
              any are pinned. -->
-        <AnnouncementPostCard {post} index={i} featured={post.pinned && i === 0} />
+        <AnnouncementPostCard
+          {post}
+          index={i}
+          featured={post.pinned && i === 0}
+          onAdopt={(p) => {
+            adoptedMessage = '';
+            adopting = p;
+          }}
+        />
       {/each}
     {:else if !error}
       <p class="text-sm text-gray-500">
@@ -79,4 +114,12 @@
       </p>
     {/if}
   </div>
+
+  {#if adopting}
+    <AdoptEventModal
+      post={adopting}
+      on:close={() => (adopting = null)}
+      on:adopted={(e) => handleAdopted(e.detail.rsvps)}
+    />
+  {/if}
 </Frame>

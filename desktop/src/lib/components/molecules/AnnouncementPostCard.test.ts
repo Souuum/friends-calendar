@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { describe, expect, it, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/svelte';
 import AnnouncementPostCard from './AnnouncementPostCard.svelte';
 import type { AnnouncementPostInfo } from '$lib/types';
 
@@ -50,5 +50,34 @@ describe('AnnouncementPostCard', () => {
   it('labels the event tag distinctly from general', () => {
     render(AnnouncementPostCard, { post: makePost({ tag: 'event' }) });
     expect(screen.getByText('Event')).toBeInTheDocument();
+  });
+
+  describe('the "add to calendar" action', () => {
+    it('is absent unless a handler is supplied', () => {
+      render(AnnouncementPostCard, { props: { post: makePost({ tag: 'general' }) } });
+
+      expect(screen.queryByRole('button', { name: /Add to calendar/ })).not.toBeInTheDocument();
+    });
+
+    it('offers a general post to the handler', async () => {
+      const onAdopt = vi.fn();
+      const post = makePost({ tag: 'general' });
+      render(AnnouncementPostCard, { props: { post, onAdopt } });
+
+      await fireEvent.click(screen.getByRole('button', { name: /Add to calendar/ }));
+
+      expect(onAdopt).toHaveBeenCalledWith(post);
+    });
+
+    // A post tagged `event` already has a calendar row behind it. Offering
+    // to add it again would promise a second event the backend refuses to
+    // create - so the button must not be there at all.
+    it('is absent on a post that is already an event', () => {
+      render(AnnouncementPostCard, {
+        props: { post: makePost({ tag: 'event' }), onAdopt: vi.fn() }
+      });
+
+      expect(screen.queryByRole('button', { name: /Add to calendar/ })).not.toBeInTheDocument();
+    });
   });
 });

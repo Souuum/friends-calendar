@@ -115,11 +115,6 @@ pub(crate) fn build_router(state: AppState) -> Router {
         // Friends routes
         .route("/api/friends", get(handlers::friends::list_friends))
         .route("/api/friends/sync", post(handlers::friends::sync_friends))
-        // Discord bot routes
-        .route(
-            "/api/events/:id/link-discord",
-            post(handlers::calendar::link_discord_message),
-        )
         // Discord server info
         .route(
             "/api/discord/server",
@@ -195,6 +190,12 @@ pub(crate) fn build_router(state: AppState) -> Router {
         .route(
             "/api/announcements/:id/replies",
             get(handlers::announcements::list_replies),
+        )
+        // Binds an already-posted message to a new event, instead of
+        // announcing one - see services::event_adoption.
+        .route(
+            "/api/announcements/:id/adopt",
+            post(handlers::announcements::adopt_announcement),
         )
         .layer(cors)
         .with_state(state)

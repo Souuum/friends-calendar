@@ -5,6 +5,7 @@ pub mod digest;
 pub mod discord_announcement;
 pub mod discord_config;
 pub mod discord_feed;
+pub mod event_adoption;
 pub mod friend_requests;
 pub mod friends;
 pub mod guilds;

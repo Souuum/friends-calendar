@@ -25,6 +25,16 @@
    * header - linking from there back to where you already are is noise.
    */
   export let linkToThread = true;
+  /**
+   * Called to turn this post into a calendar event. Optional, and the
+   * button only appears when a handler is supplied *and* the post isn't
+   * already an event - a post tagged `event` has a calendar row behind it,
+   * so adopting it again would create a second event competing for the same
+   * reactions (the backend refuses it either way).
+   */
+  export let onAdopt: ((post: AnnouncementPostInfo) => void) | null = null;
+
+  $: canAdopt = onAdopt !== null && post.tag !== 'event';
 
   // Icon and text are separate now: an emoji glued into the string
   // couldn't be styled, sized, or follow the theme.
@@ -100,13 +110,27 @@
       {post.reply_count}
       {post.reply_count === 1 ? 'reply' : 'replies'}
     </span>
-    {#if linkToThread}
-      <a
-        href={`/announcements/${post.id}`}
-        class="ml-auto text-xs font-semibold {featured ? 'text-white' : 'text-discord-blurple'}"
-      >
-        Open thread
-      </a>
-    {/if}
+    <div class="ml-auto flex items-center gap-3">
+      {#if canAdopt}
+        <button
+          type="button"
+          on:click={() => onAdopt?.(post)}
+          class="inline-flex items-center gap-1 text-xs font-semibold {featured
+            ? 'text-white'
+            : 'text-discord-blurple'}"
+        >
+          <Icon name="calendar" size={14} />
+          Add to calendar
+        </button>
+      {/if}
+      {#if linkToThread}
+        <a
+          href={`/announcements/${post.id}`}
+          class="text-xs font-semibold {featured ? 'text-white' : 'text-discord-blurple'}"
+        >
+          Open thread
+        </a>
+      {/if}
+    </div>
   </div>
 </div>

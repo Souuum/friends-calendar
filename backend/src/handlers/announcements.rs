@@ -8,8 +8,12 @@ use crate::{
     config::AppState,
     error::AppError,
     middleware::auth::Claims,
-    models::{AnnouncementPostInfo, ReplyInfo},
-    services::{discord_config, discord_feed},
+    models::{AnnouncementPostInfo, CalendarEvent, CreateEventRequest, ReplyInfo},
+    services::{
+        discord_config, discord_feed,
+        event_adoption::{self, AdoptError},
+        reaction_sync,
+    },
 };
 
 /// The resolved announcements channel - same DB-config-first,
@@ -91,6 +95,103 @@ pub async fn list_replies(
     .map_err(|e| AppError::ExternalApiError(e.to_string()))?;
 
     Ok(Json(replies))
+}
+
+/// What adopting an announcement produced: the event, and how many ✅ that
+/// were already sitting on the message became RSVPs.
+///
+/// The count is reported rather than left implicit because it's the whole
+/// reason adoption beats re-creating the event by hand - people had already
+/// reacted, and those answers are recovered instead of being asked for
+/// again.
+#[derive(Debug, serde::Serialize)]
+pub struct AdoptionResult {
+    pub event: CalendarEvent,
+    pub rsvps_recorded: usize,
+    /// True when the backfill could not run or failed. The event is still
+    /// created; only the recovery of existing reactions was missed, and
+    /// `POST /api/events/sync-reactions` retries it.
+    pub backfill_failed: bool,
+}
+
+/// Turns an announcement the server has already seen into a calendar event,
+/// binding it to the existing Discord message instead of posting a new one.
+///
+/// See `services::event_adoption` for why this is the reverse of the normal
+/// create-then-announce path. The request body is an ordinary
+/// `CreateEventRequest` so the two paths describe an event identically;
+/// `guild_ids` is the one field ignored, since the server is decided by
+/// where the message already lives.
+pub async fn adopt_announcement(
+    claims: Claims,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<CreateEventRequest>,
+) -> Result<Json<AdoptionResult>, AppError> {
+    // Same guard as create_event - an adopted event is a real event and gets
+    // the same validation, not a looser path in because it came from Discord.
+    if req.end_time <= req.start_time {
+        return Err(AppError::ValidationError(
+            "End time must be after start time".to_string(),
+        ));
+    }
+
+    let user = crate::services::auth::get_user_by_discord_id(&state.db, &claims.sub)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+        .ok_or(AppError::Unauthorized)?;
+
+    let target = event_adoption::resolve_target(&state.db, id)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+        .map_err(|e| match e {
+            AdoptError::UnknownPost => AppError::NotFound,
+            other => AppError::ValidationError(other.to_string()),
+        })?;
+
+    let event = event_adoption::adopt(&state.db, user.id, &target, req)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    tracing::info!(
+        "📅 Adopted Discord message {} as event {} for {}",
+        target.message_id,
+        event.id,
+        user.username
+    );
+
+    // Best-effort, and awaited rather than spawned: it is one Discord call,
+    // and the people who already reacted are exactly what the user expects to
+    // see on the event they just adopted. A failure here doesn't undo the
+    // adoption - the event is real either way, and sync-reactions retries.
+    let (rsvps_recorded, backfill_failed) = match state.discord_bot_token.as_deref() {
+        Some(bot_token) => match reaction_sync::sync_message(
+            &state.db,
+            &state.discord_api_base,
+            &state.http_client,
+            bot_token,
+            &target.channel_id,
+            &target.message_id,
+        )
+        .await
+        {
+            Ok((_seen, recorded)) => (recorded, false),
+            Err(e) => {
+                tracing::warn!(
+                    "⚠️  Adopted {}, but the RSVP backfill failed: {e}",
+                    event.id
+                );
+                (0, true)
+            }
+        },
+        None => (0, true),
+    };
+
+    Ok(Json(AdoptionResult {
+        event,
+        rsvps_recorded,
+        backfill_failed,
+    }))
 }
 
 pub async fn list_announcements(
@@ -228,6 +329,186 @@ mod tests {
         let posts: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(posts[0]["body"], "Hello everyone");
         assert_eq!(posts[0]["author_username"], "alice");
+    }
+
+    /// A post in the feed with nothing behind it - a hand-written
+    /// announcement, or one this app posted before its database existed.
+    async fn seed_post(db: &PgPool, message_id: &str) -> uuid::Uuid {
+        let id = uuid::Uuid::new_v4();
+        sqlx::query(
+            r#"
+            INSERT INTO announcement_posts
+                (id, discord_message_id, channel_id, author_discord_id, author_username,
+                 body, tag, posted_at, synced_at)
+            VALUES ($1, $2, '123456789', 'julioo-discord', 'Julioo', 'Concert', 'general', now(), now())
+            "#,
+        )
+        .bind(id)
+        .bind(message_id)
+        .execute(db)
+        .await
+        .unwrap();
+        id
+    }
+
+    fn adopt_body() -> Body {
+        Body::from(
+            json!({
+                "title": "EsdeeKid",
+                "start_time": "2027-03-01T20:00:00Z",
+                "end_time": "2027-03-01T23:00:00Z",
+                "location": "Le Bikini",
+                "visibility": "friends"
+            })
+            .to_string(),
+        )
+    }
+
+    /// Discord's reaction list for the ✅ on `message_id`, plus a refusal to
+    /// accept any *new* message being posted: adoption must bind to what is
+    /// already there, never announce a second time.
+    async fn mock_discord(message_id: &str, reactors: serde_json::Value) -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "/channels/123456789/messages/{message_id}/reactions/%E2%9C%85"
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_json(reactors))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/channels/123456789/messages"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+        server
+    }
+
+    // The whole point of adopting rather than re-creating: people had
+    // already ticked ✅, and those answers come back as RSVPs instead of
+    // having to be asked for again.
+    #[sqlx::test]
+    async fn adopting_a_post_creates_an_event_and_recovers_the_reactions(db: PgPool) {
+        let user = seed_user(&db, "me-discord", "me").await;
+        let post = seed_post(&db, "msg-1").await;
+        crate::services::guilds::ensure_guild(&db, "test-guild-id")
+            .await
+            .unwrap();
+
+        let server = mock_discord(
+            "msg-1",
+            json!([
+                { "id": "friend-discord", "username": "friend", "bot": false },
+                { "id": "bot-discord", "username": "friends-calendar", "bot": true }
+            ]),
+        )
+        .await;
+
+        let state = AppState::for_test(db.clone(), server.uri());
+        let token = generate_jwt(&user.discord_id, &state.jwt_secret).unwrap();
+
+        let response = crate::build_router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/announcements/{post}/adopt"))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .body(adopt_body())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let result: Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(result["event"]["title"], "EsdeeKid");
+        // The bot's own ✅ is not a participant, so one of the two reactors.
+        assert_eq!(result["rsvps_recorded"], 1);
+        assert_eq!(result["backfill_failed"], false);
+
+        let status: String = sqlx::query_scalar(
+            r#"
+            SELECT ep.status::text FROM event_participants ep
+            JOIN users u ON u.id = ep.user_id
+            WHERE u.discord_id = 'friend-discord'
+            "#,
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(status, "accepted");
+
+        // `.expect(0)` on the POST mock is checked when the server drops.
+        drop(server);
+    }
+
+    // Adopting the same post twice would leave two events fighting over one
+    // message's reactions.
+    #[sqlx::test]
+    async fn adopting_the_same_post_twice_is_refused(db: PgPool) {
+        let user = seed_user(&db, "me-discord", "me").await;
+        let post = seed_post(&db, "msg-1").await;
+        crate::services::guilds::ensure_guild(&db, "test-guild-id")
+            .await
+            .unwrap();
+        let server = mock_discord("msg-1", json!([])).await;
+
+        let state = AppState::for_test(db.clone(), server.uri());
+        let token = generate_jwt(&user.discord_id, &state.jwt_secret).unwrap();
+        let app = crate::build_router(state);
+
+        let request = || {
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/announcements/{post}/adopt"))
+                .header("Authorization", format!("Bearer {token}"))
+                .header("Content-Type", "application/json")
+                .body(adopt_body())
+                .unwrap()
+        };
+
+        assert_eq!(
+            app.clone().oneshot(request()).await.unwrap().status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            app.oneshot(request()).await.unwrap().status(),
+            StatusCode::BAD_REQUEST
+        );
+
+        let events: i64 = sqlx::query_scalar("SELECT count(*) FROM calendar_events")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(events, 1);
+    }
+
+    #[sqlx::test]
+    async fn adopting_an_unknown_post_is_a_404(db: PgPool) {
+        let user = seed_user(&db, "me-discord", "me").await;
+        let state = AppState::for_test(db, "http://unused.invalid".to_string());
+        let token = generate_jwt(&user.discord_id, &state.jwt_secret).unwrap();
+
+        let response = crate::build_router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/announcements/{}/adopt", uuid::Uuid::new_v4()))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .body(adopt_body())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[sqlx::test]

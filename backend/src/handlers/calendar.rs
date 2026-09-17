@@ -6,8 +6,6 @@ use axum::{
 };
 use uuid::Uuid;
 
-use serde::Deserialize;
-
 use crate::{
     config::AppState,
     error::AppError,
@@ -373,50 +371,6 @@ pub async fn remove_participant(
     );
 
     Ok(StatusCode::NO_CONTENT)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct LinkDiscordMessageRequest {
-    pub message_id: String,
-    pub channel_id: String,
-}
-
-pub async fn link_discord_message(
-    claims: Claims,
-    State(state): State<AppState>,
-    Path(event_id): Path<Uuid>,
-    Json(req): Json<LinkDiscordMessageRequest>,
-) -> Result<Json<CalendarEvent>, AppError> {
-    let user = crate::services::auth::get_user_by_discord_id(&state.db, &claims.sub)
-        .await
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
-        .ok_or(AppError::Unauthorized)?;
-
-    // Verify user is the creator and update
-    let event = sqlx::query_as::<_, CalendarEvent>(
-        r#"
-        UPDATE calendar_events
-        SET discord_message_id = $1, discord_channel_id = $2, updated_at = NOW()
-        WHERE id = $3 AND creator_id = $4
-        RETURNING *
-        "#,
-    )
-    .bind(&req.message_id)
-    .bind(&req.channel_id)
-    .bind(event_id)
-    .bind(user.id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| AppError::DatabaseError(e.to_string()))?
-    .ok_or(AppError::NotFound)?;
-
-    tracing::info!(
-        "🔗 Linked event {} to Discord message {}",
-        event_id,
-        req.message_id
-    );
-
-    Ok(Json(event))
 }
 
 /// Records every ✅ already sitting on announcement messages.

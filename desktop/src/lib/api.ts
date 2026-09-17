@@ -13,6 +13,7 @@ import type {
   UpdateProfileRequest,
   BotChannelConfig,
   UpdateBotChannelConfigRequest,
+  AdoptionResult,
   AnnouncementPostInfo,
   ReplyInfo,
   ServersResponse
@@ -235,6 +236,35 @@ class ApiClient {
   async syncAnnouncements(): Promise<AnnouncementPostInfo[]> {
     return this.fetch<AnnouncementPostInfo[]>('/api/announcements/sync', {
       method: 'POST'
+    });
+  }
+
+  /**
+   * Turns an announcement the server has already seen into a calendar
+   * event, binding it to the existing Discord message rather than posting a
+   * new one - so the ✅ already on it become RSVPs.
+   *
+   * The fields are the ones the user confirmed in the form. The client
+   * guesses them from the post (`utils/announcementParse`), but the guess
+   * never reaches the server unreviewed. `guild_ids` is deliberately absent:
+   * the server is decided by where the message actually lives.
+   */
+  async adoptAnnouncement(
+    id: string,
+    data: {
+      title: string;
+      description?: string;
+      start_time: string;
+      end_time: string;
+      location?: string;
+      visibility?: Visibility;
+      price?: string;
+      link?: string;
+    }
+  ): Promise<AdoptionResult> {
+    return this.fetch<AdoptionResult>(`/api/announcements/${id}/adopt`, {
+      method: 'POST',
+      body: JSON.stringify(data)
     });
   }
 
