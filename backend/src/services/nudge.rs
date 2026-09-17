@@ -509,5 +509,4 @@ mod tests {
         assert!(!outcome.discord_failed);
         drop(server);
     }
-
 }
