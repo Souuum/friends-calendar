@@ -309,6 +309,7 @@
 
     <EventPeekPanel
       event={selectedEvent}
+      on:close={() => (selectedEvent = null)}
       on:refresh={handleRefresh}
       on:edit={(e) => openEditModal(e.detail)}
       on:deleted={handleDeleted}

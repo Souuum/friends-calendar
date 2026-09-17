@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onMount } from 'svelte';
+  import { dismissable } from '$lib/actions/dismissable';
   import { api } from '$lib/api';
   import type { EventWithParticipants } from '$lib/types';
   import { formatDate } from '$lib/utils/dateUtils';
@@ -17,6 +18,35 @@
 
   let updating = false;
   let error = '';
+
+  /**
+   * Below `md:` this is a sheet floating over the calendar, and it shipped
+   * with **no way to dismiss it at all** - no close control, no backdrop,
+   * and nothing listening for a tap outside. Selecting a different event
+   * was the only thing that changed it. From `md:` up it's a static column
+   * with an explicit "select an event" empty state, so it's *meant* to
+   * persist there and deliberately keeps doing so.
+   *
+   * Tracked in JS rather than with a `md:hidden` backdrop, because the
+   * difference isn't only visual: the backdrop and its history entry must
+   * not exist at all on desktop, where nothing is being covered up.
+   */
+  let isSheet = false;
+
+  onMount(() => {
+    // 767.98 rather than 767: `md:` is min-width 768px, and a fractional
+    // viewport width (browser zoom, some devices) would otherwise fall in
+    // the gap between the two and match neither.
+    const sheetWidth = window.matchMedia('(max-width: 767.98px)');
+    const sync = () => (isSheet = sheetWidth.matches);
+    sync();
+    sheetWidth.addEventListener('change', sync);
+    return () => sheetWidth.removeEventListener('change', sync);
+  });
+
+  function close() {
+    dispatch('close');
+  }
 
   // Mirrors the mockup's STATUS object exactly (bar/bg/fg per status) -
   // "accepted" is tint/accent-text, never green.
@@ -80,6 +110,20 @@
      that component predates the mockup's status palette, uses
      confirm()/alert(), has no edit affordance and no is_participant
      handling, so reusing it would have reintroduced all four. -->
+<!-- Transparent on purpose: the sheet is docked over the calendar rather
+     than presented as a modal, and dimming everything would change that
+     design. This exists to catch the tap, not to be seen. It sits below the
+     sheet (z-30) and, being earlier in the DOM than `Frame`'s equally-ranked
+     tab bar, below that too - so the tabs still navigate while it's open. -->
+{#if event && isSheet}
+  <div
+    class="fixed inset-0 z-30 md:hidden"
+    use:dismissable={close}
+    role="presentation"
+    aria-hidden="true"
+  ></div>
+{/if}
+
 <aside
   class="bg-surface border border-line p-[18px]
          fixed inset-x-0 bottom-0 z-40 max-h-[70vh] overflow-y-auto rounded-t-2xl shadow-[0_-14px_40px_rgba(0,0,0,0.18)] anim-sheet
@@ -110,6 +154,16 @@
             >
               {s.label}
             </span>
+          {/if}
+          <!-- Sheet only: from `md:` up the panel is a column that is
+               supposed to stay, so there is nothing to close. -->
+          {#if isSheet}
+            <button
+              type="button"
+              on:click={close}
+              class="-mr-2 ml-auto flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg text-2xl leading-none text-gray-400 hover:bg-gray-100 hover:text-gray-600 md:hidden"
+              aria-label="Close">×</button
+            >
           {/if}
         </div>
 

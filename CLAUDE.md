@@ -1470,6 +1470,19 @@ and `AdoptEventModal` shared the same overlay.
   user's only remaining move was the back gesture, which navigated off the
   page - the second half of the report.
 
+⚠️ **`EventPeekPanel` had the same problem and was missed the first time.**
+It isn't a modal - it's the event-detail *sheet* below `md:` - so it wasn't
+covered by the modal fix, and it shipped with **no dismissal path at all**:
+no close control, no backdrop, no `close` dispatch on the component and
+nothing listening for one on `Calendar`. Selecting a different event was
+the only thing that could change it. It now has a transparent backdrop
+(`use:dismissable`) and a 44px close control, **both only below `md:`** -
+from `md:` up it's a static column with its own "select an event" empty
+state, and is supposed to persist. The breakpoint is read with `matchMedia`
+rather than a `md:hidden` backdrop, because the backdrop and its history
+entry must not *exist* on desktop, not merely be invisible. There's a test
+asserting the desktop column survives a stray click.
+
 `lib/actions/dismissable.ts` now gives both modals Escape, backdrop-tap, and
 **back-gesture** dismissal.
 
@@ -1493,7 +1506,13 @@ layout (so it cannot see that a control is off screen), no `history` for a
 back gesture to act on, and no constraint validation. All of this was
 invisible to the component tier, which was passing throughout.
 
-⚠️ **Wait for `anim-pop` before measuring anything.** `boundingBox()` during
+⚠️ **`tablet-768` renders the *desktop* layout.** `md:` is `min-width: 768px`,
+so the tablet project is on the far side of the breakpoint - a test for
+mobile-only behaviour has to skip everything except `mobile-402`, not just
+`desktop-1280`. Skipping only the latter made three sheet tests fail for a
+reason that had nothing to do with the code.
+
+⚠️ **Wait for `anim-pop` (and `anim-sheet`) before measuring anything.** `boundingBox()` during
 the modal's entrance reports the *scaled* size - a 44px control measures
 43.0 - so the tap-target assertion failed for a reason unrelated to the CSS.
 `open()` awaits `getAnimations({ subtree: true })`. Same trap as sampling a
@@ -1509,6 +1528,12 @@ and is what the codebase already does for `max-h`/`w-[1.25em]`.)
 the server command is `yarn build && yarn preview`. **A preview server left
 running locally serves a stale build**, so a CSS change appears to have no
 effect. Kill port 4173 before concluding a style fix didn't work.
+
+⚠️ **`actions/clickOutside.ts` leaked every listener it ever added** - found
+while reading it for this work, unrelated to the reported bug. It added on
+the bubble phase and removed with `capture: true`; a mismatched flag means
+`removeEventListener` matches nothing. Only `Header.svelte` uses it, so the
+leak was one dead listener per profile-menu mount.
 
 ⚠️ `BlurModal`/`ModalContainer`/`BlurOverlay` already implement backdrop and
 escape handling and are used by **nothing** - dead since `EventDetailsModal`
