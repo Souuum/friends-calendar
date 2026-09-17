@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
+  import { dismissable } from '$lib/actions/dismissable';
   import { api } from '$lib/api';
   import { user } from '$lib/stores';
   import { dateUtils } from '$lib/utils/dateUtils';
@@ -99,18 +100,33 @@
   }
 </script>
 
+<!-- overflow-y-auto + items-start so the dialog can never be taller than
+     the reachable area: on a phone `90vh` is measured against the viewport
+     *without* the URL bar, so a centred, unscrollable overlay pushes the
+     top and bottom of the dialog - where every close control lives - off
+     screen with no way to bring them back. -->
 <div
-  class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 anim-scrim"
+  class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black bg-opacity-50 p-4 anim-scrim"
+  use:dismissable={() => dispatch('close')}
+  role="presentation"
 >
   <div
-    class="bg-surface rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto anim-pop"
+    class="bg-surface my-auto w-full max-w-lg rounded-2xl shadow-2xl anim-pop"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Add to calendar"
   >
     <div class="p-6">
-      <div class="flex justify-between items-start gap-3 mb-1">
+      <!-- sticky: the close control has to stay reachable however far down
+           the form you have scrolled. -->
+      <div
+        class="bg-surface sticky top-0 z-10 -mx-6 -mt-6 mb-1 flex items-start justify-between gap-3 rounded-t-2xl px-6 pt-6"
+      >
         <h2 class="text-2xl font-bold text-gray-900 m-0">Add to calendar</h2>
         <button
+          type="button"
           on:click={() => dispatch('close')}
-          class="text-gray-400 hover:text-gray-600 text-2xl leading-none"
+          class="-mr-2 -mt-1 flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg text-2xl leading-none text-gray-400 hover:bg-gray-100 hover:text-gray-600"
           aria-label="Close">×</button
         >
       </div>

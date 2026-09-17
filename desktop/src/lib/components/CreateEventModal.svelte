@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from 'svelte';
+  import { dismissable } from '$lib/actions/dismissable';
   import { api } from '$lib/api';
   import { user } from '$lib/stores';
   import { dateUtils } from '$lib/utils/dateUtils';
@@ -230,23 +231,35 @@
   }
 </script>
 
+<!-- See AdoptEventModal for why this scrolls and aligns to the top rather
+     than centring: a centred, unscrollable overlay puts the close controls
+     off screen on a phone, where `vh` excludes the URL bar. -->
 <div
-  class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 anim-scrim"
+  class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black bg-opacity-50 p-4 anim-scrim"
+  use:dismissable={handleClose}
+  role="presentation"
 >
   <div
-    class="bg-surface rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto anim-pop"
+    class="bg-surface my-auto w-full max-w-2xl rounded-2xl shadow-2xl anim-pop"
+    role="dialog"
+    aria-modal="true"
   >
     <div class="p-6">
-      <div class="flex justify-between items-center mb-6">
+      <div
+        class="bg-surface sticky top-0 z-10 -mx-6 -mt-6 mb-6 flex items-center justify-between rounded-t-2xl px-6 pt-6"
+      >
         <h2 class="text-2xl font-bold text-gray-900">
           {isEditing ? 'Edit event' : 'Create New Event'}
           {#if wizard}
             <span class="md:hidden font-mono text-xs text-muted align-middle ml-2">{step} / 2</span>
           {/if}
         </h2>
-        <button on:click={handleClose} class="text-gray-400 hover:text-gray-600 text-2xl">
-          ×
-        </button>
+        <button
+          type="button"
+          on:click={handleClose}
+          class="-mr-2 flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg text-2xl leading-none text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          aria-label="Close">×</button
+        >
       </div>
 
       {#if error}

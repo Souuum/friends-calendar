@@ -654,7 +654,10 @@ rather than re-deriving the patterns. Summary:
     buttons, which renders identical pixels but counts toward the hit area);
     and `src/app.html` carried a stale `<link href="./app.css">` for a file
     that doesn't exist in the build, 404ing on every page load since
-    `app.css` is bundled through `+layout.svelte`'s import.
+    `app.css` is bundled through `+layout.svelte`'s import. ⚠️ The tap-target check
+    walked only the five bottom-tab buttons, so modals went unchecked until
+    the 14.7px modal close button turned up - see the modal-dismissal note
+    below.
   - **Two more found by *reading* a screenshot**, which is the part
     assertions can't do: full weekday names collided in the month grid's
     ~50px columns at 402px (they overlapped rather than widening the page,
@@ -1443,6 +1446,76 @@ rgb. The first version of `theme.spec.ts`'s luminance helper regexed three
 numbers out of `oklch(0.21 0.006 285)` and treated the *hue* (285) as a blue
 channel, reporting light-mode backgrounds as dark. It now branches on the
 format; for oklch the first component already *is* perceptual lightness.
+
+## Modals had one way out, and it was 14.7px wide (2026-09-17)
+
+Reported as "the event modal is still persisting on mobile, i have to do a
+gesture back to get rid of it but lands me on the previous page". Both
+halves were real, and neither was specific to one modal - `CreateEventModal`
+and `AdoptEventModal` shared the same overlay.
+
+- ⚠️ **The only close control was a bare `×` glyph with no padding**,
+  measured at **14.7 × 32px** - a third of the 44px floor `e2e/layout.spec.ts`
+  holds the bottom tab bar to. That test only ever walked the five tab
+  buttons, so nothing checked a modal. `Cancel`, the other way out, sat
+  **1005px down** a scroll container on a 620px-tall viewport.
+- ⚠️ **The overlay was `flex items-center` with no overflow**, and the dialog
+  `max-h-[90vh]`. On a phone `vh` is measured against the viewport *without*
+  the URL bar, so a dialog sized to 90vh is taller than what you can see, and
+  centring it puts the header *and* the footer off screen with nothing to
+  scroll. The overlay now scrolls (`overflow-y-auto`, `items-start`,
+  `my-auto` on the dialog) and the header is `sticky`, so the close control
+  is reachable at any scroll position and any height.
+- **Nothing else dismissed them**: no Escape, no backdrop click. So a phone
+  user's only remaining move was the back gesture, which navigated off the
+  page - the second half of the report.
+
+`lib/actions/dismissable.ts` now gives both modals Escape, backdrop-tap, and
+**back-gesture** dismissal.
+
+- The back gesture only closes a modal if the modal *is* a history entry, so
+  opening one pushes state and closing one pops it. **SvelteKit's own state
+  is spread through** (`{ ...history.state }`) - the router keys navigation
+  off an index it keeps there, and replacing the object wholesale breaks the
+  next real navigation.
+- `ourEntryIsLive` distinguishes "closed by a button" (pop our entry with
+  `history.back()`, so leaving the page still takes one press) from "the
+  browser already popped it" (do nothing - calling `back()` there would
+  navigate away, which is the bug). There's a test for each direction;
+  removing the pushState makes the back test land on `/settings`, which is
+  precisely what was reported.
+- Backdrop dismissal keys off `pointerdown` **and** `pointerup` both landing
+  on the overlay, so dragging to select text inside the dialog and releasing
+  outside it doesn't close the form.
+
+⚠️ **`e2e/modal-dismiss.spec.ts` has to be a browser test.** happy-dom has no
+layout (so it cannot see that a control is off screen), no `history` for a
+back gesture to act on, and no constraint validation. All of this was
+invisible to the component tier, which was passing throughout.
+
+⚠️ **Wait for `anim-pop` before measuring anything.** `boundingBox()` during
+the modal's entrance reports the *scaled* size - a 44px control measures
+43.0 - so the tap-target assertion failed for a reason unrelated to the CSS.
+`open()` awaits `getAnimations({ subtree: true })`. Same trap as sampling a
+colour mid theme-transition.
+
+⚠️ **`h-11` is not 44px here.** This app's root font size isn't 16px, so
+2.75rem lands at 43.0 and the tap-target floor fails by a hair. Tap targets
+are spelled `min-h-[44px]`/`min-w-[44px]` in pixels. (Arbitrary *colours*
+are still banned - see the dark mode note - but an arbitrary length is fine
+and is what the codebase already does for `max-h`/`w-[1.25em]`.)
+
+⚠️ `playwright.config.ts` sets `reuseExistingServer: !process.env.CI`, and
+the server command is `yarn build && yarn preview`. **A preview server left
+running locally serves a stale build**, so a CSS change appears to have no
+effect. Kill port 4173 before concluding a style fix didn't work.
+
+⚠️ `BlurModal`/`ModalContainer`/`BlurOverlay` already implement backdrop and
+escape handling and are used by **nothing** - dead since `EventDetailsModal`
+was deleted. They were deliberately not resurrected here: adopting them
+would have restyled two working modals (the blur overlay is a different
+look) to reuse untested code. Delete them or adopt them, but don't leave a
+third half-built modal system.
 
 ## Multi-server — done (steps 1-5, 2026-09-16)
 
