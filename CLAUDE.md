@@ -1788,7 +1788,13 @@ writes a new component.
   the theme on someone's phone.
 - Buttons, not a `<select>`: happy-dom can't match `<select>` options by
   value, which is how the reminder-picker tests once passed by accident (see
-  the Testing section).
+  the Testing section). ⚠️ Confirmed again 2026-09-17: neither
+  `fireEvent.change(el, { target: { value } })` **nor** setting
+  `selectedIndex` moves a bound value off the first option. Drive that state
+  through a prop or a store instead of the control - the public-visibility
+  case in `CreateEventModal.test.ts` goes through `default_visibility`.
+  ⚠️ A store mocked for a component must be built inside an **async**
+  `vi.mock` factory; a `vi.hoisted` one cannot reference `writable` yet.
 - ⚠️ **`--color-white` is NOT overridden in `.dark`, on purpose.** It backs
   `text-white`, which means "ink on a coloured fill" and must stay light in
   both themes. Dark mode originally redefined it to serve as the card
@@ -2145,10 +2151,22 @@ end to end:
 - `CreateEventModal.svelte` grew server chips. **Nothing is selected by
   default** (the user chose this over pre-selecting every server): publishing
   to a server is a broadcast, and a default that broadcasts everywhere is the
-  kind of default you only notice after it's wrong. The cost is that a
-  `friends`/`public` event with no server chosen reaches nobody but its
-  invitees, so the modal shows a `publishedNowhereButShared` warning rather
-  than letting that happen silently.
+  kind of default you only notice after it's wrong.
+- ⚠️ **Reworked 2026-09-17 into an explicit "Invite only" / "Announce in a
+  server" choice.** Not announcing was always supported - an absent or empty
+  `guild_ids` means the backend posts nothing - but it was the *absence* of a
+  choice: the section said "Announce in", offered chips, and leaving them
+  empty produced a warning. Since `friends` is the default visibility, the
+  ordinary case (invite three people, post nothing) tripped that warning, so
+  the app scolded people for the thing they meant to do. It is an
+  affirmative option now and the wire format is unchanged.
+  - The warning is down to the one genuine contradiction: **`public` +
+    announced nowhere**, where reach comes *from* being published somewhere.
+    Asking to announce and then naming no server still prompts - that is
+    incomplete rather than a decision.
+  - Switching back to invite-only **clears any picked chips**, so what is
+    submitted always matches what the form says. Mutation-tested, because
+    the failure mode is an event quietly broadcast after you chose not to.
 - A server registered by id but never seen by the gateway has no name yet;
   both the page and the picker render the id with a "name appears once the
   bot reconnects" note instead of blank.
