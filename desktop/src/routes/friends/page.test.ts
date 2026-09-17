@@ -2,13 +2,16 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import type { EventWithParticipants, FriendInfo, SyncFriendsResult } from '$lib/types';
 
-const { getFriends, getEvents, getFreeFriendsNow, syncFriends, goto } = vi.hoisted(() => ({
-  getFriends: vi.fn(),
-  getEvents: vi.fn(),
-  getFreeFriendsNow: vi.fn(),
-  syncFriends: vi.fn(),
-  goto: vi.fn()
-}));
+const { getFriends, getEvents, getFreeFriendsNow, syncFriends, goto, getBestSlots } = vi.hoisted(
+  () => ({
+    getFriends: vi.fn(),
+    getEvents: vi.fn(),
+    getFreeFriendsNow: vi.fn(),
+    syncFriends: vi.fn(),
+    goto: vi.fn(),
+    getBestSlots: vi.fn()
+  })
+);
 
 vi.mock('$lib/api', () => ({
   api: {
@@ -17,7 +20,8 @@ vi.mock('$lib/api', () => ({
     getFreeFriendsNow,
     syncFriends,
     clearToken: vi.fn(),
-    getToken: vi.fn()
+    getToken: vi.fn(),
+    getBestSlots
   }
 }));
 
@@ -76,6 +80,8 @@ describe('friends directory page', () => {
     syncFriends.mockReset();
     goto.mockReset();
     getFreeFriendsNow.mockResolvedValue([]);
+    getBestSlots.mockReset();
+    getBestSlots.mockResolvedValue([]);
   });
 
   it('re-syncs friends when "Sync friends" is clicked', async () => {
@@ -173,5 +179,93 @@ describe('friends directory page', () => {
     render(FriendsPage);
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('network down'));
+  });
+  describe('the filter chips', () => {
+    const recently: FriendInfo = {
+      user_id: 'new-id',
+      username: 'newcomer',
+      avatar_url: undefined,
+      synced_at: new Date().toISOString()
+    };
+    const longAgo: FriendInfo = {
+      user_id: 'old-id',
+      username: 'veteran',
+      avatar_url: undefined,
+      synced_at: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString()
+    };
+
+    it('narrows to people free at some point this week', async () => {
+      getFriends.mockResolvedValue([recently, longAgo]);
+      getEvents.mockResolvedValue([]);
+      getFreeFriendsNow.mockResolvedValue([]);
+      // One request for the whole week, not one per friend.
+      getBestSlots.mockResolvedValue([
+        { start: '2027-01-01T19:00:00Z', free_count: 1, free_friend_ids: ['new-id'] }
+      ]);
+
+      render(FriendsPage);
+      await waitFor(() => expect(screen.getByText('veteran')).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Free this week' }));
+
+      expect(screen.getByText('newcomer')).toBeInTheDocument();
+      expect(screen.queryByText('veteran')).not.toBeInTheDocument();
+    });
+
+    it('narrows to people synced in the last week', async () => {
+      getFriends.mockResolvedValue([recently, longAgo]);
+      getEvents.mockResolvedValue([]);
+      getFreeFriendsNow.mockResolvedValue([]);
+
+      render(FriendsPage);
+      await waitFor(() => expect(screen.getByText('veteran')).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Recently added' }));
+
+      expect(screen.getByText('newcomer')).toBeInTheDocument();
+      expect(screen.queryByText('veteran')).not.toBeInTheDocument();
+    });
+
+    it('goes back to everyone', async () => {
+      getFriends.mockResolvedValue([recently, longAgo]);
+      getEvents.mockResolvedValue([]);
+      getFreeFriendsNow.mockResolvedValue([]);
+
+      render(FriendsPage);
+      await waitFor(() => expect(screen.getByText('veteran')).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Recently added' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'All' }));
+
+      expect(screen.getByText('veteran')).toBeInTheDocument();
+    });
+
+    // A filtered-to-nothing list should say which filter did it, not
+    // "no friends match your search" when you never typed one.
+    it('says why the list is empty', async () => {
+      getFriends.mockResolvedValue([longAgo]);
+      getEvents.mockResolvedValue([]);
+      getFreeFriendsNow.mockResolvedValue([]);
+
+      render(FriendsPage);
+      await waitFor(() => expect(screen.getByText('veteran')).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Recently added' }));
+
+      expect(screen.getByText(/Nobody was added in the last week/)).toBeInTheDocument();
+    });
+
+    // The mockup's fourth chip. Pending requests are people who are not
+    // friends yet, so it could only ever match nothing.
+    it('does not offer a Pending chip that could only be empty', async () => {
+      getFriends.mockResolvedValue([recently]);
+      getEvents.mockResolvedValue([]);
+      getFreeFriendsNow.mockResolvedValue([]);
+
+      render(FriendsPage);
+      await waitFor(() => expect(screen.getByText('newcomer')).toBeInTheDocument());
+
+      expect(screen.queryByRole('button', { name: 'Pending' })).not.toBeInTheDocument();
+    });
   });
 });

@@ -9,6 +9,8 @@
   let friends: FriendInfo[] = [];
   let events: EventWithParticipants[] = [];
   let freeNowIds = new Set<string>();
+  /** Friends free in at least one candidate slot over the coming week. */
+  let freeThisWeekIds = new Set<string>();
   let loading = true;
   let error = '';
   let search = '';
@@ -53,6 +55,66 @@
     } catch {
       // leave freeNowIds empty - just means no "Free now" pills show up.
     }
+
+    // "Free this week" comes off the slot ranking rather than a
+    // per-friend availability call: `getBestSlots` already returns
+    // `free_friend_ids` for every candidate slot across the window, so the
+    // union of those is "free at some point this week" in **one** request
+    // instead of one per friend.
+    try {
+      const from = new Date();
+      const to = new Date(from.getTime() + 7 * 24 * 60 * 60 * 1000);
+      const slots = await api.getBestSlots(from, to, 120);
+      freeThisWeekIds = new Set(slots.flatMap((slot) => slot.free_friend_ids));
+    } catch {
+      // The chip still works; it just matches nobody.
+    }
+  }
+
+  /**
+   * The mockup's filter chips.
+   *
+   * ⚠️ Its fourth chip, "Pending", is deliberately **not** here. Pending
+   * friend requests are people who are not friends *yet*, so they are not in
+   * this list by definition - the chip could only ever match an empty set,
+   * which is the class of control this codebase keeps having to remove.
+   * `/friends/add` is where requests actually live.
+   */
+  type FilterKey = 'all' | 'free-week' | 'recent';
+  const FILTERS: { key: FilterKey; label: string }[] = [
+    { key: 'all', label: 'All' },
+    { key: 'free-week', label: 'Free this week' },
+    { key: 'recent', label: 'Recently added' }
+  ];
+  let activeFilter: FilterKey = 'all';
+
+  /** Synced within the last week counts as recent. */
+  const RECENT_MS = 7 * 24 * 60 * 60 * 1000;
+
+  /**
+   * Pure, and takes every input explicitly.
+   *
+   * ⚠️ Not a closure over `activeFilter`/`freeThisWeekIds`: Svelte's
+   * reactive dependency tracking is **static** - it reads the identifiers
+   * in the `$:` line itself, not what a called function transitively
+   * touches - so a closure would leave the list stale when the filter
+   * changed. This codebase has been bitten by that three times
+   * (`matchesFilter` on the calendar, `eventsForDay`, `Frame`'s
+   * `avatarUrl`); passing arguments is how the calendar fixed it.
+   */
+  function filterFriends(
+    all: FriendInfo[],
+    query: string,
+    filter: FilterKey,
+    freeWeek: Set<string>
+  ): FriendInfo[] {
+    const needle = query.trim().toLowerCase();
+    return all.filter((friend) => {
+      if (!friend.username.toLowerCase().includes(needle)) return false;
+      if (filter === 'free-week') return freeWeek.has(friend.user_id);
+      if (filter === 'recent') return Date.now() - new Date(friend.synced_at).getTime() < RECENT_MS;
+      return true;
+    });
   }
 
   async function handleSync() {
@@ -70,9 +132,8 @@
 
   onMount(load);
 
-  $: visibleFriends = friends.filter((f) =>
-    f.username.toLowerCase().includes(search.trim().toLowerCase())
-  );
+  // Every input named directly in the line - see filterFriends.
+  $: visibleFriends = filterFriends(friends, search, activeFilter, freeThisWeekIds);
 </script>
 
 <svelte:head>
@@ -118,6 +179,20 @@
           class="min-w-0 flex-1 border-none bg-transparent text-[13px] outline-none placeholder:text-muted"
         />
       </div>
+
+      {#each FILTERS as filter (filter.key)}
+        <button
+          type="button"
+          aria-pressed={activeFilter === filter.key}
+          on:click={() => (activeFilter = filter.key)}
+          class="rounded-[9px] border px-3.5 py-[9px] text-[13px] font-semibold transition-colors {activeFilter ===
+          filter.key
+            ? 'border-primary bg-tint text-primary'
+            : 'border-line bg-surface text-muted hover:bg-subtle'}"
+        >
+          {filter.label}
+        </button>
+      {/each}
     </div>
 
     {#if error}
@@ -126,7 +201,13 @@
       <p class="text-sm text-gray-500">Loading…</p>
     {:else if visibleFriends.length === 0}
       <p class="text-sm text-gray-500">
-        {friends.length === 0 ? 'No friends synced yet.' : 'No friends match your search.'}
+        {friends.length === 0
+          ? 'No friends synced yet.'
+          : activeFilter === 'free-week'
+            ? "Nobody's free this week — or their calendars say nothing either way."
+            : activeFilter === 'recent'
+              ? 'Nobody was added in the last week.'
+              : 'No friends match your search.'}
       </p>
     {:else}
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(250px,1fr))]">

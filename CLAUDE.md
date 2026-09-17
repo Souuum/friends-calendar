@@ -1149,6 +1149,21 @@ with per-user `username`/`avatar_url` override plus `allowed_mentions`,
 which would also unblock reviving replies. Worth doing, carries a security
 design decision, deliberately deferred.
 
+**Friends filter chips - done 2026-09-17.** All / Free this week / Recently
+added on `/friends`. "Free this week" comes off the **slot ranking**, not a
+per-friend availability call: `getBestSlots` already returns
+`free_friend_ids` for every candidate slot across the window, so the union
+is one request instead of one per friend.
+⚠️ The mockup's fourth chip, **"Pending", is deliberately absent**. Pending
+friend requests are people who are not friends *yet*, so they are not in
+that list by definition and the chip could only ever match an empty set -
+the class of control this codebase keeps removing. `/friends/add` is where
+requests live, and a test asserts the chip isn't rendered.
+⚠️ `filterFriends` takes every input as an **argument**, not a closure:
+Svelte's reactive dependency tracking is static, and a closure over
+`activeFilter` leaves the list stale when the filter changes. Fourth
+instance of that family here.
+
 **Also seen in the mockups and deliberately not turned into skills:** the
 mobile gesture layer (swipe the grid for months, pull-to-refresh the
 agenda, swipe an agenda row to RSVP, swipe a friend row to invite, swipe an
