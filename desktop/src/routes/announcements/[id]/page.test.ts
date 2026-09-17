@@ -41,7 +41,8 @@ const post: AnnouncementPostInfo = {
   reaction_count: 0,
   reply_count: 1,
   pinned: false,
-  posted_at: '2026-03-01T12:00:00Z'
+  posted_at: '2026-03-01T12:00:00Z',
+  thread_url: 'https://discord.com/channels/g1/m1'
 };
 
 function reply(body: string): ReplyInfo {
@@ -74,48 +75,38 @@ describe('announcement thread page', () => {
     expect(screen.getAllByText(/1\s+reply/)).toHaveLength(2);
   });
 
+  // Replying moved to Discord: the bot used to send these, so a thread
+  // showed "friends-calendar" saying whatever a user typed, and with no
+  // allowed_mentions guard a user could make the bot ping @everyone using
+  // the bot's permissions rather than their own. Reading stays in the app.
+  it('offers a link to the Discord thread instead of a composer', async () => {
+    render(ThreadPage);
+
+    const link = await screen.findByRole('link', { name: /Reply in Discord/i });
+    expect(link).toHaveAttribute('href', 'https://discord.com/channels/g1/m1');
+    expect(link).toHaveAttribute('target', '_blank');
+  });
+
+  it('has no reply composer at all', async () => {
+    render(ThreadPage);
+    await waitFor(() => expect(screen.getByText('Ski trip')).toBeInTheDocument());
+
+    expect(screen.queryByLabelText('Reply')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Send/i })).not.toBeInTheDocument();
+  });
+
+  // No linked server means no URL to offer; say so rather than render a
+  // dead button.
+  it('explains itself when there is no thread link', async () => {
+    getAnnouncements.mockResolvedValue([{ ...post, thread_url: undefined }]);
+
+    render(ThreadPage);
+
+    await waitFor(() => expect(screen.getByText(/no server is linked yet/i)).toBeInTheDocument());
+  });
+
   it('invites a first reply when the thread is empty', async () => {
     render(ThreadPage);
     await waitFor(() => expect(screen.getByText(/No replies yet/)).toBeInTheDocument());
-  });
-
-  it('posts a reply and renders the thread the server returns', async () => {
-    postAnnouncementReply.mockResolvedValue([reply('posted!')]);
-
-    render(ThreadPage);
-    await waitFor(() => expect(screen.getByLabelText('Reply')).toBeInTheDocument());
-
-    await fireEvent.input(screen.getByLabelText('Reply'), { target: { value: 'posted!' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-
-    await waitFor(() => expect(postAnnouncementReply).toHaveBeenCalledWith('p1', 'posted!'));
-    // The endpoint returns the refreshed thread, so no second fetch is needed.
-    await waitFor(() => expect(screen.getByText('posted!')).toBeInTheDocument());
-    expect(getAnnouncementReplies).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps the draft and shows an error when sending fails', async () => {
-    postAnnouncementReply.mockRejectedValue(new Error('Discord said no'));
-
-    render(ThreadPage);
-    await waitFor(() => expect(screen.getByLabelText('Reply')).toBeInTheDocument());
-
-    await fireEvent.input(screen.getByLabelText('Reply'), { target: { value: 'keep me' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-
-    await waitFor(() => expect(screen.getByText('Discord said no')).toBeInTheDocument());
-    // Losing what someone typed because the network blipped is the worst
-    // possible response to a failure here.
-    expect(screen.getByLabelText('Reply')).toHaveValue('keep me');
-  });
-
-  it('will not send a blank reply', async () => {
-    render(ThreadPage);
-    await waitFor(() => expect(screen.getByLabelText('Reply')).toBeInTheDocument());
-
-    await fireEvent.input(screen.getByLabelText('Reply'), { target: { value: '   ' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-
-    expect(postAnnouncementReply).not.toHaveBeenCalled();
   });
 });

@@ -247,14 +247,6 @@ class ApiClient {
     return this.fetch<ReplyInfo[]>(`/api/announcements/${id}/replies`);
   }
 
-  /** Returns the refreshed thread, not just the sent reply. */
-  async postAnnouncementReply(id: string, body: string): Promise<ReplyInfo[]> {
-    return this.fetch<ReplyInfo[]>(`/api/announcements/${id}/reply`, {
-      method: 'POST',
-      body: JSON.stringify({ body })
-    });
-  }
-
   // Notifications
   async getNotifications(): Promise<NotificationInfo[]> {
     return this.fetch<NotificationInfo[]>('/api/notifications');

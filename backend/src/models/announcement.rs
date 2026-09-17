@@ -20,6 +20,9 @@ pub struct AnnouncementPostRow {
     pub reply_count: i32,
     pub pinned: bool,
     pub posted_at: DateTime<Utc>,
+    /// Selected so `list_posts` can build a thread deep link. It is not
+    /// carried onto `AnnouncementPostInfo` - see the note there.
+    pub discord_message_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -34,6 +37,10 @@ pub struct AnnouncementPostInfo {
     pub reply_count: i32,
     pub pinned: bool,
     pub posted_at: DateTime<Utc>,
+    /// Deep link to the message's own Discord thread, when the guild is
+    /// known. Built server-side rather than exposing `discord_message_id`
+    /// and `channel_id`, which a test asserts never reach the client.
+    pub thread_url: Option<String>,
 }
 
 impl From<AnnouncementPostRow> for AnnouncementPostInfo {
@@ -49,6 +56,7 @@ impl From<AnnouncementPostRow> for AnnouncementPostInfo {
             reply_count: row.reply_count,
             pinned: row.pinned,
             posted_at: row.posted_at,
+            thread_url: None,
         }
     }
 }

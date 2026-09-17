@@ -176,8 +176,8 @@ pub async fn sync_channel(
 pub async fn list_posts(db: &PgPool, channel_id: &str) -> Result<Vec<AnnouncementPostInfo>> {
     let rows = sqlx::query_as::<_, AnnouncementPostRow>(
         r#"
-        SELECT id, author_discord_id, author_username,
-               author_avatar, title, body, tag, reaction_count, reply_count, pinned, posted_at
+        SELECT id, author_discord_id, author_username, author_avatar, title, body,
+               tag, reaction_count, reply_count, pinned, posted_at, discord_message_id
         FROM announcement_posts
         WHERE channel_id = $1
         ORDER BY pinned DESC, posted_at DESC
@@ -187,7 +187,26 @@ pub async fn list_posts(db: &PgPool, channel_id: &str) -> Result<Vec<Announcemen
     .fetch_all(db)
     .await?;
 
-    Ok(rows.into_iter().map(AnnouncementPostInfo::from).collect())
+    // One lookup for the whole list rather than per row. Absent config just
+    // means no deep link - the feed still reads fine without one.
+    let guild_id: Option<String> =
+        sqlx::query_scalar("SELECT guild_id FROM discord_bot_config LIMIT 1")
+            .fetch_optional(db)
+            .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let message_id = row.discord_message_id.clone();
+            let mut info = AnnouncementPostInfo::from(row);
+            // A thread started from a message shares that message's id, so
+            // the message id addresses the thread directly.
+            info.thread_url = guild_id
+                .as_ref()
+                .map(|g| format!("https://discord.com/channels/{g}/{message_id}"));
+            info
+        })
+        .collect())
 }
 
 /// How many posts landed in `channel_id` since `since` - feeds the weekly

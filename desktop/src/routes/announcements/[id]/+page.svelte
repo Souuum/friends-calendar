@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from '$lib/components/atoms/Icon.svelte';
   import { renderDiscordMarkdown } from '$lib/utils/discordMarkdown';
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
@@ -15,10 +16,6 @@
   let replies: ReplyInfo[] = [];
   let loading = true;
   let error = '';
-
-  let draft = '';
-  let sending = false;
-  let sendError = '';
 
   $: postId = $page.params.id;
 
@@ -39,27 +36,6 @@
       error = err instanceof Error ? err.message : 'Failed to load the thread';
     } finally {
       loading = false;
-    }
-  }
-
-  async function send() {
-    const body = draft.trim();
-    // `$page.params.id` is typed optional; the composer is only reachable
-    // once the post loaded, but the guard keeps that a fact rather than an
-    // assumption.
-    if (!body || !postId) return;
-
-    try {
-      sending = true;
-      sendError = '';
-      // The endpoint returns the refreshed thread, so there's no second
-      // round-trip and no optimistic guess at what Discord will store.
-      replies = await api.postAnnouncementReply(postId, body);
-      draft = '';
-    } catch (err) {
-      sendError = err instanceof Error ? err.message : 'Failed to post your reply';
-    } finally {
-      sending = false;
     }
   }
 
@@ -121,36 +97,28 @@
         </div>
       {/if}
 
-      {#if sendError}
-        <p class="text-sm text-red-600 mt-3" role="alert">{sendError}</p>
-      {/if}
-
-      <!-- Docked above the bottom tab bar on mobile, inline on desktop. The
-           bottom padding on the list side is what stops the last reply
-           hiding behind it. -->
-      <form
-        on:submit|preventDefault={send}
-        class="flex gap-2 mt-4
-               fixed inset-x-0 bottom-[68px] z-30 bg-surface border-t border-line px-3 py-3
-               md:static md:z-auto md:border-0 md:bg-transparent md:px-0 md:py-0"
-      >
-        <input
-          type="text"
-          bind:value={draft}
-          placeholder="Reply in Discord…"
-          aria-label="Reply"
-          class="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
-        />
-        <button
-          type="submit"
-          disabled={sending || !draft.trim()}
-          class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold disabled:opacity-50"
+      <!-- Replies used to be posted from here, but the *bot* sent them: the
+           thread showed "friends-calendar" saying whatever a user typed, with
+           no attribution, and with no allowed_mentions guard a user could
+           make the bot ping @everyone using the bot's permissions rather
+           than their own. Reading stays; writing goes to Discord, where the
+           message is actually attributed to the person who wrote it. -->
+      {#if post?.thread_url}
+        <a
+          href={post.thread_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="inline-flex items-center gap-2 mt-4 px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold no-underline"
         >
-          {sending ? 'Sending…' : 'Send'}
-        </button>
-      </form>
-      <!-- Space for the docked composer so it never covers the last reply. -->
-      <div class="h-24 md:hidden"></div>
+          <Icon name="replies" size={16} />
+          Reply in Discord
+        </a>
+      {:else}
+        <p class="text-sm text-muted mt-4">
+          Open this thread in Discord to reply — no server is linked yet, so there's no link to give
+          you.
+        </p>
+      {/if}
     {/if}
   </div>
 </Frame>

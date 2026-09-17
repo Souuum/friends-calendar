@@ -2,7 +2,6 @@ use axum::{
     Json,
     extract::{Path, State},
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{
@@ -34,11 +33,6 @@ async fn resolve_channel(state: &AppState) -> Result<String, AppError> {
     .ok_or_else(|| AppError::ValidationError("No announcements channel configured".to_string()))?;
 
     Ok(channel_id.to_string())
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PostReplyRequest {
-    pub body: String,
 }
 
 /// Resolves a local announcement id to the Discord message it mirrors, plus
@@ -99,57 +93,6 @@ pub async fn list_replies(
     Ok(Json(replies))
 }
 
-/// Posts a reply into the announcement's Discord thread.
-///
-/// Note what this does *not* do: bump `announcement_posts.reply_count`.
-/// That column is whatever the last sync saw, and the thread view fetches
-/// replies live, so writing a locally-incremented count would create a
-/// second source of truth that drifts from Discord.
-pub async fn post_reply(
-    _claims: Claims,
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-    Json(req): Json<PostReplyRequest>,
-) -> Result<Json<Vec<ReplyInfo>>, AppError> {
-    if req.body.trim().is_empty() {
-        return Err(AppError::ValidationError(
-            "Reply can't be empty".to_string(),
-        ));
-    }
-
-    let thread_id = resolve_thread(&state, id).await?;
-    let bot_token = state
-        .discord_bot_token
-        .as_deref()
-        .ok_or_else(|| AppError::ValidationError("Discord bot is not configured".to_string()))?;
-
-    // Discord treats a thread id as a channel id for posting, so the
-    // existing helper needs no new signature.
-    discord_feed::send_channel_message(
-        &state.discord_api_base,
-        &state.http_client,
-        bot_token,
-        &thread_id,
-        req.body.trim(),
-    )
-    .await
-    .map_err(|e| AppError::ExternalApiError(e.to_string()))?;
-
-    // Return the refreshed list rather than echoing the sent text: the
-    // caller wants what the thread now contains, and a Discord round-trip
-    // isn't instant enough to predict optimistically.
-    let replies = discord_feed::fetch_replies(
-        &state.discord_api_base,
-        &state.http_client,
-        bot_token,
-        &thread_id,
-    )
-    .await
-    .map_err(|e| AppError::ExternalApiError(e.to_string()))?;
-
-    Ok(Json(replies))
-}
-
 pub async fn list_announcements(
     _claims: Claims,
     State(state): State<AppState>,
@@ -197,7 +140,6 @@ mod tests {
     use serde_json::{Value, json};
     use sqlx::PgPool;
     use tower::ServiceExt;
-    use uuid::Uuid;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -355,7 +297,7 @@ mod tests {
     // The round trip the skill asks for: sync a post, open its thread, post
     // a reply, and see it come back.
     #[sqlx::test]
-    async fn reply_round_trips_through_the_posts_discord_thread(db: PgPool) {
+    async fn replies_are_readable_but_not_writable(db: PgPool) {
         let user = seed_user(&db, "me-discord", "me").await;
 
         let server = MockServer::start().await;
@@ -425,6 +367,11 @@ mod tests {
         // local UUID.
         assert!(posts[0].get("discord_message_id").is_none());
 
+        // Posting is gone: replies used to be sent by the bot, so the thread
+        // showed "friends-calendar" saying whatever a user typed, and with
+        // no allowed_mentions guard a user could make the bot ping
+        // @everyone with the bot's permissions. The route must be absent,
+        // not merely unused by the UI.
         let response = app
             .clone()
             .oneshot(
@@ -438,16 +385,9 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let replies: Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(replies[0]["body"], "I'm in");
-        assert_eq!(replies[0]["author_username"], "bob");
-
-        // And the same content is readable via the list endpoint.
+        // Reading the thread still works.
         let response = app
             .oneshot(
                 Request::builder()
@@ -459,53 +399,5 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    #[sqlx::test]
-    async fn replying_to_an_unknown_post_404s(db: PgPool) {
-        let user = seed_user(&db, "me-discord", "me").await;
-        let state = AppState::for_test(db, "http://unused.invalid".to_string());
-        let token = generate_jwt(&user.discord_id, &state.jwt_secret).unwrap();
-        let app = crate::build_router(state);
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/api/announcements/{}/reply", Uuid::new_v4()))
-                    .header("Authorization", format!("Bearer {token}"))
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(r#"{"body":"hello"}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    }
-
-    #[sqlx::test]
-    async fn an_empty_reply_is_rejected_before_any_discord_call(db: PgPool) {
-        let user = seed_user(&db, "me-discord", "me").await;
-        // No mock server at all: a blank reply must fail validation before
-        // anything tries to reach Discord.
-        let state = AppState::for_test(db, "http://unused.invalid".to_string());
-        let token = generate_jwt(&user.discord_id, &state.jwt_secret).unwrap();
-        let app = crate::build_router(state);
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/api/announcements/{}/reply", Uuid::new_v4()))
-                    .header("Authorization", format!("Bearer {token}"))
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(r#"{"body":"   "}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }

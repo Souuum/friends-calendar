@@ -1119,6 +1119,38 @@ looked at with content in it.
   rows cascade cannot identify. The cost is that the calendar's "Created by
   me" filter stays empty.
 
+## Announcement replies are read-only (2026-09-17)
+
+`POST /api/announcements/:id/reply` **has been removed**, along with the
+composer, `api.postAnnouncementReply`, and its tests. `GET .../replies`
+stays - reading a thread in the app is fine.
+
+The reason is not that it was unused. Replies were sent with the **bot
+token**, so:
+
+- **No attribution.** The Discord thread showed `friends-calendar` saying
+  whatever a user typed. A reader could not tell who wrote it.
+- ⚠️ **Mention escalation.** `post_message` sends `{"content": …}` with **no
+  `allowed_mentions`**, so a user typing `@everyone` in a reply had the
+  *bot* ping the server - using the bot's permissions rather than their own.
+  Any app user could launder a mention through the bot this way.
+
+The fix is a deep link instead: `AnnouncementPostInfo.thread_url`, built
+server-side as `https://discord.com/channels/{guild}/{message_id}` (a thread
+started from a message shares that message's id). Ids still never reach the
+client - there is a test asserting that - so the URL is assembled in
+`list_posts` rather than exposing `discord_message_id`. Absent config means
+no link, and the page says so rather than rendering a dead button.
+
+A functional test asserts the route returns **404**, not merely that the UI
+stopped calling it.
+
+⚠️ If a write path is ever wanted again, a bot token is the wrong mechanism.
+The options are a Discord webhook with per-user `username`/`avatar_url`
+override (looks attributed, still the app's credential) or real OAuth
+message scopes. Either way `allowed_mentions` must be set to suppress
+`@everyone`/`@here`.
+
 ## Discord markdown & reaction backfill (2026-09-17)
 
 **`lib/utils/discordMarkdown.ts`** renders Discord's message flavour to a

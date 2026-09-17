@@ -123,6 +123,8 @@ export interface AnnouncementPostInfo {
   reply_count: number;
   pinned: boolean;
   posted_at: string;
+  /** Deep link to the message's Discord thread; absent if no server is linked. */
+  thread_url?: string;
 }
 
 export interface NotificationInfo {
