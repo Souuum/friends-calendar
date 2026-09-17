@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import { mockApi } from './fixtures';
 
 /**
@@ -10,6 +10,42 @@ import { mockApi } from './fixtures';
  * a modal with no reachable close control, escaped only by a back gesture
  * that navigated off the page - was invisible to every component test.
  */
+
+/**
+ * Waits until every finite animation on the page has finished.
+ *
+ * ⚠️ Three ways to get this wrong, all of which were tried here first:
+ *
+ * 1. `element.getAnimations()` right after the element appears returns an
+ *    **empty list** - the browser hasn't created the animation yet - so the
+ *    wait resolves instantly and you measure mid-flight.
+ * 2. Polling for a *stable* box is fooled by `animation-delay`:
+ *    `anim-sheet` waits 100ms at `translateY(100%)`, so two consecutive
+ *    reads 50ms apart both report the element parked off screen, and the
+ *    poll happily returns that.
+ * 3. Waiting for the list to empty hangs forever on `anim-pulse-dot`, which
+ *    is `infinite` and never finishes.
+ *
+ * Polling `document.getAnimations()` for `playState === 'finished'` covers
+ * the delay phase (where the state is already `running`) and skips infinite
+ * animations explicitly.
+ */
+async function waitForAnimations(page: Page) {
+  await page.waitForFunction(() =>
+    document.getAnimations().every((animation) => {
+      const timing = (animation.effect as KeyframeEffect | null)?.getTiming();
+      return timing?.iterations === Infinity || animation.playState === 'finished';
+    })
+  );
+}
+
+/** The element's box once nothing is animating it. Viewport-relative. */
+async function settledBox(locator: Locator) {
+  await waitForAnimations(locator.page());
+  const box = await locator.boundingBox();
+  if (!box) throw new Error('element has no box');
+  return box;
+}
 
 const MODALS = [
   {
@@ -40,20 +76,15 @@ for (const modal of MODALS) {
       await page.goto(modal.path);
       await modal.open(page);
       await expect(dialog(page)).toBeVisible();
-      // ⚠️ `anim-pop` scales the dialog from 0.95, and boundingBox() during
-      // it reports the *scaled* size - a 44px control measures 43.0 and the
-      // tap-target assertion fails for a reason that has nothing to do with
-      // the CSS. Same trap as sampling colour mid theme-transition.
-      await dialog(page).evaluate((el) =>
-        Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished))
-      );
     }
 
     // The reported bug: no control within reach on a phone.
     test('the close control is on screen and big enough to hit', async ({ page }) => {
       await open(page);
       const close = page.getByRole('button', { name: 'Close' });
-      const box = (await close.boundingBox())!;
+      // `anim-pop` scales the dialog from 0.95, so a box read mid-animation
+      // reports a 44px control as 43.0 - see settledBox.
+      const box = await settledBox(close);
       const viewport = page.viewportSize()!;
 
       expect(box.y, 'close button is above the fold').toBeGreaterThanOrEqual(0);
@@ -71,9 +102,8 @@ for (const modal of MODALS) {
     test('stays reachable after scrolling to the bottom of the form', async ({ page }) => {
       await open(page);
       await page.mouse.wheel(0, 4000);
-      await page.waitForTimeout(150);
 
-      const box = (await page.getByRole('button', { name: 'Close' }).boundingBox())!;
+      const box = await settledBox(page.getByRole('button', { name: 'Close' }));
       expect(box.y).toBeGreaterThanOrEqual(0);
       expect(box.y + box.height).toBeLessThanOrEqual(page.viewportSize()!.height);
     });
@@ -136,11 +166,6 @@ test.describe('event peek sheet', () => {
     await page.goto('/');
     await page.getByText('Soirée jeux de société chez Hugo', { exact: false }).first().click();
     await expect(sheet(page).getByRole('button', { name: 'Close' })).toBeVisible();
-    // `anim-sheet` slides the panel up from below the fold, so measuring
-    // during it puts every control off screen. Same trap as `anim-pop`.
-    await sheet(page).evaluate((el) =>
-      Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished))
-    );
   }
 
   test('tapping outside dismisses it on mobile', async ({ page }, testInfo) => {
@@ -158,13 +183,61 @@ test.describe('event peek sheet', () => {
     await openSheet(page);
 
     const close = sheet(page).getByRole('button', { name: 'Close' });
-    const box = (await close.boundingBox())!;
+    // `anim-sheet` slides this up from below the fold - measure it parked.
+    const box = await settledBox(close);
     expect(box.height).toBeGreaterThanOrEqual(44);
     expect(box.width).toBeGreaterThanOrEqual(44);
     expect(box.y + box.height).toBeLessThanOrEqual(page.viewportSize()!.height);
 
     await close.click();
     await expect(close).toHaveCount(0);
+  });
+
+  // The bug the CI-only failure turned out to be: `Calendar.svelte`'s body
+  // carries `anim-fade-up`, whose `forwards` fill left an identity
+  // `transform` in effect - which makes it the containing block for every
+  // `position: fixed` descendant. The sheet's `bottom: 0` was resolving
+  // against the calendar's content box rather than the viewport, so it sat
+  // below the fold (20px on macOS, far enough on Linux to push the close
+  // button off screen). Its full-screen backdrop missed the viewport for
+  // the same reason.
+  test('the sheet is pinned to the viewport, not to the page content', async ({
+    page
+  }, testInfo) => {
+    test.skip(testInfo.project.name === 'desktop-1280', 'a static column from lg: up');
+    await openSheet(page);
+
+    const viewportHeight = page.viewportSize()!.height;
+    const box = await settledBox(sheet(page));
+    expect(
+      Math.round(box.y + box.height),
+      'sheet bottom should sit exactly on the viewport bottom'
+    ).toBe(viewportHeight);
+
+    // Same containing-block failure, same fix - assert it directly rather
+    // than trusting that one implies the other.
+    const offenders = await page.evaluate(() => {
+      const found: string[] = [];
+      let node = document.querySelector('[data-testid="event-peek"]')
+        ?.parentElement as HTMLElement | null;
+      while (node) {
+        const style = getComputedStyle(node);
+        if (
+          style.transform !== 'none' ||
+          style.filter !== 'none' ||
+          style.perspective !== 'none' ||
+          style.contain !== 'none'
+        ) {
+          found.push(`${node.tagName}.${node.className.slice(0, 40)} transform=${style.transform}`);
+        }
+        node = node.parentElement;
+      }
+      return found;
+    });
+    expect(
+      offenders,
+      'an ancestor with a transform/filter/contain makes `fixed` resolve against it, not the viewport'
+    ).toEqual([]);
   });
 
   test('the back gesture dismisses it without leaving the page', async ({ page }, testInfo) => {

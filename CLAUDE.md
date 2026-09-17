@@ -1596,6 +1596,72 @@ numbers out of `oklch(0.21 0.006 285)` and treated the *hue* (285) as a blue
 channel, reporting light-mode backgrounds as dark. It now branches on the
 format; for oklch the first component already *is* perceptual lightness.
 
+## The mobile sheet was never pinned to the viewport (2026-09-17)
+
+Surfaced as a **CI-only** layout failure: the peek sheet's close button
+measured 5.5px below the fold on the Linux runner and nowhere else. It was
+not a rendering difference - it was a real bug that macOS happened to hide.
+
+⚠️ **`animation-fill-mode: both` makes an element a containing block for
+every `position: fixed` descendant, forever.** `forwards` keeps the animated
+property *in effect* after the animation ends, and an in-effect
+`transform: none` computes to the **identity matrix**, not the `none`
+keyword - and any transform other than `none` re-parents fixed descendants
+to that element.
+
+`Calendar.svelte`'s body carries `anim-fade-up`. `EventPeekPanel`'s mobile
+sheet lives inside it. So `fixed inset-x-0 bottom-0` was resolving against
+the calendar's *content box* rather than the viewport: the sheet sat 20px
+below the fold on macOS, further on Linux, and its full-screen backdrop
+never covered the viewport either.
+
+Every keyframe in `app.css` ends at the element's natural state
+(`opacity: 1`, `transform: none`), so `forwards` pinned nothing they
+wouldn't have had anyway - it was pure cost. All eight finite animations are
+`backwards` now, which still holds the `from` state through `anim-sheet`'s
+0.1s delay, the only thing the fill mode was needed for. ⚠️ This is a
+**deliberate divergence from the mockup**, which uses `both` throughout; it
+has no fixed-position child inside an animated wrapper, so it never hit
+this.
+
+`e2e/modal-dismiss.spec.ts` asserts both halves directly: the sheet's bottom
+equals the viewport height, and no ancestor has a transform/filter/contain.
+Reverting the CSS fails it on any platform - the old tap-target test passed
+on macOS with the bug present, which is precisely why it only ever failed
+in CI.
+
+### Measuring an animating element: three wrong ways
+
+All three were tried here before the fourth worked.
+
+1. **`element.getAnimations()` right after it appears returns an empty
+   list** - the browser has not created the animation yet - so the wait
+   resolves instantly and you measure mid-flight.
+2. **Polling for a *stable* bounding box is fooled by `animation-delay`.**
+   `anim-sheet` waits 100ms parked at `translateY(100%)`, so two reads 50ms
+   apart agree on a position that is entirely off screen.
+3. **Waiting for `document.getAnimations()` to empty hangs** on
+   `anim-pulse-dot`, which is `infinite`.
+
+What works: poll `document.getAnimations()` until every animation either has
+`iterations === Infinity` or `playState === 'finished'`. The delay phase
+already reports `running`, so it is covered.
+
+### Reading CI failures without admin rights
+
+⚠️ **The job log needs admin on the repository.** `playwright.config.ts` now
+adds the `github` reporter in CI, which emits check annotations carrying the
+test name, file, line and message - and annotations are readable from the
+**public** API:
+
+```
+GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs      # find the job id
+GET /repos/{owner}/{repo}/check-runs/{job_id}/annotations # the failures
+```
+
+The uploaded `layout-screenshots` artifact needs auth to download, so it is
+not a substitute.
+
 ## Modals had one way out, and it was 14.7px wide (2026-09-17)
 
 Reported as "the event modal is still persisting on mobile, i have to do a
