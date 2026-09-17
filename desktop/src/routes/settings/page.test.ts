@@ -288,4 +288,84 @@ describe('settings page', () => {
       );
     });
   });
+  describe('the timezone picker', () => {
+    async function openSettings(profile = makeUser()) {
+      getCurrentUser.mockResolvedValue(profile);
+      render(SettingsPage);
+      await waitFor(() => expect(screen.getByLabelText('Display name')).toBeInTheDocument());
+    }
+
+    it('is a select, not free text', async () => {
+      await openSettings();
+
+      const field = screen.getByLabelText('Timezone');
+      expect(field.tagName).toBe('SELECT');
+      // Built from the platform rather than a hardcoded list, so it should
+      // be the full IANA set rather than a handful.
+      expect((field as HTMLSelectElement).options.length).toBeGreaterThan(50);
+    });
+
+    it('preselects what the account has stored', async () => {
+      await openSettings(makeUser({ timezone: 'Europe/Paris' }));
+
+      expect(screen.getByLabelText('Timezone')).toHaveValue('Europe/Paris');
+    });
+
+    it('groups zones by region', async () => {
+      await openSettings();
+
+      const groups = document.querySelectorAll('optgroup');
+      expect(groups.length).toBeGreaterThan(1);
+      expect(Array.from(groups).map((g) => g.label)).toContain('Europe');
+    });
+
+    // ⚠️ This field used to be free text, so an existing account can hold
+    // something that isn't an IANA zone. Dropping it would make the select
+    // fall back to its first option and the next save would silently
+    // rewrite the person's setting.
+    it('keeps an unrecognised legacy value rather than silently replacing it', async () => {
+      await openSettings(makeUser({ timezone: 'GMT+2' }));
+
+      expect(screen.getByLabelText('Timezone')).toHaveValue('GMT+2');
+      expect(screen.getByText(/Not a recognised time zone/)).toBeInTheDocument();
+    });
+
+    it('saves the stored value untouched when nothing is changed', async () => {
+      updateProfile.mockResolvedValue(makeUser({ timezone: 'Europe/Paris' }));
+      await openSettings(makeUser({ timezone: 'Europe/Paris' }));
+
+      await fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+
+      await waitFor(() => expect(updateProfile).toHaveBeenCalled());
+      expect(updateProfile.mock.calls[0][0]).toEqual(
+        expect.objectContaining({ timezone: 'Europe/Paris' })
+      );
+    });
+
+    // Nobody wants to scroll 400 entries to find where they're sitting. This
+    // is also the only way to *change* the value under happy-dom, which
+    // cannot drive a <select> - see CLAUDE.md.
+    it('offers a one-tap shortcut to the detected zone', async () => {
+      await openSettings(makeUser({ timezone: 'America/New_York' }));
+      updateProfile.mockResolvedValue(makeUser());
+
+      const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      await fireEvent.click(
+        screen.getByRole('button', { name: new RegExp(`Use ${detected.replace(/_/g, ' ')}`) })
+      );
+      await fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+
+      await waitFor(() => expect(updateProfile).toHaveBeenCalled());
+      expect(updateProfile.mock.calls[0][0]).toEqual(
+        expect.objectContaining({ timezone: detected })
+      );
+    });
+
+    it('hides the shortcut when you are already on that zone', async () => {
+      const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      await openSettings(makeUser({ timezone: detected }));
+
+      expect(screen.queryByRole('button', { name: /^Use / })).not.toBeInTheDocument();
+    });
+  });
 });

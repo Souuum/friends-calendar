@@ -348,6 +348,31 @@ three places. What's left is genuinely account-scoped:
   but no serde rename, so JSON expected `"Friends"` while the settings
   page sent `"friends"` — every save 422'd. See the enum-casing note under
   "Testing" for why no test caught it.
+- **Timezone is a `<select>`, not free text** (2026-09-17). The list is built
+  at runtime from `Intl.supportedValuesOf('timeZone')` (417 zones here) and
+  grouped by region prefix, so it can't drift from what the platform will
+  actually accept — a hand-maintained list goes stale every time the IANA
+  database moves a city.
+  - ⚠️ **An unrecognised stored value is preserved, not dropped.** The field
+    used to be free text, so existing rows can hold anything somebody typed.
+    A `<select>` whose `bind:value` matches no option falls back to its
+    first option, which would silently rewrite the setting to `Africa/Abidjan`
+    on the next save. `timezoneOptions` prepends the stored value when
+    `SUPPORTED_ZONES` doesn't contain it. Mutation-tested: replacing that
+    line with the bare list fails two tests.
+  - The field shows "it's HH:MM there", or says the value isn't a recognised
+    zone when `Intl.DateTimeFormat` throws on it — which is how a preserved
+    legacy value announces itself instead of looking fine.
+  - The `Use <detected zone>` button (shown only when it differs) is real UX
+    *and* the only way a test can change this control: happy-dom cannot drive
+    a `<select>`'s bound value — neither `fireEvent.change(el, {target:
+    {value}})` nor setting `selectedIndex` moves it. Same limitation that put
+    buttons rather than a `<select>` behind the theme picker. Verify the
+    rendered `<option selected>` instead, and drive changes through a button.
+  - ⚠️ This still only *stores* the zone. Rendering everywhere goes through
+    `toLocaleDateString` on the browser's zone — see the backlog note at the
+    end of this file.
+
 - `DELETE /api/auth/me` (`handlers::profile::delete_account`,
   `services::profile::delete_account`) — real, cascading account deletion
   (`ON DELETE CASCADE` on `calendar_events`/`event_participants`/etc.,

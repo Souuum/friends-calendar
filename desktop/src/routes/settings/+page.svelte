@@ -37,6 +37,75 @@
 
   let displayName = '';
   let timezone = 'UTC';
+
+  /**
+   * Every IANA zone the browser knows, from the platform rather than a
+   * hardcoded list that would go stale as zones are added and renamed.
+   *
+   * The fallback is for runtimes without `Intl.supportedValuesOf` - a short
+   * list beats an empty dropdown, and the stored value is preserved either
+   * way (see `timezoneOptions`).
+   */
+  const SUPPORTED_ZONES: string[] = (() => {
+    const fn = (Intl as unknown as { supportedValuesOf?: (key: string) => string[] })
+      .supportedValuesOf;
+    if (typeof fn === 'function') {
+      try {
+        return fn('timeZone');
+      } catch {
+        // Fall through.
+      }
+    }
+    return ['UTC', 'Europe/London', 'Europe/Paris', 'America/New_York', 'America/Los_Angeles'];
+  })();
+
+  /** What the browser thinks we're in, for the one-tap shortcut. */
+  const DETECTED_ZONE = (() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone;
+    } catch {
+      return 'UTC';
+    }
+  })();
+
+  /**
+   * ⚠️ Keeps an unrecognised stored value in the list.
+   *
+   * This field used to be free text, so an existing account may hold
+   * something like "Paris" or "GMT+2" that is not an IANA zone. Dropping it
+   * would make the select fall back to its first option, and the next save
+   * would silently rewrite the person's setting to whatever that happened to
+   * be.
+   */
+  $: timezoneOptions = SUPPORTED_ZONES.includes(timezone)
+    ? SUPPORTED_ZONES
+    : [timezone, ...SUPPORTED_ZONES];
+
+  /** Grouped by region, because 400-odd flat entries is not a list. */
+  $: timezoneGroups = timezoneOptions.reduce<{ region: string; zones: string[] }[]>(
+    (groups, zone) => {
+      const region = zone.includes('/') ? zone.split('/')[0] : 'Other';
+      const last = groups[groups.length - 1];
+      if (last && last.region === region) last.zones.push(zone);
+      else groups.push({ region, zones: [zone] });
+      return groups;
+    },
+    []
+  );
+
+  /** The current offset, so the choice can be sanity-checked at a glance. */
+  $: timezoneNow = (() => {
+    try {
+      return new Intl.DateTimeFormat(undefined, {
+        timeZone: timezone,
+        hour: '2-digit',
+        minute: '2-digit'
+      }).format(new Date());
+    } catch {
+      // An unrecognised legacy value throws rather than formatting.
+      return null;
+    }
+  })();
   let defaultVisibility: Visibility = 'friends';
   let notifyEventInvites = true;
   let notifyRsvpChanges = true;
@@ -255,13 +324,39 @@
             <label for="timezone" class="mb-1.5 block text-[13px] font-medium text-body"
               >Timezone</label
             >
-            <input
+            <select
               id="timezone"
-              type="text"
               bind:value={timezone}
-              placeholder="UTC"
               class="w-full rounded-[9px] border border-line bg-surface px-3 py-[9px] text-[13px] outline-none focus:border-primary"
-            />
+            >
+              {#each timezoneGroups as group (group.region)}
+                <optgroup label={group.region}>
+                  {#each group.zones as zone (zone)}
+                    <option value={zone}>{zone.replace(/_/g, ' ')}</option>
+                  {/each}
+                </optgroup>
+              {/each}
+            </select>
+            <div class="mt-1.5 flex flex-wrap items-center gap-2">
+              {#if timezoneNow}
+                <span class="font-mono text-[11px] text-muted">it's {timezoneNow} there</span>
+              {:else}
+                <span class="text-[11px] text-yellow-700">
+                  Not a recognised time zone — pick one from the list.
+                </span>
+              {/if}
+              {#if timezone !== DETECTED_ZONE}
+                <!-- Nobody wants to scroll 400 entries to find the one they
+                     are sitting in. -->
+                <button
+                  type="button"
+                  on:click={() => (timezone = DETECTED_ZONE)}
+                  class="text-[11px] font-semibold text-primary hover:underline"
+                >
+                  Use {DETECTED_ZONE.replace(/_/g, ' ')}
+                </button>
+              {/if}
+            </div>
           </div>
         </div>
       </section>
