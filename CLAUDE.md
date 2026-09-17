@@ -980,6 +980,60 @@ speculatively.
   genuine product-scope decisions baked into their skill files already, not
   open questions left for whoever runs them next.
 
+## Feature backlog from the mockups - 2026-09-17 (written, not executed)
+
+Derived from a pass over **all 13 mobile screens and all 8 desktop ones**,
+rendered side by side against the running app. The mobile file's per-screen
+captions are the useful part - they state the gesture and behaviour each
+screen expects, which is the closest thing to a spec this project has. Every
+gap below was checked against the code, not inferred.
+
+Run in this order; only the last pair has a real dependency.
+
+1. `.claude/skills/discord-channel-picker/SKILL.md` - ⚠️ **`/server` asks
+   for a raw Discord snowflake in a text box.** You need Developer Mode to
+   get one, nothing validates it, and a wrong-but-plausible id fails
+   silently because announcing is best-effort. Highest value per unit of
+   work on this list. Both mockups show a picker.
+2. `.claude/skills/calendar-day-interactions/SKILL.md` - ⚠️ **month day
+   cells carry `role="button"`, `tabindex="0"` and `cursor-pointer` with no
+   click handler.** 35 fake buttons per screen. The mockup wants tap-to-
+   filter and long-press-to-create-on-that-date. (Swipe between months is
+   deliberately out of scope - see the skill.)
+3. `.claude/skills/event-nudge-no-answers/SKILL.md` - the last placeholder
+   control in the app. Its genuinely new problem is that it's the first
+   **user-triggered** outbound send, so it needs a DB-level rate limit, not
+   a disabled button.
+4. `.claude/skills/availability-best-overlap/SKILL.md` - the mockup's
+   "Best overlap this week: Fri 20:00, 7 free", and the create form's
+   suggested slot. ⚠️ `services::availability` is **day-granularity on
+   purpose** and cannot answer this; the skill adds a slot-level
+   computation beside it rather than changing the weekly strip, which is
+   correct as it stands. Carries a real timezone decision - this would be
+   the first feature to read `users.timezone`.
+5. `.claude/skills/invite-friend-to-event/SKILL.md` - ⚠️ `/friends/[id]`
+   has **no invite action at all** (zero hits for "invite"). Both mockups
+   make it that screen's primary action. Works standalone; much better
+   after 4, which turns "invite them" into "invite them to a time you're
+   both free".
+
+**Considered and not written** (the user chose the four above out of five):
+posting announcements from the app, which both mockups show. It is blocked
+by the same problem that made replies read-only - a bot-token post has no
+attribution and can launder `@everyone` - and the fix is a Discord webhook
+with per-user `username`/`avatar_url` override plus `allowed_mentions`,
+which would also unblock reviving replies. Worth doing, carries a security
+design decision, deliberately deferred.
+
+**Also seen in the mockups and deliberately not turned into skills:** the
+mobile gesture layer (swipe the grid for months, pull-to-refresh the
+agenda, swipe an agenda row to RSVP, swipe a friend row to invite, swipe an
+alert row to mark read, drag the event sheet between peek and full height) -
+the most work on the list for the least functional gain, since every one of
+those flows already works by tapping. The friends filter chips (All / Free
+this week / Pending / Recently added) need per-friend availability that no
+endpoint returns today; `availability-best-overlap` would supply most of it.
+
 ## Matching the desktop mockup, screen by screen (2026-09-17)
 
 Driven by a real side-by-side: the `.dc.html` mockup was rendered in
