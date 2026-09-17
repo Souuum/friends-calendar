@@ -1108,11 +1108,34 @@ Run in this order; only the last pair has a real dependency.
    - ⚠️ **Send `toISOString()` (`…Z`), not `+00:00`**, for the `from`/`to`
      query params: a bare `+` decodes as a space and the request 400s. Cost
      two test runs to spot.
-5. `.claude/skills/invite-friend-to-event/SKILL.md` - ⚠️ `/friends/[id]`
-   has **no invite action at all** (zero hits for "invite"). Both mockups
-   make it that screen's primary action. Works standalone; much better
-   after 4, which turns "invite them" into "invite them to a time you're
-   both free".
+5. `.claude/skills/invite-friend-to-event/SKILL.md` - **done 2026-09-17.**
+   `/friends/[id]` had **no invite action at all** (zero hits for "invite"),
+   though both mockups make it that screen's primary action. One button now
+   opens a sheet offering your upcoming events plus "New event with {name}".
+   - ⚠️ **"Invitable" means events *you created*, not events you can see.**
+     `services::calendar::invite_participants` is creator-only and silently
+     returns an empty list for anyone else, so a list built on visibility
+     would offer choices that quietly do nothing. `list_invitable_events`
+     matches that rule; if the invite rule ever widens, widen this with it.
+     Mutation-tested, as is the already-invited exclusion.
+   - ⚠️ **`api.inviteParticipants` did not exist.** `POST
+     /api/events/:id/participants` has been routed since the first version
+     with **no client caller** - creation-time `participant_ids` was the
+     only way anyone ever got invited. No second invite path was added;
+     the client finally calls the one that was already there.
+   - `GET /api/events/invitable` is friends-only, the same guard
+     `handlers::availability::week` has, or it enumerates a stranger's event
+     membership by user id.
+   - `GET /api/availability/best-slot` gained an optional `with=<user_id>`
+     so the sheet can say "you're both free Thursday 20:00" - narrowing is
+     still taken from the caller's own friend list, so it can't be used to
+     ask about someone they don't know.
+   - `CreateEventModal` gained `initialParticipantIds`, which **preselects**
+     in the invite picker rather than bypassing it, so the rest of the guest
+     list can still be added before saving.
+   - Swipe-to-invite on the friends *list* (mockup screen 04) stays out of
+     scope: the profile button is the same capability without inventing a
+     gesture layer.
 
 **Considered and not written** (the user chose the four above out of five):
 posting announcements from the app, which both mockups show. It is blocked

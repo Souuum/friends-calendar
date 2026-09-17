@@ -219,13 +219,41 @@ class ApiClient {
    * while the browser knows the real answer. `getTimezoneOffset()` is
    * minutes *behind* UTC, so it's negated here.
    */
-  async getBestSlots(from: Date, to: Date, durationMinutes: number): Promise<BestSlot[]> {
+  /**
+   * Adds people to an event that already exists.
+   *
+   * `POST /api/events/:id/participants` has existed since the first version
+   * and had **no client caller** - creation-time `participant_ids` was the
+   * only way anyone got invited. ⚠️ It is creator-only server-side and
+   * silently returns an empty list otherwise, which is why
+   * `getInvitableEvents` below only offers events you created.
+   */
+  async inviteParticipants(eventId: string, userIds: string[]): Promise<unknown> {
+    return this.fetch(`/api/events/${eventId}/participants`, {
+      method: 'POST',
+      body: JSON.stringify({ user_ids: userIds })
+    });
+  }
+
+  /** Your upcoming events this friend isn't on yet. */
+  async getInvitableEvents(userId: string): Promise<CalendarEvent[]> {
+    return this.fetch<CalendarEvent[]>(`/api/events/invitable?user_id=${userId}`);
+  }
+
+  async getBestSlots(
+    from: Date,
+    to: Date,
+    durationMinutes: number,
+    /** Narrow to one friend, for "a time you're both free". */
+    withFriendId?: string
+  ): Promise<BestSlot[]> {
     const params = new URLSearchParams({
       from: from.toISOString(),
       to: to.toISOString(),
       duration_minutes: String(durationMinutes),
       tz_offset_minutes: String(-new Date().getTimezoneOffset())
     });
+    if (withFriendId) params.set('with', withFriendId);
     const { slots } = await this.fetch<{ slots: BestSlot[] }>(
       `/api/availability/best-slot?${params}`
     );

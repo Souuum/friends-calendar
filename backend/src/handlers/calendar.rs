@@ -4,6 +4,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{
@@ -373,6 +374,47 @@ pub async fn remove_participant(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Debug, Deserialize)]
+pub struct InvitableQuery {
+    /// The friend you're thinking of inviting.
+    pub user_id: Uuid,
+}
+
+/// Your upcoming events this friend isn't already on.
+///
+/// Exists as an endpoint rather than a client-side filter over
+/// `GET /api/events` because answering it that way means fetching every
+/// event to discard most of them.
+///
+/// ⚠️ Friends-only, the same guard `handlers::availability::week` has -
+/// otherwise this becomes a way to enumerate a stranger's event membership
+/// by user id.
+pub async fn list_invitable_events(
+    claims: Claims,
+    State(state): State<AppState>,
+    Query(query): Query<InvitableQuery>,
+) -> Result<Json<Vec<CalendarEvent>>, AppError> {
+    let user = crate::services::auth::get_user_by_discord_id(&state.db, &claims.sub)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+        .ok_or(AppError::Unauthorized)?;
+
+    let friends = crate::services::friends::get_friends(&state.db, user.id)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    if !friends.iter().any(|f| f.user_id == query.user_id) {
+        return Err(AppError::ValidationError(
+            "Not one of your friends".to_string(),
+        ));
+    }
+
+    let events = calendar::list_invitable_events(&state.db, user.id, query.user_id)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    Ok(Json(events))
+}
+
 /// Chases the people who never answered.
 ///
 /// See `services::nudge` for why this one is rate-limited in the database
@@ -736,5 +778,155 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(notifications, 1);
+    }
+    // --- GET /api/events/invitable ---------------------------------------
+    //
+    // One test per clause on purpose: a single omnibus test passes as soon
+    // as the list is non-empty, which it would be for the wrong reasons.
+
+    async fn befriend(db: &PgPool, a: uuid::Uuid, b: uuid::Uuid) {
+        for (x, y) in [(a, b), (b, a)] {
+            sqlx::query(
+                "INSERT INTO friendships (id, user_id, friend_id, source, synced_at, created_at)
+                 VALUES (gen_random_uuid(), $1, $2, 'discord_guild', now(), now())",
+            )
+            .bind(x)
+            .bind(y)
+            .execute(db)
+            .await
+            .unwrap();
+        }
+    }
+
+    async fn an_event(
+        db: &PgPool,
+        creator: uuid::Uuid,
+        title: &str,
+        starts_in_hours: i64,
+    ) -> uuid::Uuid {
+        sqlx::query_scalar::<_, uuid::Uuid>(
+            r#"
+            INSERT INTO calendar_events (id, creator_id, title, start_time, end_time, created_at, updated_at)
+            VALUES (gen_random_uuid(), $1, $2, now() + make_interval(hours => $3),
+                    now() + make_interval(hours => $3 + 2), now(), now())
+            RETURNING id
+            "#,
+        )
+        .bind(creator)
+        .bind(title)
+        .bind(starts_in_hours as i32)
+        .fetch_one(db)
+        .await
+        .unwrap()
+    }
+
+    async fn invitable_titles(
+        db: PgPool,
+        me: &crate::models::User,
+        friend: uuid::Uuid,
+    ) -> Vec<String> {
+        let state = AppState::for_test(db, "http://unused.invalid".to_string());
+        let token = generate_jwt(&me.discord_id, &state.jwt_secret).unwrap();
+        let response = crate::build_router(state)
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/events/invitable?user_id={friend}"))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let events: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        events
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["title"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[sqlx::test]
+    async fn invitable_includes_your_own_events_nobody_is_on_yet(db: PgPool) {
+        let me = seed_user(&db, "me-discord", "me").await;
+        let friend = seed_user(&db, "friend-discord", "friend").await;
+        befriend(&db, me.id, friend.id).await;
+        an_event(&db, me.id, "Board games", 48).await;
+
+        assert_eq!(
+            invitable_titles(db, &me, friend.id).await,
+            vec!["Board games"]
+        );
+    }
+
+    #[sqlx::test]
+    async fn invitable_excludes_events_they_are_already_on(db: PgPool) {
+        let me = seed_user(&db, "me-discord", "me").await;
+        let friend = seed_user(&db, "friend-discord", "friend").await;
+        befriend(&db, me.id, friend.id).await;
+        let already = an_event(&db, me.id, "Already invited", 48).await;
+        an_event(&db, me.id, "Not yet", 72).await;
+        sqlx::query(
+            "INSERT INTO event_participants (id, event_id, user_id, status, invited_at)
+             VALUES (gen_random_uuid(), $1, $2, 'pending', now())",
+        )
+        .bind(already)
+        .bind(friend.id)
+        .execute(&db)
+        .await
+        .unwrap();
+
+        assert_eq!(invitable_titles(db, &me, friend.id).await, vec!["Not yet"]);
+    }
+
+    #[sqlx::test]
+    async fn invitable_excludes_events_that_have_already_started(db: PgPool) {
+        let me = seed_user(&db, "me-discord", "me").await;
+        let friend = seed_user(&db, "friend-discord", "friend").await;
+        befriend(&db, me.id, friend.id).await;
+        an_event(&db, me.id, "Last night", -24).await;
+        an_event(&db, me.id, "Tomorrow", 24).await;
+
+        assert_eq!(invitable_titles(db, &me, friend.id).await, vec!["Tomorrow"]);
+    }
+
+    // invite_participants is creator-only and silently no-ops for anyone
+    // else, so offering someone else's event would be a choice that does
+    // nothing. The list has to agree with the rule.
+    #[sqlx::test]
+    async fn invitable_excludes_events_you_did_not_create(db: PgPool) {
+        let me = seed_user(&db, "me-discord", "me").await;
+        let friend = seed_user(&db, "friend-discord", "friend").await;
+        let someone_else = seed_user(&db, "other-discord", "other").await;
+        befriend(&db, me.id, friend.id).await;
+        an_event(&db, someone_else.id, "Theirs", 48).await;
+
+        assert!(invitable_titles(db, &me, friend.id).await.is_empty());
+    }
+
+    // Otherwise this enumerates a stranger's event membership by user id.
+    #[sqlx::test]
+    async fn invitable_refuses_someone_who_is_not_your_friend(db: PgPool) {
+        let me = seed_user(&db, "me-discord", "me").await;
+        let stranger = seed_user(&db, "stranger-discord", "stranger").await;
+
+        let state = AppState::for_test(db, "http://unused.invalid".to_string());
+        let token = generate_jwt(&me.discord_id, &state.jwt_secret).unwrap();
+        let response = crate::build_router(state)
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/events/invitable?user_id={}", stranger.id))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }

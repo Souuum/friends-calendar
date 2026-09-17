@@ -19,6 +19,14 @@
    * editing, where the event's own times win.
    */
   export let initialDate: Date | null = null;
+  /**
+   * People to start with in the invite picker, for creation that began from
+   * a particular person (the friend profile's "New event with…").
+   *
+   * Preselects rather than bypasses the picker, so the rest of the guest
+   * list can still be added before saving.
+   */
+  export let initialParticipantIds: string[] = [];
 
   const dispatch = createEventDispatcher();
 
@@ -171,7 +179,7 @@
   // regardless of `visibility`. See mockup-friends-directory skill.
   let friends: FriendInfo[] = [];
   let friendsError = '';
-  let selectedFriendIds = new Set<string>();
+  let selectedFriendIds = new Set<string>(initialParticipantIds);
 
   onMount(async () => {
     try {

@@ -1,16 +1,44 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { render, screen, waitFor, fireEvent } from '@testing-library/svelte';
 import type { DayAvailability, EventWithParticipants, FriendInfo } from '$lib/types';
 
-const { getFriends, getEvents, getWeekAvailability, goto } = vi.hoisted(() => ({
+const {
+  getFriends,
+  getEvents,
+  getWeekAvailability,
+  goto,
+  getInvitableEvents,
+  getBestSlots,
+  inviteParticipants,
+  getServers,
+  previewAnnouncement
+} = vi.hoisted(() => ({
   getFriends: vi.fn(),
   getEvents: vi.fn(),
   getWeekAvailability: vi.fn(),
-  goto: vi.fn()
+  goto: vi.fn(),
+  getInvitableEvents: vi.fn(),
+  getBestSlots: vi.fn(),
+  inviteParticipants: vi.fn(),
+  // CreateEventModal loads these on mount, and it is reachable from this
+  // page now.
+  getServers: vi.fn(),
+  previewAnnouncement: vi.fn()
 }));
 
 vi.mock('$lib/api', () => ({
-  api: { getFriends, getEvents, getWeekAvailability, clearToken: vi.fn(), getToken: vi.fn() }
+  api: {
+    getFriends,
+    getEvents,
+    getWeekAvailability,
+    getInvitableEvents,
+    getBestSlots,
+    inviteParticipants,
+    getServers,
+    previewAnnouncement,
+    clearToken: vi.fn(),
+    getToken: vi.fn()
+  }
 }));
 
 vi.mock('$app/navigation', () => ({ goto }));
@@ -67,6 +95,13 @@ describe('friend detail page', () => {
     getEvents.mockReset();
     getWeekAvailability.mockReset();
     getWeekAvailability.mockResolvedValue(sevenDays([2, 2, 2, 2, 2, 2, 2]));
+    getInvitableEvents.mockReset();
+    getBestSlots.mockReset();
+    inviteParticipants.mockReset();
+    getInvitableEvents.mockResolvedValue([]);
+    getBestSlots.mockResolvedValue([]);
+    getServers.mockResolvedValue({ guilds: [], invite_url: '' });
+    previewAnnouncement.mockResolvedValue('');
   });
 
   it('shows the weekly availability strip', async () => {
@@ -121,5 +156,79 @@ describe('friend detail page', () => {
     render(FriendDetailPage);
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('network down'));
+  });
+  describe('inviting them to something', () => {
+    async function openSheet() {
+      getFriends.mockResolvedValue([alice]);
+      getEvents.mockResolvedValue([]);
+      render(FriendDetailPage);
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Invite' })).toBeInTheDocument()
+      );
+      await fireEvent.click(screen.getByRole('button', { name: 'Invite' }));
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+    }
+
+    it('offers your upcoming events they are not on', async () => {
+      getInvitableEvents.mockResolvedValue([
+        { id: 'e9', title: 'Climbing', start_time: '2027-01-01T18:00:00Z' }
+      ]);
+      await openSheet();
+
+      await waitFor(() => expect(screen.getByText('Climbing')).toBeInTheDocument());
+      expect(getInvitableEvents).toHaveBeenCalledWith('alice-id');
+    });
+
+    it('invites them through the existing participants endpoint', async () => {
+      getInvitableEvents.mockResolvedValue([
+        { id: 'e9', title: 'Climbing', start_time: '2027-01-01T18:00:00Z' }
+      ]);
+      inviteParticipants.mockResolvedValue({});
+      await openSheet();
+      await waitFor(() => expect(screen.getByText('Climbing')).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText('Climbing'));
+
+      await waitFor(() => expect(inviteParticipants).toHaveBeenCalledWith('e9', ['alice-id']));
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Climbing'));
+    });
+
+    // An app that could only add someone to an existing event would be
+    // useless exactly when you haven't made it yet.
+    it('starts a new event with them already selected', async () => {
+      await openSheet();
+
+      await fireEvent.click(screen.getByRole('button', { name: /New event with alice/ }));
+
+      // The selection, not that a prop was passed: the friend must be
+      // pressed in the invite picker. (It's a toggle button with
+      // aria-pressed, not a checkbox.)
+      const chip = await screen.findByRole('button', { name: 'alice', pressed: true });
+      expect(chip).toBeInTheDocument();
+    });
+
+    // The payoff from availability-best-overlap.
+    it('suggests a time you are both free, scoped to that friend', async () => {
+      getBestSlots.mockResolvedValue([
+        { start: '2027-01-01T19:00:00Z', free_count: 1, free_friend_ids: ['alice-id'] }
+      ]);
+      await openSheet();
+
+      await waitFor(() => expect(screen.getByText(/You're both free/)).toBeInTheDocument());
+      expect(getBestSlots).toHaveBeenCalledWith(
+        expect.any(Date),
+        expect.any(Date),
+        120,
+        'alice-id'
+      );
+    });
+
+    it('says so when there is nothing to invite them to', async () => {
+      await openSheet();
+
+      await waitFor(() =>
+        expect(screen.getByText(/no upcoming events alice isn't already on/i)).toBeInTheDocument()
+      );
+    });
   });
 });

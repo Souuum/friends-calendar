@@ -88,6 +88,11 @@ pub(crate) fn build_router(state: AppState) -> Router {
             "/api/events/announcement-preview",
             post(handlers::calendar::preview_announcement),
         )
+        // Your upcoming events a given friend isn't on yet.
+        .route(
+            "/api/events/invitable",
+            get(handlers::calendar::list_invitable_events),
+        )
         // Creator-only, rate-limited in the DB - see services::nudge.
         .route(
             "/api/events/:id/nudge",

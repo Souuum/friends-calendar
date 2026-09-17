@@ -99,6 +99,9 @@ pub struct BestSlotQuery {
     /// so the client sends the duration it actually has in the form.
     #[serde(default = "default_slot_minutes")]
     pub duration_minutes: i64,
+    /// Narrow the ranking to one friend, for "a time you're both free".
+    /// Absent means the whole friend list.
+    pub with: Option<Uuid>,
     /// The requester's offset from UTC, so "evening" means their evening.
     /// Sent by the client rather than read from `users.timezone`: that
     /// column is free text, defaults to UTC and is filled in by almost
@@ -162,7 +165,18 @@ pub async fn best_slot(
     let friends = services::friends::get_friends(&state.db, user.id)
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
-    let friend_ids: Vec<Uuid> = friends.into_iter().map(|f| f.user_id).collect();
+    let mut friend_ids: Vec<Uuid> = friends.into_iter().map(|f| f.user_id).collect();
+
+    // Narrowing still comes off the caller's own friend list, so `with` can't
+    // be used to ask about somebody they don't know.
+    if let Some(with) = query.with {
+        if !friend_ids.contains(&with) {
+            return Err(AppError::ValidationError(
+                "Not one of your friends".to_string(),
+            ));
+        }
+        friend_ids = vec![with];
+    }
 
     // The caller is included in the computation so their own commitments can
     // rule a slot out, then stripped from the count below.

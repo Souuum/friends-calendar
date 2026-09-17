@@ -442,6 +442,43 @@ pub async fn delete_event(db: &PgPool, event_id: Uuid, creator_id: Uuid) -> Resu
     Ok(result.rows_affected() > 0)
 }
 
+/// Your upcoming events that `friend_id` is not already on.
+///
+/// ⚠️ **Scoped to events you created**, because that is exactly what
+/// `invite_participants` below enforces - it silently returns an empty list
+/// for anyone who isn't the creator. A list built on "events I can see"
+/// would offer choices that then do nothing, which is the same
+/// looks-live-but-isn't failure this codebase keeps undoing. If the invite
+/// rule ever widens, widen this with it.
+///
+/// Already-started events are excluded: you cannot usefully invite someone
+/// to something that has begun.
+pub async fn list_invitable_events(
+    db: &PgPool,
+    creator_id: Uuid,
+    friend_id: Uuid,
+) -> Result<Vec<CalendarEvent>> {
+    let events = sqlx::query_as::<_, CalendarEvent>(
+        r#"
+        SELECT e.*
+        FROM calendar_events e
+        WHERE e.creator_id = $1
+          AND e.start_time > now()
+          AND NOT EXISTS (
+              SELECT 1 FROM event_participants ep
+              WHERE ep.event_id = e.id AND ep.user_id = $2
+          )
+        ORDER BY e.start_time
+        "#,
+    )
+    .bind(creator_id)
+    .bind(friend_id)
+    .fetch_all(db)
+    .await?;
+
+    Ok(events)
+}
+
 pub async fn invite_participants(
     db: &PgPool,
     event_id: Uuid,

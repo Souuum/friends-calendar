@@ -7,7 +7,14 @@
   import Frame from '$lib/components/templates/Frame.svelte';
   import EventRsvpCard from '$lib/components/molecules/EventRsvpCard.svelte';
   import { dateUtils } from '$lib/utils/dateUtils';
-  import type { DayAvailability, EventWithParticipants, FriendInfo } from '$lib/types';
+  import type {
+    CalendarEvent,
+    DayAvailability,
+    EventWithParticipants,
+    FriendInfo
+  } from '$lib/types';
+  import InviteFriendSheet from '$lib/components/organisms/InviteFriendSheet.svelte';
+  import CreateEventModal from '$lib/components/CreateEventModal.svelte';
 
   // No dedicated GET /api/friends/:id endpoint - the friends list already
   // has everything the header needs, and "shared events" is a filter over
@@ -69,6 +76,35 @@
   onMount(() => {
     if (friendId) load(friendId);
   });
+
+  // The invite sheet. One nullable/boolean pair kept deliberately small:
+  // `inviting` is whether the sheet is open, `invitedTo` the title of the
+  // event we just added them to, for the confirmation line.
+  let inviting = false;
+  let invitedTo = '';
+
+  // Opened with the friend preselected, and - when the group's availability
+  // could be computed - on a time you're both free.
+  let creatingWith: Date | null = null;
+  let showCreateModal = false;
+
+  function handleInvited(event: CustomEvent<{ event: CalendarEvent }>) {
+    inviting = false;
+    invitedTo = event.detail.event.title;
+  }
+
+  function handleCreateWith(event: CustomEvent<{ start: Date | null }>) {
+    inviting = false;
+    creatingWith = event.detail.start;
+    showCreateModal = true;
+  }
+
+  function handleCreated() {
+    showCreateModal = false;
+    creatingWith = null;
+    // Re-read so the new event shows under "Shared events" straight away.
+    if (friend) load(friend.user_id);
+  }
 </script>
 
 <svelte:head>
@@ -98,7 +134,24 @@
           <div class="w-16 h-16 rounded-full bg-gray-300"></div>
         {/if}
         <h1 class="text-2xl font-semibold m-0">{friend.username}</h1>
+
+        <!-- The screen's primary action in both mockups, and it had none at
+             all: grep this file for "invite" before this landed and there
+             were zero hits. -->
+        <button
+          type="button"
+          on:click={() => (inviting = true)}
+          class="ml-auto shrink-0 rounded-[9px] bg-primary px-3.5 py-[9px] text-[13px] font-semibold text-white hover:bg-primary-active"
+        >
+          Invite
+        </button>
       </div>
+
+      {#if invitedTo}
+        <p class="mb-4 rounded-lg bg-tint px-3 py-2 text-[13px] text-primary" role="status">
+          Invited {friend.username} to "{invitedTo}".
+        </p>
+      {/if}
 
       {#if availability.length === 7}
         <div class="bg-surface border border-gray-200 rounded-xl p-4 mb-6">
@@ -130,4 +183,23 @@
       {/if}
     {/if}
   </div>
+
+  {#if inviting && friend}
+    <InviteFriendSheet
+      {friend}
+      on:close={() => (inviting = false)}
+      on:invited={handleInvited}
+      on:createWith={handleCreateWith}
+    />
+  {/if}
+
+  {#if showCreateModal && friend}
+    <CreateEventModal
+      event={null}
+      initialDate={creatingWith}
+      initialParticipantIds={[friend.user_id]}
+      on:close={() => (showCreateModal = false)}
+      on:saved={handleCreated}
+    />
+  {/if}
 </Frame>
