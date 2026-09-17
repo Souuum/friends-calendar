@@ -182,7 +182,12 @@ export function renderDiscordMarkdown(input: string): string {
       }
       const quote = line.match(/^&gt;\s?(.*)$/);
       if (quote) {
-        return `<span class="block border-l-2 border-line pl-2 text-body">${quote[1]}</span>`;
+        // opacity, not a colour: this HTML renders inside ordinary cards and
+        // inside the inverted featured card, and a fixed `text-body` was
+        // inherited by everything nested in the quote - the audit measured
+        // the labels at 2.69:1 and the timestamp chip at 2.18:1 because of
+        // it. Opacity dims relative to whatever colour it inherits.
+        return `<span class="block border-l-2 border-line pl-2 opacity-90">${quote[1]}</span>`;
       }
       return line;
     })

@@ -85,15 +85,16 @@ const ANNOUNCEMENTS = [
     id: 'a1',
     author_username: 'alexandre_the_longest_name',
     title: 'Règles du serveur mises à jour pour la rentrée',
-    // Real Discord markup, so the screenshots and the contrast audit both
-    // exercise the renderer rather than plain prose.
+    // The bot's real announcement template, so the screenshots and the
+    // contrast audit exercise the markdown renderer on the exact shape that
+    // gets posted - heading, quoted fields, masked link.
     body:
-      "@everyone\n__Proposition d'activité :__\n\n" +
-      '**Date :** <t:1795806000:F>\n' +
-      '**Activité :** EsdeeKid\n' +
-      "**Lieu :** L'Olympia\n" +
-      '**Prix :** 59e20 fosse\n' +
-      '**Lien :** [OKAY](https://www.ticketmaster.fr/en/manifestation/esdeekid-ticket/idmanif/668111)\n\n' +
+      "@everyone\n## Proposition d'activité :\n" +
+      '> Date : **<t:1795806000:F>**\n' +
+      '> Activité : **EsdeeKid**\n' +
+      "> Lieu : **L'Olympia**\n" +
+      '> Prix : **59e20 fosse**\n' +
+      '> Lien : [OKAY](https://www.ticketmaster.fr/en/manifestation/esdeekid-ticket/idmanif/668111)\n\n' +
       '**Réagissez avec ✅ pour participer !**',
     tag: 'general',
     reaction_count: 12,

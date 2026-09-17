@@ -78,35 +78,38 @@ pub async fn announce_event(
 /// cannot drift from what actually gets posted - if you change this, the
 /// preview changes with it.
 pub fn format_event_message(event: &CalendarEvent) -> String {
-    let start = format_datetime(&event.start_time);
+    // Shaped after the announcements people already write in the server by
+    // hand: a heading, then one blockquoted line per field with the *value*
+    // emphasised rather than the label. The previous version bolded the
+    // labels and used no quote, which read as a form rather than a post.
+    let mut message = String::from("@everyone\n## Proposition d'activité :\n");
 
-    let mut message = String::from("@everyone\n__Proposition d'activité :__\n\n");
+    message.push_str(&format!(
+        "> Date : **{}**\n",
+        format_datetime(&event.start_time)
+    ));
+    message.push_str(&format!("> Activité : **{}**\n", event.title));
 
-    message.push_str(&format!("**Date :** {}\n", start));
+    let location = event.location.as_deref().unwrap_or("Non spécifié");
+    message.push_str(&format!("> Lieu : **{}**\n", location));
 
-    message.push_str(&format!("**Activité :** {}\n", event.title));
-
-    if let Some(location) = &event.location {
-        message.push_str(&format!("**Lieu :** {}\n", location));
-    } else {
-        message.push_str("**Lieu :** Non spécifié\n");
-    }
-
-    if let Some(price) = &event.price {
-        message.push_str(&format!("**Prix :** {}\n", price));
-    } else {
-        message.push_str("**Prix :** À définir\n");
-    }
+    let price = event.price.as_deref().unwrap_or("À définir");
+    message.push_str(&format!("> Prix : **{}**\n", price));
 
     if let Some(link) = &event.link {
-        let link_name = if let Some(desc) = &event.description {
-            desc.clone()
-        } else {
-            "Informations".to_string()
-        };
-        message.push_str(&format!("**Lien :** [{}]({})\n", link_name, link));
+        // Masked rather than the bare URL, kept deliberately: these links
+        // are ticketing URLs with long tracking query strings, and pasting
+        // one raw takes over the whole post. Not bolded - a link already
+        // carries its own emphasis, and bold inside a masked link renders
+        // as a heavier blue rather than reading as a label.
+        let label = event.description.as_deref().unwrap_or("Informations");
+        message.push_str(&format!("> Lien : [{}]({})\n", label, link));
     }
 
+    // Kept even though the hand-written posts have no equivalent: here the
+    // reaction *is* the RSVP, so this line is the only thing telling anyone
+    // how to sign up. Dropping it to match the template exactly would make
+    // the feature undiscoverable.
     message.push_str("\n**Réagissez avec ✅ pour participer !**");
 
     message
@@ -272,6 +275,90 @@ mod tests {
             )
             .await
             .is_ok()
+        );
+    }
+
+    // --- the message itself --------------------------------------------
+    //
+    // None of this was covered before: the tests exercised the HTTP flow and
+    // never looked at what was being posted.
+
+    fn full_event() -> CalendarEvent {
+        let mut e = event("EsdeeKid");
+        e.location = Some("L'Olympia".into());
+        e.price = Some("59e20 fosse".into());
+        e.link = Some("https://www.ticketmaster.fr/x?utm=1".into());
+        e.description = Some("OKAY".into());
+        e
+    }
+
+    #[test]
+    fn opens_with_a_heading_not_an_underline() {
+        let message = format_event_message(&full_event());
+        assert!(message.starts_with("@everyone\n## Proposition d'activité :\n"));
+        assert!(!message.contains("__"));
+    }
+
+    // Matching the hand-written posts: each field is a quote line, and the
+    // value carries the emphasis rather than the label.
+    #[test]
+    fn each_field_is_a_quoted_line_with_the_value_emphasised() {
+        let message = format_event_message(&full_event());
+        assert!(message.contains("> Activité : **EsdeeKid**"));
+        assert!(message.contains("> Lieu : **L'Olympia**"));
+        assert!(message.contains("> Prix : **59e20 fosse**"));
+        assert!(!message.contains("**Activité :**"));
+    }
+
+    #[test]
+    fn the_date_is_a_discord_timestamp_so_each_reader_sees_their_own_zone() {
+        let message = format_event_message(&full_event());
+        assert!(message.contains("> Date : **<t:"));
+        assert!(message.contains(":F>**"));
+    }
+
+    // Deliberately kept over a bare URL: ticketing links carry long tracking
+    // query strings that otherwise swamp the post.
+    #[test]
+    fn the_link_stays_masked_and_unbolded() {
+        let message = format_event_message(&full_event());
+        assert!(message.contains("> Lien : [OKAY](https://www.ticketmaster.fr/x?utm=1)"));
+        assert!(!message.contains("**[OKAY]"));
+    }
+
+    #[test]
+    fn a_link_with_no_description_gets_a_default_label() {
+        let mut e = full_event();
+        e.description = None;
+        assert!(format_event_message(&e).contains("> Lien : [Informations]("));
+    }
+
+    #[test]
+    fn the_link_line_is_omitted_entirely_when_there_is_no_link() {
+        let mut e = full_event();
+        e.link = None;
+        assert!(!format_event_message(&e).contains("Lien"));
+    }
+
+    // Placeholders rather than dropped lines: "À définir" says the price is
+    // undecided, where silence would read as free.
+    #[test]
+    fn missing_location_and_price_still_say_so() {
+        let mut e = full_event();
+        e.location = None;
+        e.price = None;
+        let message = format_event_message(&e);
+        assert!(message.contains("> Lieu : **Non spécifié**"));
+        assert!(message.contains("> Prix : **À définir**"));
+    }
+
+    // The reaction *is* the RSVP here, so this line is the only thing that
+    // tells anyone how to sign up.
+    #[test]
+    fn closes_with_the_rsvp_instruction() {
+        assert!(
+            format_event_message(&full_event())
+                .ends_with("\n\n**Réagissez avec ✅ pour participer !**")
         );
     }
 

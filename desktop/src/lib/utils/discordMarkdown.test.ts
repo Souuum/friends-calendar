@@ -124,6 +124,39 @@ describe('formatting', () => {
   });
 });
 
+describe("the bot's announcement template", () => {
+  // Kept in step with services::discord_announcement::format_event_message.
+  // The template moved to headings and blockquotes to match how people in
+  // the server write these by hand, so the renderer has to handle both.
+  const posted = [
+    '@everyone',
+    "## Proposition d'activité :",
+    '> Date : **<t:1795806000:F>**',
+    '> Activité : **EsdeeKid**',
+    "> Lieu : **L'Olympia**",
+    '> Prix : **59e20 fosse**',
+    '> Lien : [OKAY](https://www.ticketmaster.fr/x)',
+    '',
+    '**Réagissez avec ✅ pour participer !**'
+  ].join('\n');
+
+  it('renders the heading, the quoted fields and the link', () => {
+    const out = render(posted);
+    expect(out).toContain('font-bold');
+    expect(out).toContain('border-l-2');
+    expect(out).toContain('<strong>EsdeeKid</strong>');
+    expect(out).toContain('href="https://www.ticketmaster.fr/x"');
+  });
+
+  it('leaves no raw markup from the template behind', () => {
+    const out = render(posted);
+    expect(out).not.toContain('**');
+    expect(out).not.toContain('<t:');
+    expect(out).not.toContain('](http');
+    expect(out).not.toMatch(/^&gt; /m);
+  });
+});
+
 describe('the real announcement from the server', () => {
   const message = [
     '@everyone',

@@ -1145,6 +1145,23 @@ the body was rendered as plain text.
   fine. It now composites down the ancestor chain until opaque. Verified it
   still catches the real 1.08:1 case afterwards.
 
+**The announcement template** (`format_event_message`) was reshaped
+2026-09-17 to match how people in the server already write these by hand: a
+`##` heading, one `> ` quoted line per field, and the **value** emphasised
+rather than the label. It read as a form before. Three deliberate
+departures from the hand-written posts:
+
+- the `[label](url)` masked link is kept over a bare URL - ticketing links
+  carry long tracking query strings that otherwise swamp the post;
+- `@everyone` is not spoiler-wrapped (`||@everyone ||` is one person's
+  habit, and it hides the mention text);
+- the "Réagissez avec ✅" line stays, because here the reaction **is** the
+  RSVP - dropping it to match the template exactly would make the feature
+  undiscoverable.
+
+The format had no tests at all before this; it does now, and
+`discordMarkdown.test.ts` renders the same template so the two stay in step.
+
 **`services/reaction_sync.rs`** backfills RSVPs from reactions already on
 announcement messages. `bot.rs` only ever sees reactions added *while it is
 connected*, so anything ticked before an event was announced through this
