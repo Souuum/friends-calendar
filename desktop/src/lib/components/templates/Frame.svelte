@@ -76,7 +76,13 @@
         <ViewButton on:click={() => goto(item.view)} {item} {current} />
       {/each}
     </aside>
-    <main class="w-full md:w-14/16 fit-content pb-20 md:pb-0">
+    <!-- min-w-0: a flex child defaults to `min-width: auto`, so it refuses to
+         shrink below its content's minimum. With the 192px sidebar beside it,
+         `md:w-14/16` (87.5%) wants 864px inside a 768px viewport, and without
+         this it simply overflows instead of shrinking. Month view hid the
+         problem because its content is narrow enough to shrink on its own;
+         the week grid is not. -->
+    <main class="w-full md:w-14/16 min-w-0 fit-content pb-20 md:pb-0">
       <slot />
     </main>
   </div>

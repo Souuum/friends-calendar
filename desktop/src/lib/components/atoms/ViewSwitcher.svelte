@@ -19,15 +19,16 @@
   ];
 </script>
 
-<div class="flex bg-[#f4f4f7] rounded-[9px] p-[3px]">
+<div class="flex bg-[#f4f4f7] rounded-[9px] p-[3px]" data-testid="view-switcher">
   {#each views as viewOption}
     {@const isActive = view === viewOption.value}
-    {@const mobileHidden = viewOption.value === 'day' || viewOption.value === 'week'}
+    <!-- Day and Week used to be `hidden md:block`: their grids assumed a
+         7-column desktop layout that left ~39px per day at 402px. Both now
+         have a narrow layout (WeekView switches to a day strip), so every
+         view is offered at every width. -->
     <button
       on:click={() => onChange(viewOption.value)}
-      class="px-[13px] py-1.5 text-[13px] rounded-[7px] transition-colors cursor-pointer {mobileHidden
-        ? 'hidden md:block'
-        : ''}"
+      class="px-2.5 md:px-[13px] py-1.5 text-[13px] rounded-[7px] transition-colors cursor-pointer"
       class:bg-white={isActive}
       class:shadow-sm={isActive}
       class:font-semibold={isActive}

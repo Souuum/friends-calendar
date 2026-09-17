@@ -1052,6 +1052,48 @@ returned null, the ancestor walk found nothing, and every element was
 skipped. Both this and `theme.spec.ts` now parse oklch; keep them in step.
 Validated by reintroducing the bug and confirming the check fails.
 
+## Mobile week & day views (2026-09-17)
+
+Day and Week were `hidden md:block` in `ViewSwitcher` because their grids
+assume seven columns, which leaves **~39px per day at 402px** - too narrow
+for an event chip. Both are now offered at every width.
+
+⚠️ **The mobile mockup has no week or day screen.** Its calendar toggle is
+"Grid" and "List" only, and there is no hour-grid markup anywhere in the
+75KB file - checked before building, not assumed. So these layouts were
+designed here, not ported, and the shape was chosen with the user:
+
+- **Week, below `md:`** becomes a **day strip plus one day's hours**
+  (`data-testid="week-view-mobile"`). The week is still the unit of
+  navigation; only the display narrows. Both layouts are mounted and gated
+  by `hidden`/`md:` classes, so each has its own testid.
+  - The selected day resets via `$: weekDays, (selectedIndex = ...)` -
+    depending on `weekDays` **alone**, so paging to another week re-anchors
+    on today while tapping a day inside the current week is left alone.
+    There's a test for the tap case; it fails if that dependency widens.
+- **Both grids scroll to the first event** on open (`anchorToFirstEvent` in
+  `lib/utils/timeGrid.ts`), one hour early so it isn't flush to the top,
+  falling back to 08:00 on an empty day. They render all 24 hours, so
+  before this they opened at midnight and you scrolled past the small hours
+  every time.
+- `HOUR_HEIGHT` now lives in `timeGrid.ts`. It was a bare `80` written twice
+  inside `TimedEvent` with nothing tying it to `TimeSlot`'s `h-20` - if they
+  drift, events slide away from their hour further down the grid.
+- **DayView's empty state used to render *below* the grid**, so an empty day
+  meant scrolling past 24 hours of nothing to be told there was nothing. It
+  replaces the grid now.
+- **DayView no longer renders its own date heading.** `Calendar.svelte`'s
+  `headerDate` already emits the identical string when `view === 'day'`, so
+  it was the same line twice. Its `currentDate` prop went with it - events
+  arrive pre-filtered, so the component had no other use for it.
+
+⚠️ **`Frame.svelte`'s `<main>` needed `min-w-0`**, found by this work but
+pre-existing: a flex child defaults to `min-width: auto` and refuses to
+shrink below its content, so `md:w-14/16` (87.5%) beside the 192px sidebar
+wanted 864px inside a 768px viewport and overflowed by 93px. Month view hid
+it by being narrow enough to shrink anyway; the week grid is not. Same trap
+as the unwrappable URL in `EventRsvpCard`.
+
 ## Demo data (`scripts/demo-data.sh`, 2026-09-17)
 
 `seed <who>` / `status` / `clean`. Fills the database with six people,

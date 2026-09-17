@@ -216,104 +216,104 @@
 </script>
 
 <div class="anim-fade-up">
-<CalendarHeader
-  title={headerDate}
-  {view}
-  onPrev={prev}
-  onNext={next}
-  onToday={goToToday}
-  onNewEvent={openCreateModal}
-  on:view-change={handleViewChange}
-/>
-
-<div class="px-6">
-  <div
-    class="flex items-center gap-3 flex-wrap bg-white border border-line rounded-[11px] px-3.5 py-[11px] mb-3"
-  >
-    <span class="font-mono text-[10px] tracking-widest uppercase text-muted">Free tonight</span>
-    {#if freeTonightError}
-      <span class="text-xs text-red-600" role="alert">{freeTonightError}</span>
-    {:else if freeFriends.length === 0}
-      <span class="text-sm text-gray-500">No friends free right now</span>
-    {:else}
-      <div class="flex">
-        {#each freeFriends as friend (friend.user_id)}
-          {#if friend.avatar_url}
-            <img
-              src={friend.avatar_url}
-              alt=""
-              class="w-[26px] h-[26px] rounded-full border-2 border-white -mr-[7px]"
-            />
-          {:else}
-            <div
-              class="w-[26px] h-[26px] rounded-full bg-gray-300 border-2 border-white -mr-[7px] flex items-center justify-center text-[9px] font-bold text-white"
-            >
-              {friend.username.slice(0, 2).toUpperCase()}
-            </div>
-          {/if}
-        {/each}
-      </div>
-      <span class="text-[13px]">{freeFriends.length} friends have nothing on</span>
-    {/if}
-    <button
-      on:click={openCreateModal}
-      class="ml-auto px-3 py-[7px] border border-primary text-primary rounded-lg text-xs font-semibold hover:bg-primary-hover"
-    >
-      Propose a time
-    </button>
-  </div>
-
-  <div class="flex gap-2 flex-wrap mb-3">
-    {#each filters as filter (filter.key)}
-      <button
-        on:click={() => (activeFilter = filter.key)}
-        class="px-3 py-[7px] rounded-lg text-xs font-semibold border {activeFilter === filter.key
-          ? 'border-primary bg-tint text-primary'
-          : 'border-line bg-white text-muted'}"
-      >
-        {filter.label}
-      </button>
-    {/each}
-  </div>
-</div>
-
-<div class="flex gap-4 items-start px-6 pb-6">
-  <div class="flex-1 min-w-0">
-    {#if view === 'month'}
-      <MonthView
-        bind:this={monthViewRef}
-        {monthGrid}
-        currentMonth={currentDate}
-        {eventsForDay}
-        onEventClick={selectEvent}
-        on:showTooltip={handleShowTooltip}
-        on:hideTooltip={handleHideTooltip}
-      />
-
-      <EventTooltip
-        events={tooltipEvents}
-        isVisible={tooltipVisible}
-        position={tooltipPosition}
-        on:mouseenter={handleTooltipMouseEnter}
-        on:mouseleave={handleTooltipMouseLeave}
-        on:refresh={handleRefresh}
-      />
-    {:else if view === 'week'}
-      <WeekView {weekDays} {eventsForDay} onEventClick={selectEvent} />
-    {:else if view === 'list'}
-      <AgendaView events={filteredEvents} onEventClick={selectEvent} />
-    {:else}
-      <DayView {currentDate} events={eventsForDay(currentDate)} onEventClick={selectEvent} />
-    {/if}
-  </div>
-
-  <EventPeekPanel
-    event={selectedEvent}
-    on:refresh={handleRefresh}
-    on:edit={(e) => openEditModal(e.detail)}
-    on:deleted={handleDeleted}
+  <CalendarHeader
+    title={headerDate}
+    {view}
+    onPrev={prev}
+    onNext={next}
+    onToday={goToToday}
+    onNewEvent={openCreateModal}
+    on:view-change={handleViewChange}
   />
-</div>
+
+  <div class="px-6">
+    <div
+      class="flex items-center gap-3 flex-wrap bg-white border border-line rounded-[11px] px-3.5 py-[11px] mb-3"
+    >
+      <span class="font-mono text-[10px] tracking-widest uppercase text-muted">Free tonight</span>
+      {#if freeTonightError}
+        <span class="text-xs text-red-600" role="alert">{freeTonightError}</span>
+      {:else if freeFriends.length === 0}
+        <span class="text-sm text-gray-500">No friends free right now</span>
+      {:else}
+        <div class="flex">
+          {#each freeFriends as friend (friend.user_id)}
+            {#if friend.avatar_url}
+              <img
+                src={friend.avatar_url}
+                alt=""
+                class="w-[26px] h-[26px] rounded-full border-2 border-white -mr-[7px]"
+              />
+            {:else}
+              <div
+                class="w-[26px] h-[26px] rounded-full bg-gray-300 border-2 border-white -mr-[7px] flex items-center justify-center text-[9px] font-bold text-white"
+              >
+                {friend.username.slice(0, 2).toUpperCase()}
+              </div>
+            {/if}
+          {/each}
+        </div>
+        <span class="text-[13px]">{freeFriends.length} friends have nothing on</span>
+      {/if}
+      <button
+        on:click={openCreateModal}
+        class="ml-auto px-3 py-[7px] border border-primary text-primary rounded-lg text-xs font-semibold hover:bg-primary-hover"
+      >
+        Propose a time
+      </button>
+    </div>
+
+    <div class="flex gap-2 flex-wrap mb-3">
+      {#each filters as filter (filter.key)}
+        <button
+          on:click={() => (activeFilter = filter.key)}
+          class="px-3 py-[7px] rounded-lg text-xs font-semibold border {activeFilter === filter.key
+            ? 'border-primary bg-tint text-primary'
+            : 'border-line bg-white text-muted'}"
+        >
+          {filter.label}
+        </button>
+      {/each}
+    </div>
+  </div>
+
+  <div class="flex gap-4 items-start px-6 pb-6">
+    <div class="flex-1 min-w-0">
+      {#if view === 'month'}
+        <MonthView
+          bind:this={monthViewRef}
+          {monthGrid}
+          currentMonth={currentDate}
+          {eventsForDay}
+          onEventClick={selectEvent}
+          on:showTooltip={handleShowTooltip}
+          on:hideTooltip={handleHideTooltip}
+        />
+
+        <EventTooltip
+          events={tooltipEvents}
+          isVisible={tooltipVisible}
+          position={tooltipPosition}
+          on:mouseenter={handleTooltipMouseEnter}
+          on:mouseleave={handleTooltipMouseLeave}
+          on:refresh={handleRefresh}
+        />
+      {:else if view === 'week'}
+        <WeekView {weekDays} {eventsForDay} onEventClick={selectEvent} />
+      {:else if view === 'list'}
+        <AgendaView events={filteredEvents} onEventClick={selectEvent} />
+      {:else}
+        <DayView events={eventsForDay(currentDate)} onEventClick={selectEvent} />
+      {/if}
+    </div>
+
+    <EventPeekPanel
+      event={selectedEvent}
+      on:refresh={handleRefresh}
+      on:edit={(e) => openEditModal(e.detail)}
+      on:deleted={handleDeleted}
+    />
+  </div>
 </div>
 
 {#if showCreateModal}

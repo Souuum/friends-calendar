@@ -1,21 +1,24 @@
 <script lang="ts">
   import type { EventWithParticipants } from '$lib/types';
+  import { HOUR_HEIGHT } from '$lib/utils/timeGrid';
 
   export let event: EventWithParticipants;
   export let onClick: (() => void) | undefined = undefined;
 
+  // HOUR_HEIGHT rather than a literal 80: it has to match TimeSlot's
+  // `h-20`, and it was written out twice here with nothing tying the two
+  // to the slot height they position against.
   function getEventHeight(event: EventWithParticipants): number {
-    if (!event.end_time) return 80; // Default 1 hour
+    if (!event.end_time) return HOUR_HEIGHT;
     const start = new Date(event.start_time);
     const end = new Date(event.end_time);
-    const duration = (end.getTime() - start.getTime()) / (1000 * 60); // minutes
-    return (duration / 60) * 80; // 80px per hour
+    const duration = (end.getTime() - start.getTime()) / (1000 * 60);
+    return (duration / 60) * HOUR_HEIGHT;
   }
 
   function getEventTop(event: EventWithParticipants): number {
-    const start = new Date(event.start_time);
-    const minutes = start.getMinutes();
-    return (minutes / 60) * 80; // 80px per hour
+    const minutes = new Date(event.start_time).getMinutes();
+    return (minutes / 60) * HOUR_HEIGHT;
   }
 
   function formatTime(dateString: string): string {

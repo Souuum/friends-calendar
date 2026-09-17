@@ -203,3 +203,71 @@ test('no control is invisible against its own background', async ({ page }, test
     `controls indistinguishable from their background:\n${offenders.join('\n')}`
   ).toEqual([]);
 });
+
+/**
+ * Day and Week used to be hidden below `md:` because their grids assumed a
+ * seven-column desktop layout. They are offered at every width now, so the
+ * narrow layouts need the same overflow guarantee as every other route -
+ * and a screenshot, since "fits" and "usable" are different questions.
+ */
+for (const view of ['week', 'day'] as const) {
+  test(`the ${view} view fits its viewport`, async ({ page }, testInfo) => {
+    await visit(page, '/');
+
+    // Scoped: a day-strip pill's accessible name also contains "Day".
+    await page
+      .locator('[data-testid="view-switcher"]')
+      .getByRole('button', { name: view === 'week' ? 'Week' : 'Day', exact: true })
+      .click();
+    await page.waitForTimeout(150);
+
+    await page.screenshot({
+      path: `e2e/screenshots/${testInfo.project.name}/calendar-${view}.png`,
+      fullPage: true
+    });
+
+    const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+      scrollWidth: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
+      clientWidth: document.documentElement.clientWidth
+    }));
+
+    expect(
+      scrollWidth,
+      `${view} view overflows by ${scrollWidth - clientWidth}px. Offenders:\n` +
+        (await overflowingElements(page)).join('\n')
+    ).toBeLessThanOrEqual(clientWidth + 1);
+  });
+}
+
+test('the week view collapses to a day strip on a phone', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile-402', 'the narrow layout only applies below md');
+
+  await visit(page, '/');
+  await page
+    .locator('[data-testid="view-switcher"]')
+    .getByRole('button', { name: 'Week', exact: true })
+    .click();
+
+  // Seven columns leave ~39px each at this width, so the narrow layout
+  // shows one day at a time instead.
+  await expect(page.getByTestId('week-view-mobile')).toBeVisible();
+  await expect(page.getByTestId('week-view-desktop')).toBeHidden();
+
+  // aria-pressed only: event chips inside the grid are buttons too, so a
+  // bare button count depends on how many events the day happens to have.
+  const dayButtons = page.getByTestId('week-view-mobile').locator('button[aria-pressed]');
+  await expect(dayButtons).toHaveCount(7);
+});
+
+test('the week view keeps the full grid on a desktop', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === 'mobile-402', 'wide layout only');
+
+  await visit(page, '/');
+  await page
+    .locator('[data-testid="view-switcher"]')
+    .getByRole('button', { name: 'Week', exact: true })
+    .click();
+
+  await expect(page.getByTestId('week-view-desktop')).toBeVisible();
+  await expect(page.getByTestId('week-view-mobile')).toBeHidden();
+});
