@@ -6,7 +6,7 @@
   import Frame from '$lib/components/templates/Frame.svelte';
   import { theme, setTheme, type Theme } from '$lib/theme';
   import Icon from '$lib/components/atoms/Icon.svelte';
-  import type { User, Visibility } from '$lib/types';
+  import type { ExternalCalendar, User, Visibility } from '$lib/types';
 
   let profile: User | null = null;
   let loading = true;
@@ -47,6 +47,49 @@
 
   // The .ics subscription link. Loaded lazily - asking for it mints a
   // credential, so nobody who never opens this row gets one.
+  // Calendars feeding availability. Loaded on mount - unlike the feed link,
+  // asking for this list mints nothing.
+  let externalCalendars: ExternalCalendar[] = [];
+  let connectUrl = '';
+  let connectLabel = '';
+  let connecting = false;
+  let connectError = '';
+
+  async function loadExternalCalendars() {
+    try {
+      externalCalendars = await api.getExternalCalendars();
+    } catch {
+      // Non-critical: the rest of settings still works.
+    }
+  }
+
+  async function connectCalendar() {
+    if (!connectUrl.trim()) return;
+    try {
+      connecting = true;
+      connectError = '';
+      externalCalendars = await api.connectExternalCalendar(
+        connectUrl.trim(),
+        connectLabel.trim() || undefined
+      );
+      connectUrl = '';
+      connectLabel = '';
+    } catch (err) {
+      connectError = err instanceof Error ? err.message : 'Could not connect that calendar';
+    } finally {
+      connecting = false;
+    }
+  }
+
+  async function disconnectCalendar(id: string) {
+    try {
+      await api.disconnectExternalCalendar(id);
+      externalCalendars = externalCalendars.filter((c) => c.id !== id);
+    } catch (err) {
+      connectError = err instanceof Error ? err.message : 'Could not disconnect';
+    }
+  }
+
   let feedUrl = '';
   let feedError = '';
   let copied = false;
@@ -152,7 +195,10 @@
     }
   }
 
-  onMount(load);
+  onMount(() => {
+    load();
+    loadExternalCalendars();
+  });
 </script>
 
 <svelte:head>
@@ -276,6 +322,96 @@
             Saved on this device only. “System” follows your OS setting as it changes.
           </p>
         </div>
+      </section>
+
+      <section class="rounded-[14px] border border-line bg-surface p-[18px] space-y-3">
+        <div>
+          <h2 class="m-0 text-[15px] font-semibold">Connected calendars</h2>
+          <p class="m-0 mt-1 text-[13px] text-muted">
+            Bring in your real calendar so "free" means actually free — otherwise a week of work
+            meetings still looks wide open.
+          </p>
+        </div>
+
+        {#if externalCalendars.length > 0}
+          <div class="flex flex-col gap-1.5">
+            {#each externalCalendars as calendar (calendar.id)}
+              <div
+                class="flex flex-wrap items-center gap-2 rounded-[11px] border border-line px-3 py-2.5"
+              >
+                <span class="min-w-0 flex-1">
+                  <span class="block truncate text-[14px] font-semibold">
+                    {calendar.label ?? 'Calendar'}
+                  </span>
+                  <!-- The error is shown, not swallowed: a dead connection
+                       makes availability look right when it isn't. -->
+                  {#if calendar.last_error}
+                    <span class="block text-[12px] text-red-600">
+                      Not syncing — {calendar.last_error}
+                    </span>
+                  {:else if calendar.last_synced_at}
+                    <span class="block font-mono text-[11px] text-muted">
+                      synced {new Date(calendar.last_synced_at).toLocaleString()}
+                    </span>
+                  {:else}
+                    <span class="block font-mono text-[11px] text-muted">not synced yet</span>
+                  {/if}
+                </span>
+                <button
+                  type="button"
+                  on:click={() => disconnectCalendar(calendar.id)}
+                  class="shrink-0 rounded-[9px] border border-line bg-surface px-3 py-[7px] text-[12px] font-semibold hover:bg-subtle"
+                >
+                  Disconnect
+                </button>
+              </div>
+            {/each}
+          </div>
+        {/if}
+
+        {#if connectError}
+          <p class="m-0 text-[13px] text-red-600" role="alert">{connectError}</p>
+        {/if}
+
+        <!-- novalidate, and `type=text` rather than `type=url`. The service
+             deliberately accepts `webcal://`, which is what Apple Calendar
+             hands you, and the browser's url validator rejects or questions
+             it - silently, by refusing to submit with no in-page error. The
+             server validates the scheme properly and returns a message
+             written for a reader, so that is where the check belongs. -->
+        <form on:submit|preventDefault={connectCalendar} novalidate class="flex flex-col gap-2">
+          <label for="ics-url" class="text-[13px] font-medium text-body">
+            Secret calendar address (.ics)
+          </label>
+          <input
+            id="ics-url"
+            type="text"
+            inputmode="url"
+            bind:value={connectUrl}
+            placeholder="https://calendar.google.com/calendar/ical/…/basic.ics"
+            class="w-full rounded-[9px] border border-line bg-surface px-3 py-[9px] text-[13px] outline-none focus:border-primary"
+          />
+          <input
+            type="text"
+            bind:value={connectLabel}
+            placeholder="Label (optional) — e.g. Work"
+            aria-label="Calendar label"
+            class="w-full rounded-[9px] border border-line bg-surface px-3 py-[9px] text-[13px] outline-none focus:border-primary"
+          />
+          <!-- Both halves said plainly: what it grants, and what we keep. -->
+          <p class="m-0 text-[12px] text-muted">
+            In Google, Apple or Outlook this is the private “secret address in iCal format”. ⚠️
+            Anyone with it can read that calendar, so treat it like a password. We store
+            <strong>only busy times</strong> from it — never event titles, descriptions or attendees.
+          </p>
+          <button
+            type="submit"
+            disabled={connecting || connectUrl.trim() === ''}
+            class="self-start rounded-[9px] bg-primary px-3.5 py-[9px] text-[13px] font-semibold text-white hover:bg-primary-active disabled:opacity-50"
+          >
+            {connecting ? 'Connecting…' : 'Connect calendar'}
+          </button>
+        </form>
       </section>
 
       <section class="rounded-[14px] border border-line bg-surface p-[18px] space-y-3">

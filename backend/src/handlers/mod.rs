@@ -5,6 +5,7 @@ pub mod calendar;
 pub mod calendar_feed;
 pub mod discord;
 pub mod discord_config;
+pub mod external_calendar;
 pub mod friend_requests;
 pub mod friends;
 pub mod guilds;

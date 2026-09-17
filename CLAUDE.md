@@ -1018,13 +1018,48 @@ every provider.
   that providers refresh on their own schedule - Google's can take hours.
   Without that line the first bug report is "it's not updating".
 
-**Import - not built.** `.claude/skills/calendar-import-availability/SKILL.md`.
-The short version: `fetch_busy_intervals` is the single place availability
-data is built, and four pure consumers take plain `(user_id, start, end)`
-tuples - so an external calendar is *more rows in one function*, and the
-ranking never changes. The decision that makes it shippable is storing
-**busy intervals and never event content**; Google's `freeBusy` and Graph's
-`getSchedule` both return exactly that.
+**Import - done for `.ics`, 2026-09-17.** `services::external_calendar` +
+`services::ics_parse`, migration **018**. Paste the secret iCal address from
+Google, Apple or Outlook and availability starts accounting for real
+commitments. ⚠️ **OAuth providers are deliberately not built**: the flow
+cannot be exercised without real credentials, and shipping one never run is
+worse than not shipping it. The abstraction (`provider` column, per-provider
+sync) is in place for them.
+
+- ⚠️ **The union in `fetch_busy_intervals` is the entire integration.** Four
+  pure consumers take `(user_id, start, end)` tuples and none of them knows
+  external calendars exist - which is why importing improves best-overlap,
+  the week strip and "free tonight" at once. Mutation-tested: dropping the
+  union fails three availability tests.
+- ⚠️ **Intervals only, never event content.** `ics_parse` does not *read*
+  `SUMMARY`/`DESCRIPTION`/`LOCATION`/`ATTENDEE` - not read-and-discarded.
+  `BusyInterval` has nowhere to put them, and a test dumps every text column
+  in both tables to assert no title reached the database.
+- ⚠️ **`normalise_feed_url` refuses anything but http(s).** The server
+  fetches this URL, so `file://` would make it a file-read primitive.
+  `webcal://` is *rewritten* rather than refused, because that is what Apple
+  Calendar hands you.
+- The parser handles unfolding, `TZID` via `chrono-tz` (treating a zoned time
+  as UTC would put blocks up to 12 hours out), `VALUE=DATE`, `DURATION`,
+  `RRULE` (DAILY/WEEKLY/MONTHLY + INTERVAL/COUNT/UNTIL/BYDAY) expanded **only
+  inside the window** so an endless rule stays bounded, `EXDATE`, and
+  `STATUS:CANCELLED` / `TRANSP:TRANSPARENT`. Unfolding, TZID and EXDATE are
+  each mutation-tested. Not handled, knowingly: `RDATE`, `BYSETPOS`,
+  `BYMONTHDAY`, `RECURRENCE-ID` overrides.
+- **All-day blocks are excluded** from busy time - a day-long "Annual leave"
+  should not rule out a 19:00 slot. The parser takes a flag so the decision
+  sits with the caller.
+- ⚠️ **A failed sync keeps the cached window** and records `last_error`,
+  which the UI shows. Wiping on a transient failure would make a whole group
+  look suddenly free, and a silently dead connection is worse than none
+  because availability looks right and isn't.
+- ⚠️ **`type="url"` was wrong on the connect form.** happy-dom *does*
+  implement typed-input validation (unlike `required`), and a probe showed
+  `file:///…` gives `typeMismatch` and the submit never fires - in a real
+  browser that silently rejects `webcal://`, which the service explicitly
+  supports. The field is `type="text" inputmode="url"` with `novalidate`;
+  the server validates the scheme and returns a readable message. Found by a
+  failing test that turned out to be right about the code.
 
 ⚠️ **Two-way sync is deliberately out of scope** - dedup loops, deletion
 tombstones and conflict resolution, for something nobody asked for.

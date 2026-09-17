@@ -130,6 +130,16 @@ export interface BestSlot {
   free_friend_ids: string[];
 }
 
+/** A calendar imported so availability knows about the rest of your life. */
+export interface ExternalCalendar {
+  id: string;
+  provider: string;
+  label?: string;
+  last_synced_at?: string;
+  /** Why it last failed. A silently dead connection is worse than none. */
+  last_error?: string;
+}
+
 /** What a nudge reached. */
 export interface NudgeReport {
   nudged: number;

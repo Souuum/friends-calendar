@@ -190,6 +190,17 @@ pub(crate) fn build_router(state: AppState) -> Router {
             get(handlers::availability::friends_now),
         )
         .route("/api/availability/week", get(handlers::availability::week))
+        // Connected calendars: availability reads these, so a work meeting
+        // blocks a slot the same way one of ours does.
+        .route(
+            "/api/calendar/external",
+            get(handlers::external_calendar::list_calendars)
+                .post(handlers::external_calendar::connect_calendar),
+        )
+        .route(
+            "/api/calendar/external/:id",
+            axum::routing::delete(handlers::external_calendar::disconnect_calendar),
+        )
         // The subscribable .ics feed's link, minted and rotated normally.
         .route(
             "/api/calendar/feed",
@@ -315,6 +326,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             bot_token.clone(),
         ));
     }
+
+    // External calendars need no Discord anything - they're plain HTTP GETs
+    // of a URL the user pasted - so this is spawned unconditionally, unlike
+    // the two loops above.
+    services::external_calendar::spawn_sync_loop(state.db.clone(), state.http_client.clone());
 
     // One backfill pass at startup, so reactions that arrived while the bot
     // was down - or that predate the event ever being announced through this

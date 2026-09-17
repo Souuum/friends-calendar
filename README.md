@@ -91,7 +91,8 @@ Everything listed without a **Soon** tag is implemented and covered by tests.
 
 - **Subscribe from Google, Apple or Outlook** — a read-only `.ics` feed of your events, with a link you can revoke.
 - **Responsive** — sidebar and side panel on desktop, bottom tabs and sheets on a phone.
-- **Soon** · Reading *your* calendar back, so availability accounts for work meetings too.
+- **Connect your real calendar** — paste the secret `.ics` address from Google, Apple or Outlook and "free" starts meaning actually free. Only busy times are stored, never event titles.
+- **Soon** · Connecting Google and Outlook by sign-in rather than a pasted link.
 - **Soon** · Packaged desktop app — a Tauri shell exists in the repo but isn't built or tested in CI.
 
 ---

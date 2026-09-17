@@ -7,13 +7,19 @@ const {
   updateProfile,
   deleteAccount,
   getCalendarFeedLink,
-  rotateCalendarFeedLink
+  rotateCalendarFeedLink,
+  getExternalCalendars,
+  connectExternalCalendar,
+  disconnectExternalCalendar
 } = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
   updateProfile: vi.fn(),
   deleteAccount: vi.fn(),
   getCalendarFeedLink: vi.fn(),
-  rotateCalendarFeedLink: vi.fn()
+  rotateCalendarFeedLink: vi.fn(),
+  getExternalCalendars: vi.fn(),
+  connectExternalCalendar: vi.fn(),
+  disconnectExternalCalendar: vi.fn()
 }));
 
 vi.mock('$lib/api', () => ({
@@ -25,7 +31,10 @@ vi.mock('$lib/api', () => ({
     getToken: vi.fn(),
     getUnreadNotificationCount: vi.fn().mockResolvedValue(0),
     getCalendarFeedLink,
-    rotateCalendarFeedLink
+    rotateCalendarFeedLink,
+    getExternalCalendars,
+    connectExternalCalendar,
+    disconnectExternalCalendar
   }
 }));
 
@@ -70,6 +79,10 @@ describe('settings page', () => {
     getCurrentUser.mockReset();
     updateProfile.mockReset();
     deleteAccount.mockReset();
+    getExternalCalendars.mockReset();
+    connectExternalCalendar.mockReset();
+    disconnectExternalCalendar.mockReset();
+    getExternalCalendars.mockResolvedValue([]);
   });
 
   it('loads and displays the current profile', async () => {
@@ -166,7 +179,9 @@ describe('settings page', () => {
       await fireEvent.click(screen.getByRole('button', { name: /Show my calendar link/ }));
 
       await waitFor(() => expect(screen.getByText(FEED)).toBeInTheDocument());
-      expect(screen.getByText(/treat it like a password/)).toBeInTheDocument();
+      // getAllByText: the connected-calendars card warns about its own URL
+      // in the same words, and both warnings are correct.
+      expect(screen.getAllByText(/treat it like a password/).length).toBeGreaterThan(0);
       // The support question this heads off.
       expect(screen.getByText(/can take\s+several hours/)).toBeInTheDocument();
     });
@@ -195,6 +210,82 @@ describe('settings page', () => {
       await fireEvent.click(screen.getByRole('button', { name: /Show my calendar link/ }));
 
       await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('nope'));
+    });
+  });
+  describe('connected calendars', () => {
+    async function openSettings() {
+      getCurrentUser.mockResolvedValue(makeUser());
+      render(SettingsPage);
+      await waitFor(() => expect(screen.getByLabelText('Display name')).toBeInTheDocument());
+    }
+
+    it('explains what the link grants and what is kept', async () => {
+      await openSettings();
+
+      expect(screen.getByText(/treat it like a password/)).toBeInTheDocument();
+      // The privacy promise, where the person pasting the URL can read it.
+      expect(screen.getByText(/only busy times/)).toBeInTheDocument();
+      expect(screen.getByText(/never event titles/)).toBeInTheDocument();
+    });
+
+    it('connects a calendar and lists it', async () => {
+      connectExternalCalendar.mockResolvedValue([
+        { id: 'c1', provider: 'ics', label: 'Work', last_synced_at: '2026-03-01T10:00:00Z' }
+      ]);
+      await openSettings();
+
+      await fireEvent.input(screen.getByLabelText(/Secret calendar address/), {
+        target: { value: 'https://example.com/a.ics' }
+      });
+      await fireEvent.input(screen.getByLabelText('Calendar label'), {
+        target: { value: 'Work' }
+      });
+      await fireEvent.click(screen.getByRole('button', { name: 'Connect calendar' }));
+
+      await waitFor(() =>
+        expect(connectExternalCalendar).toHaveBeenCalledWith('https://example.com/a.ics', 'Work')
+      );
+      expect(await screen.findByText('Work')).toBeInTheDocument();
+    });
+
+    // ⚠️ A silently dead connection is worse than none: availability looks
+    // right and isn't.
+    it('shows why a calendar stopped syncing', async () => {
+      getExternalCalendars.mockResolvedValue([
+        { id: 'c1', provider: 'ics', label: 'Work', last_error: 'Calendar returned 404 Not Found' }
+      ]);
+      await openSettings();
+
+      expect(await screen.findByText(/Not syncing/)).toBeInTheDocument();
+      expect(screen.getByText(/404/)).toBeInTheDocument();
+    });
+
+    it('disconnects and drops it from the list', async () => {
+      getExternalCalendars.mockResolvedValue([{ id: 'c1', provider: 'ics', label: 'Work' }]);
+      disconnectExternalCalendar.mockResolvedValue(undefined);
+      await openSettings();
+      await waitFor(() => expect(screen.getByText('Work')).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
+
+      await waitFor(() => expect(disconnectExternalCalendar).toHaveBeenCalledWith('c1'));
+      await waitFor(() => expect(screen.queryByText('Work')).not.toBeInTheDocument());
+    });
+
+    it('reports a rejected URL instead of failing quietly', async () => {
+      connectExternalCalendar.mockRejectedValue(
+        new Error('Only http(s) calendar links are supported, not file')
+      );
+      await openSettings();
+
+      await fireEvent.input(screen.getByLabelText(/Secret calendar address/), {
+        target: { value: 'file:///etc/passwd' }
+      });
+      await fireEvent.click(screen.getByRole('button', { name: 'Connect calendar' }));
+
+      await waitFor(() =>
+        expect(screen.getByRole('alert')).toHaveTextContent('Only http(s) calendar links')
+      );
     });
   });
 });

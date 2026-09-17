@@ -8,6 +8,13 @@ axum = "0.7"
 # CSPRNG for the calendar-feed token. Already in the tree transitively; a
 # direct dependency so the intent is visible where it is used.
 rand = "0.8"
+# Timezone database. An imported calendar writes DTSTART;TZID=Europe/Paris,
+# and treating that as UTC would put every busy block up to 12 hours out - in
+# a feature whose entire job is knowing when people are busy.
+chrono-tz = "0.9"
+# URL parsing for the .ics scheme check. Already in the tree via reqwest; a
+# direct dependency because that check is a security boundary, not a detail.
+url = "2"
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.4", features = ["util"] } # util = ServiceExt::oneshot, used by functional tests
 tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }

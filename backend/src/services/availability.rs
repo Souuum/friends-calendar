@@ -43,6 +43,33 @@ async fn fetch_busy_intervals(
     .fetch_all(db)
     .await?;
 
+    // Plus anything imported from a real calendar, if they've connected one.
+    //
+    // ⚠️ This union is the *entire* integration point for external
+    // calendars. Every consumer below takes plain (user_id, start, end)
+    // tuples and neither knows nor cares where a row came from - which is
+    // why importing a work calendar improves best-overlap, the week strip
+    // and "free tonight" without any of them changing. See
+    // services::external_calendar.
+    let external = sqlx::query_as::<_, (Uuid, DateTime<Utc>, DateTime<Utc>)>(
+        r#"
+        SELECT c.user_id, b.starts_at, b.ends_at
+        FROM external_busy b
+        JOIN external_calendars c ON c.id = b.calendar_id
+        WHERE c.user_id = ANY($1)
+          AND b.starts_at < $3
+          AND b.ends_at > $2
+        "#,
+    )
+    .bind(user_ids)
+    .bind(window_start)
+    .bind(window_end)
+    .fetch_all(db)
+    .await?;
+
+    let mut rows = rows;
+    rows.extend(external);
+
     Ok(rows)
 }
 
@@ -685,5 +712,114 @@ mod tests {
             slots.iter().any(|s| s.free_user_ids.len() == 2),
             "declined/pending should not make anyone busy"
         );
+    }
+    // --- external calendars -----------------------------------------------
+    //
+    // The point of the whole import feature: a work meeting has to block a
+    // slot exactly the way one of our own events does, and it does so by
+    // being one more row out of fetch_busy_intervals - the ranking never
+    // learns that external calendars exist.
+
+    async fn connect_and_block(db: &PgPool, user: Uuid, start: DateTime<Utc>, end: DateTime<Utc>) {
+        let calendar: Uuid = sqlx::query_scalar(
+            "INSERT INTO external_calendars (id, user_id, provider, credential)
+             VALUES (gen_random_uuid(), $1, 'ics', $2) RETURNING id",
+        )
+        .bind(user)
+        .bind(format!("https://example.com/{user}.ics"))
+        .fetch_one(db)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO external_busy (id, calendar_id, starts_at, ends_at)
+             VALUES (gen_random_uuid(), $1, $2, $3)",
+        )
+        .bind(calendar)
+        .bind(start)
+        .bind(end)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+
+    #[sqlx::test]
+    async fn an_imported_meeting_makes_someone_busy(db: PgPool) {
+        let user = seed_user(&db, "busy-d", "busy").await;
+        let now = Utc::now();
+
+        // Free before it exists...
+        let before = free_users_now(&db, &[user]).await.unwrap();
+        assert_eq!(before, vec![user]);
+
+        connect_and_block(
+            &db,
+            user,
+            now - Duration::minutes(30),
+            now + Duration::hours(1),
+        )
+        .await;
+
+        let after = free_users_now(&db, &[user]).await.unwrap();
+        assert!(after.is_empty(), "an imported block should make them busy");
+    }
+
+    #[sqlx::test]
+    async fn best_slots_avoids_imported_meetings(db: PgPool) {
+        let user = seed_user(&db, "busy-d", "busy").await;
+        // Tomorrow 18:00-22:00 UTC, covering every evening candidate slot.
+        let day = (Utc::now() + Duration::days(1))
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let day_start = Utc.from_utc_datetime(&day);
+        connect_and_block(
+            &db,
+            user,
+            day_start + Duration::hours(18),
+            day_start + Duration::hours(23),
+        )
+        .await;
+
+        let slots = best_slots(
+            &db,
+            &[user],
+            day_start,
+            day_start + Duration::days(1),
+            120,
+            0,
+            10,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            slots.iter().all(|s| s.free_user_ids.is_empty()),
+            "every evening slot that day is taken by the imported block"
+        );
+    }
+
+    // A disconnected calendar must stop counting immediately, not at the
+    // next sync.
+    #[sqlx::test]
+    async fn removing_the_calendar_frees_them_again(db: PgPool) {
+        let user = seed_user(&db, "busy-d", "busy").await;
+        let now = Utc::now();
+        connect_and_block(
+            &db,
+            user,
+            now - Duration::minutes(30),
+            now + Duration::hours(1),
+        )
+        .await;
+        assert!(free_users_now(&db, &[user]).await.unwrap().is_empty());
+
+        sqlx::query("DELETE FROM external_calendars WHERE user_id = $1")
+            .bind(user)
+            .execute(&db)
+            .await
+            .unwrap();
+
+        assert_eq!(free_users_now(&db, &[user]).await.unwrap(), vec![user]);
     }
 }

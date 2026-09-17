@@ -16,6 +16,7 @@ import type {
   AdoptionResult,
   ChannelInfo,
   BestSlot,
+  ExternalCalendar,
   NudgeReport,
   AnnouncementPostInfo,
   ReplyInfo,
@@ -432,6 +433,30 @@ class ApiClient {
       '/api/availability/friends-now'
     );
     return free_friend_ids;
+  }
+
+  /** Calendars feeding your availability. */
+  async getExternalCalendars(): Promise<ExternalCalendar[]> {
+    return this.fetch<ExternalCalendar[]>('/api/calendar/external');
+  }
+
+  /**
+   * Connects a secret `.ics` URL and syncs it immediately.
+   *
+   * ⚠️ That URL grants read access to the whole calendar it points at. The
+   * server stores only busy intervals from it - never titles - but the URL
+   * itself is a credential.
+   */
+  async connectExternalCalendar(url: string, label?: string): Promise<ExternalCalendar[]> {
+    return this.fetch<ExternalCalendar[]>('/api/calendar/external', {
+      method: 'POST',
+      body: JSON.stringify({ url, label })
+    });
+  }
+
+  /** Disconnects, deleting the cached intervals with it. */
+  async disconnectExternalCalendar(id: string): Promise<void> {
+    await this.fetch(`/api/calendar/external/${id}`, { method: 'DELETE' });
   }
 
   /**
