@@ -149,7 +149,9 @@ test('no control is invisible against its own background', async ({ page }, test
       // written for was still present. (theme.spec.ts has the same parser
       // for the same reason; keep them in step.)
       const lum = (c: string): number | null => {
-        const ok = c.match(/^oklch\(\s*([\d.]+)(%?)/i);
+        // oklab too: a running transition reports interpolated colours,
+        // and Chrome interpolates in oklab.
+        const ok = c.match(/^okl(?:ch|ab)\(\s*([\d.]+)(%?)/i);
         if (ok) {
           const l = Number(ok[1]);
           return ok[2] === '%' ? l / 100 : l;

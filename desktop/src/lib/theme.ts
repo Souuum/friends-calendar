@@ -25,12 +25,41 @@ export function resolveTheme(theme: Theme): 'light' | 'dark' {
 }
 
 /**
+ * How long the cross-fade runs. Must match the `transition-duration` on
+ * `.theme-transition` in app.css.
+ */
+export const THEME_TRANSITION_MS = 220;
+
+let transitionTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
  * The class the CSS keys off. Applied to <html>, matching the
  * `@custom-variant dark (&:where(.dark, .dark *))` rule in app.css.
+ *
+ * Also drives the cross-fade: `.theme-transition` goes on for the duration
+ * of the change and comes straight back off, so the transition only ever
+ * applies to an actual theme switch - not to first paint, and not to every
+ * hover state for the rest of the session.
  */
 export function applyTheme(theme: Theme): void {
   if (!browser) return;
-  document.documentElement.classList.toggle('dark', resolveTheme(theme) === 'dark');
+
+  const root = document.documentElement;
+  const wantsDark = resolveTheme(theme) === 'dark';
+
+  // Nothing to animate if it already matches - and skipping avoids a
+  // pointless 220ms window where everything on the page is transitioning.
+  if (root.classList.contains('dark') === wantsDark) return;
+
+  root.classList.add('theme-transition');
+  root.classList.toggle('dark', wantsDark);
+
+  // Restart rather than stack, so toggling twice quickly doesn't strip the
+  // class mid-way through the second change.
+  clearTimeout(transitionTimer);
+  transitionTimer = setTimeout(() => {
+    root.classList.remove('theme-transition');
+  }, THEME_TRANSITION_MS + 40);
 }
 
 function storedTheme(): Theme {

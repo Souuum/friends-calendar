@@ -1052,6 +1052,31 @@ returned null, the ancestor walk found nothing, and every element was
 skipped. Both this and `theme.spec.ts` now parse oklch; keep them in step.
 Validated by reintroducing the bug and confirming the check fails.
 
+## Demo data (`scripts/demo-data.sh`, 2026-09-17)
+
+`seed <who>` / `status` / `clean`. Fills the database with six people,
+eleven events spread from last week to next month, RSVPs, reminders,
+publications, notifications and announcement posts, so the app can be
+looked at with content in it.
+
+- **Cleanup is exact by construction**: every demo person has
+  `discord_id LIKE 'demo-%'` and every demo event is *created by* one of
+  them, so `DELETE FROM users WHERE discord_id LIKE 'demo-%'` cascades
+  through events, participants, reminders, publications and friendships and
+  cannot touch a real row. Verified by checksumming real users and events
+  either side of a clean - both unchanged, zero residue.
+- `notifications.actor_user_id` is `ON DELETE SET NULL`, **not** cascade, so
+  the clean deletes those rows explicitly *before* the users. Otherwise they
+  survive, pointing at nobody.
+- ⚠️ **Pass the account you log in with** (`seed soum`). The default is
+  merely the oldest non-demo account, which on this dev database is a
+  leftover `TestUser` - seeding against it leaves your own calendar empty,
+  which is exactly what happened the first time. The script now raises
+  rather than silently seeding an unreachable account.
+- No demo event is owned by *you*, deliberately: owning some would mean
+  rows cascade cannot identify. The cost is that the calendar's "Created by
+  me" filter stays empty.
+
 ## Icons (2026-09-17)
 
 **`atoms/Icon.svelte` replaced every emoji in the UI with outline SVGs** -
@@ -1124,6 +1149,20 @@ writes a new component.
 - Buttons, not a `<select>`: happy-dom can't match `<select>` options by
   value, which is how the reminder-picker tests once passed by accident (see
   the Testing section).
+- **Switching themes cross-fades** (`.theme-transition` in app.css, driven
+  by `applyTheme`). The class is added for the duration of a change and
+  removed again - never left on. A standing `* { transition }` would animate
+  the *first* paint (a dark-mode user watching the page fade in from white)
+  and every hover state thereafter. It uses `transition-property/duration`
+  longhand rather than the shorthand so the `prefers-reduced-motion` block
+  below it can still override the duration alone, and is unlayered so it
+  beats Tailwind's `transition-*` utilities without `!important`. Both of
+  those claims have browser tests.
+- ⚠️ **Chrome reports interpolated colours as `oklab()`** while a transition
+  runs, so the luminance parsers in `theme.spec.ts` and `layout.spec.ts`
+  handle oklab as well as oklch. Tests that measure colour after a theme
+  change must wait for `.theme-transition` to come off, or they sample
+  mid-fade and read the *old* colour.
 - **A sun/moon toggle also sits in the header** (`Header.svelte`,
   `data-testid="theme-toggle"`), next to the notifications bell. It reads
   `resolvedTheme`, **not** `theme`: with the setting on `'system'` the

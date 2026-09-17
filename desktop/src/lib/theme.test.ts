@@ -7,7 +7,8 @@ import {
   setTheme,
   theme,
   THEME_STORAGE_KEY,
-  toggleTheme
+  toggleTheme,
+  THEME_TRANSITION_MS
 } from './theme';
 
 function mockMatchMedia(matches: boolean) {
@@ -151,5 +152,49 @@ describe('resolvedTheme', () => {
     mockMatchMedia(true);
     setTheme('system');
     expect(get(resolvedTheme)).toBe('dark');
+  });
+});
+
+describe('theme cross-fade', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    document.documentElement.className = '';
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('adds the transition class for the duration of a change, then removes it', () => {
+    applyTheme('dark');
+    expect(document.documentElement.classList.contains('theme-transition')).toBe(true);
+
+    vi.advanceTimersByTime(THEME_TRANSITION_MS + 100);
+    expect(document.documentElement.classList.contains('theme-transition')).toBe(false);
+    // The theme itself stays applied once the fade is over.
+    expect(document.documentElement.classList.contains('dark')).toBe(true);
+  });
+
+  // The reason the class is added per-change rather than left on: a
+  // standing transition would animate the very first paint, so a dark-mode
+  // user would watch the page fade in from white on every load.
+  it('does not transition when the theme is already correct', () => {
+    document.documentElement.classList.add('dark');
+    applyTheme('dark');
+    expect(document.documentElement.classList.contains('theme-transition')).toBe(false);
+  });
+
+  it('restarts rather than stacks when toggled twice quickly', () => {
+    applyTheme('dark');
+    vi.advanceTimersByTime(100);
+    applyTheme('light');
+
+    // The first change's timer must not strip the class mid-way through
+    // the second.
+    vi.advanceTimersByTime(150);
+    expect(document.documentElement.classList.contains('theme-transition')).toBe(true);
+
+    vi.advanceTimersByTime(THEME_TRANSITION_MS);
+    expect(document.documentElement.classList.contains('theme-transition')).toBe(false);
   });
 });

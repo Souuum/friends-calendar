@@ -30,11 +30,13 @@ async function luminanceOf(page: Page, selector: string, prop: string): Promise<
         .getPropertyValue(property as string)
         .trim();
 
-      const oklch = value.match(/^oklch\(\s*([\d.]+)(%?)/i);
-      if (oklch) {
-        // L is already perceptual lightness: 0-1, or 0-100 with a percent.
-        const l = Number(oklch[1]);
-        return oklch[2] === '%' ? l / 100 : l;
+      // oklab as well as oklch: while a transition is running Chrome
+      // reports the *interpolated* colour, and it interpolates in oklab.
+      // Both put perceptual lightness first, on the same scale.
+      const ok = value.match(/^okl(?:ch|ab)\(\s*([\d.]+)(%?)/i);
+      if (ok) {
+        const l = Number(ok[1]);
+        return ok[2] === '%' ? l / 100 : l;
       }
 
       const rgb = value.match(/^rgba?\(([^)]+)\)/i);
@@ -152,6 +154,12 @@ test('the header toggle flips the theme and persists it', async ({ page }) => {
   await expect(page.locator('html')).toHaveClass(/dark/);
   await expect(toggle).toHaveAttribute('aria-label', 'Switch to light mode');
 
+  // Wait for the cross-fade to finish before measuring. Reading straight
+  // after the click samples the colour mid-transition, which is still the
+  // old one - the class coming off is the signal that it has settled, and
+  // is more honest than sleeping for the duration.
+  await expect(page.locator('html')).not.toHaveClass(/theme-transition/);
+
   const after = await luminanceOf(page, 'body', 'background-color');
   expect(before, 'the page should have been light before the click').toBeGreaterThan(0.8);
   expect(after, 'the page should be dark after the click').toBeLessThan(0.3);
@@ -176,4 +184,37 @@ test('the toggle leaves system by flipping what is rendered', async ({ page }) =
 
   await toggle.click();
   await expect(page.locator('html')).not.toHaveClass(/dark/);
+});
+
+test('the cross-fade rule wins over Tailwind transition utilities', async ({ page }) => {
+  await visit(page, '/settings', 'light');
+
+  const duration = await page.evaluate(() => {
+    document.documentElement.classList.add('theme-transition');
+    // A button carrying Tailwind's own `transition-colors`, which would
+    // otherwise set transition-property and shadow the theme rule.
+    const el = document.querySelector('[aria-label="Appearance"] button');
+    return el ? getComputedStyle(el).transitionDuration : null;
+  });
+
+  expect(duration, 'the .theme-transition rule should apply here').toBe('0.22s');
+});
+
+// The theme rule uses transition-property/duration longhand precisely so
+// this override still lands. A `transition:` shorthand would re-set the
+// duration after it and animate for users who asked not to see animation.
+test('reduced motion still overrides the cross-fade', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await visit(page, '/settings', 'light');
+
+  const duration = await page.evaluate(() => {
+    document.documentElement.classList.add('theme-transition');
+    const el = document.querySelector('[aria-label="Appearance"] button');
+    return el ? getComputedStyle(el).transitionDuration : null;
+  });
+
+  // Chrome normalises 0.001ms to "1e-06s", so compare seconds rather than
+  // the formatted string.
+  const seconds = Number(String(duration).replace(/s$/, ''));
+  expect(seconds, `expected effectively zero, got "${duration}"`).toBeLessThan(0.01);
 });

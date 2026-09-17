@@ -233,6 +233,37 @@ button:active {
   transform: scale(0.985);
 }
 
+/* ---------------------------------------------------------------------
+   Theme cross-fade.
+
+   Applied only *while* a theme change is in flight (lib/theme.ts adds the
+   class, then removes it), never permanently. Two reasons that matters:
+
+   - On first paint the class is absent, so a dark-mode user does not watch
+     the page fade in from white. The inline script in app.html sets the
+     theme before anything renders; a standing transition would animate
+     that.
+   - A permanent `* { transition: background-color }` also animates every
+     hover and focus state on every element, which makes the whole UI feel
+     laggy and is a well-known way to tank paint performance on large DOMs.
+
+   Longhand rather than the `transition` shorthand on purpose: the
+   reduced-motion block below overrides `transition-duration` alone, and a
+   shorthand here would re-set the duration after it and defeat that.
+
+   Unlayered, so it wins over Tailwind's own `transition-*` utilities
+   (which live in @layer utilities) without needing !important.
+   --------------------------------------------------------------------- */
+.theme-transition,
+.theme-transition *,
+.theme-transition *::before,
+.theme-transition *::after {
+  transition-property: background-color, border-color, color, fill, stroke, box-shadow;
+  /* Keep in step with THEME_TRANSITION_MS in lib/theme.ts. */
+  transition-duration: 220ms;
+  transition-timing-function: ease;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
