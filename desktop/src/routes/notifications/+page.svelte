@@ -107,7 +107,7 @@
 </svelte:head>
 
 <Frame>
-  <div class="max-w-2xl mx-auto py-6 px-4 anim-fade-up">
+  <div class="max-w-2xl anim-fade-up">
     <div class="flex items-end gap-4 flex-wrap mb-5">
       <div>
         <h1 class="text-2xl font-semibold m-0">Notifications</h1>

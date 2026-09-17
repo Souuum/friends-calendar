@@ -11,7 +11,14 @@ const { getFriends, getEvents, getFreeFriendsNow, syncFriends, goto } = vi.hoist
 }));
 
 vi.mock('$lib/api', () => ({
-  api: { getFriends, getEvents, getFreeFriendsNow, syncFriends, clearToken: vi.fn(), getToken: vi.fn() }
+  api: {
+    getFriends,
+    getEvents,
+    getFreeFriendsNow,
+    syncFriends,
+    clearToken: vi.fn(),
+    getToken: vi.fn()
+  }
 }));
 
 vi.mock('$app/navigation', () => ({ goto }));
@@ -111,14 +118,14 @@ describe('friends directory page', () => {
     expect(screen.queryByText('Free now')).not.toBeInTheDocument();
   });
 
-  it('navigates to /friends/add when "+ Add friend" is clicked', async () => {
+  it('navigates to /friends/add when "Add friend" is clicked', async () => {
     getFriends.mockResolvedValue([]);
     getEvents.mockResolvedValue([]);
 
     render(FriendsPage);
     await waitFor(() => expect(screen.getByText('No friends synced yet.')).toBeInTheDocument());
 
-    await fireEvent.click(screen.getByRole('button', { name: '+ Add friend' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add friend' }));
 
     expect(goto).toHaveBeenCalledWith('/friends/add');
   });
@@ -151,7 +158,7 @@ describe('friends directory page', () => {
     render(FriendsPage);
     await waitFor(() => expect(screen.getByText('alice')).toBeInTheDocument());
 
-    await fireEvent.input(screen.getByPlaceholderText('Search by name'), {
+    await fireEvent.input(screen.getByPlaceholderText('Search by name or Discord tag'), {
       target: { value: 'ali' }
     });
 

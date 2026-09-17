@@ -7,9 +7,14 @@
   export let show = false;
 </script>
 
-<div class="flex items-center gap-3 select-none bg-none border-none">
+<div class="flex min-w-0 select-none items-center gap-2.5 border-none bg-none">
   <Avatar src={avatar} size={32} on:click class="cursor-pointer" />
-  <span class="p-1 text-black font-semibold text-xl">{username}</span>
+  <!-- 14px/600 per the mockup. This was `text-xl`, which made the handle the
+       largest thing on every screen - louder than the page title. Truncates
+       because a Discord handle has no length limit worth trusting. -->
+  <span class="hidden min-w-0 max-w-[180px] truncate text-[14px] font-semibold sm:block"
+    >{username}</span
+  >
   <button
     class="p-1 hover:bg-gray-100 rounded-lg transition cursor-pointer"
     on:click|stopPropagation={() => (show = !show)}

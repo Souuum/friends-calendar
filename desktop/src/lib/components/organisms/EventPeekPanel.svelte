@@ -1,11 +1,14 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from 'svelte';
   import { dismissable } from '$lib/actions/dismissable';
+  // Shared with the month-grid chip so the two can't disagree - see the
+  // module doc.
+  import { statusOf } from '$lib/utils/eventStatus';
   import { api } from '$lib/api';
   import type { EventWithParticipants } from '$lib/types';
   import { formatDate } from '$lib/utils/dateUtils';
 
-  // The app's single event-detail surface: a side panel from `md:` up, a
+  // The app's single event-detail surface: a side panel from `lg:` up, a
   // bottom sheet below it. Replaced the old hover-tooltip (month) /
   // modal-on-click (week, day) interaction in mockup-calendar-redesign, and
   // superseded EventDetailsModal entirely in mockup-responsive-calendar -
@@ -20,24 +23,29 @@
   let error = '';
 
   /**
-   * Below `md:` this is a sheet floating over the calendar, and it shipped
+   * Below `lg:` this is a sheet floating over the calendar, and it shipped
    * with **no way to dismiss it at all** - no close control, no backdrop,
    * and nothing listening for a tap outside. Selecting a different event
-   * was the only thing that changed it. From `md:` up it's a static column
+   * was the only thing that changed it. From `lg:` up it's a static column
    * with an explicit "select an event" empty state, so it's *meant* to
    * persist there and deliberately keeps doing so.
    *
-   * Tracked in JS rather than with a `md:hidden` backdrop, because the
+   * Tracked in JS rather than with a `lg:hidden` backdrop, because the
    * difference isn't only visual: the backdrop and its history entry must
    * not exist at all on desktop, where nothing is being covered up.
    */
   let isSheet = false;
 
   onMount(() => {
-    // 767.98 rather than 767: `md:` is min-width 768px, and a fractional
+    // 1023.98 rather than 1023: `lg:` is min-width 1024px, and a fractional
     // viewport width (browser zoom, some devices) would otherwise fall in
     // the gap between the two and match neither.
-    const sheetWidth = window.matchMedia('(max-width: 767.98px)');
+    //
+    // ⚠️ `lg:`, not `md:`. At 768 the 216px rail plus this 296px column
+    // leaves ~192px for seven day cells - 27px each, which truncated every
+    // event chip's title to zero width. The panel only docks once there is
+    // room for both.
+    const sheetWidth = window.matchMedia('(max-width: 1023.98px)');
     const sync = () => (isSheet = sheetWidth.matches);
     sync();
     sheetWidth.addEventListener('change', sync);
@@ -46,19 +54,6 @@
 
   function close() {
     dispatch('close');
-  }
-
-  // Mirrors the mockup's STATUS object exactly (bar/bg/fg per status) -
-  // "accepted" is tint/accent-text, never green.
-  const STATUS: Record<string, { label: string; bar: string; bg: string; fg: string }> = {
-    accepted: { label: 'Going', bar: '#5030e5', bg: '#eee8ff', fg: '#5030e5' },
-    maybe: { label: 'Maybe', bar: '#fbb13c', bg: 'rgba(251,177,60,0.18)', fg: '#a9700f' },
-    declined: { label: "Can't", bar: '#fb2c2c', bg: 'rgba(251,44,44,0.14)', fg: '#c01a1a' },
-    pending: { label: 'No answer', bar: '#7c7c83', bg: '#f4f4f7', fg: '#5c5c61' }
-  };
-
-  function statusOf(status?: string) {
-    return STATUS[status ?? 'pending'] ?? STATUS.pending;
   }
 
   // Two-step inline confirm rather than window.confirm(), to match how the
@@ -103,9 +98,10 @@
   }
 </script>
 
-<!-- One component, two placements. Below `md:` there's no room for a 296px
-     side panel at 402px wide, so it docks to the bottom of the viewport as a
-     sheet; from `md:` up it's the static side panel the mockup shows. Note
+<!-- One component, two placements. Below `lg:` there isn't room for a 296px
+     side panel beside a seven-column grid, so it docks to the bottom of the
+     viewport as a sheet; from `lg:` up it's the static side panel the mockup
+     shows. Note
      this replaces the plan to revive EventDetailsModal for the mobile sheet:
      that component predates the mockup's status palette, uses
      confirm()/alert(), has no edit affordance and no is_participant
@@ -117,7 +113,7 @@
      tab bar, below that too - so the tabs still navigate while it's open. -->
 {#if event && isSheet}
   <div
-    class="fixed inset-0 z-30 md:hidden"
+    class="fixed inset-0 z-30 lg:hidden"
     use:dismissable={close}
     role="presentation"
     aria-hidden="true"
@@ -125,10 +121,11 @@
 {/if}
 
 <aside
+  data-testid="event-peek"
   class="bg-surface border border-line p-[18px]
          fixed inset-x-0 bottom-0 z-40 max-h-[70vh] overflow-y-auto rounded-t-2xl shadow-[0_-14px_40px_rgba(0,0,0,0.18)] anim-sheet
-         md:static md:z-auto md:max-h-none md:overflow-visible md:w-[296px] md:shrink-0 md:rounded-xl md:shadow-none md:animate-none
-         {event ? '' : 'hidden md:block'}"
+         lg:static lg:z-auto lg:max-h-none lg:overflow-visible lg:w-[296px] lg:shrink-0 lg:rounded-xl lg:shadow-none lg:animate-none
+         {event ? '' : 'hidden lg:block'}"
 >
   {#if !event}
     <p class="text-sm text-gray-500">Select an event to see its details here.</p>
@@ -155,13 +152,13 @@
               {s.label}
             </span>
           {/if}
-          <!-- Sheet only: from `md:` up the panel is a column that is
+          <!-- Sheet only: from `lg:` up the panel is a column that is
                supposed to stay, so there is nothing to close. -->
           {#if isSheet}
             <button
               type="button"
               on:click={close}
-              class="-mr-2 ml-auto flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg text-2xl leading-none text-gray-400 hover:bg-gray-100 hover:text-gray-600 md:hidden"
+              class="-mr-2 ml-auto flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg text-2xl leading-none text-gray-400 hover:bg-gray-100 hover:text-gray-600 lg:hidden"
               aria-label="Close">×</button
             >
           {/if}

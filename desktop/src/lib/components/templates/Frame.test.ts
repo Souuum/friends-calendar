@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import Frame from './Frame.svelte';
 import { user } from '$lib/stores';
@@ -50,7 +50,7 @@ describe('Frame sidebar navigation', () => {
     __setPathname('/');
     render(Frame);
 
-    await fireEvent.click(screen.getByText('Announcement'));
+    await fireEvent.click(within(screen.getByTestId('sidebar')).getByText('Announcements'));
 
     expect(goto).toHaveBeenCalledWith('/announcements');
   });
@@ -59,14 +59,17 @@ describe('Frame sidebar navigation', () => {
     __setPathname('/announcements');
     render(Frame);
 
-    const announcementButton = screen.getByText('Announcement').closest('button');
-    const calendarsButton = screen.getByText('Calendars').closest('button');
+    // Scoped to the rail: the header now names the current screen too, so
+    // 'Announcements' appears twice on this page.
+    const sidebar = within(screen.getByTestId('sidebar'));
+    const announcementButton = sidebar.getByText('Announcements').closest('button');
+    const calendarsButton = sidebar.getByText('Calendar').closest('button');
 
-    // Not `bg-primary-hover` alone - the unconditional `hover:bg-primary-hover`
-    // utility class contains that substring regardless of which item is
-    // active, so it would pass even when highlighting is broken.
-    expect(announcementButton?.className).toContain('font-semibold');
-    expect(calendarsButton?.className).not.toContain('font-semibold');
+    // aria-current is the real signal now, and unlike a font-weight class it
+    // can't be accidentally satisfied by an unrelated utility - the earlier
+    // version had to avoid `bg-primary-hover` for exactly that reason.
+    expect(announcementButton).toHaveAttribute('aria-current', 'page');
+    expect(calendarsButton).not.toHaveAttribute('aria-current');
   });
 });
 

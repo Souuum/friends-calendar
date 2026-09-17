@@ -31,6 +31,15 @@
     return date.getMonth() === currentMonth.getMonth();
   }
 
+  // The mockup dims days that have already been and gone (0.72) separately
+  // from days outside the month (0.45), so "past" and "not this month" stay
+  // distinguishable.
+  function isPast(date: Date): boolean {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    return date < startOfToday;
+  }
+
   function handleMouseEnter(day: Date, e: MouseEvent) {
     const dayEvents = eventsForDay(day);
     if (dayEvents.length === 0) return;
@@ -90,26 +99,28 @@
   export { handleTooltipMouseEnter, handleTooltipMouseLeave };
 </script>
 
-<div class="p-6">
+<div>
   <WeekdayHeader />
 
-  <div class="grid grid-cols-7 gap-px bg-gray-200 rounded-lg overflow-hidden">
-    {#each monthGrid as day, i}
+  <!-- gap-px over a `line` background is how the mockup draws its gridlines:
+       one hairline between cells rather than a border on each, which would
+       double up and leave the outer edge twice as heavy. The rounded outer
+       border plus overflow-hidden is what gives the grid its card edge - the
+       app had neither, so the month view bled into the page. -->
+  <div class="grid grid-cols-7 gap-px overflow-hidden rounded-xl border border-line bg-line">
+    {#each monthGrid as day}
       {@const dayEvents = eventsForDay(day)}
+      {@const outside = !isCurrentMonth(day)}
       <div
         role="button"
         tabindex="0"
-        class="bg-surface min-h-[120px] p-3 hover:bg-gray-50 transition-colors cursor-pointer relative"
-        class:opacity-40={!isCurrentMonth(day)}
-        class:rounded-tl-lg={i === 0}
-        class:rounded-tr-lg={i === 6}
-        class:rounded-bl-lg={i === 35}
-        class:rounded-br-lg={i === 41}
+        class="flex min-h-[126px] cursor-pointer flex-col bg-surface px-[9px] pb-2.5 pt-[9px] text-left transition-colors
+          {outside ? 'opacity-45' : isPast(day) ? 'opacity-[0.72]' : ''}"
         on:mouseenter={(e) => handleMouseEnter(day, e)}
         on:mouseleave={handleMouseLeave}
       >
-        <div class="flex justify-between items-start mb-2">
-          <CalendarDay date={day} isToday={isToday(day)} isCurrentMonth={isCurrentMonth(day)} />
+        <div class="mb-[5px] flex items-center gap-1.5">
+          <CalendarDay date={day} isToday={isToday(day)} isCurrentMonth={!outside} />
         </div>
 
         <EventList

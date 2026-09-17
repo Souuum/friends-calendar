@@ -12,6 +12,29 @@
   let loading = true;
   let loadError = '';
 
+  // Each option carries the line that says what it means - the mockup shows
+  // these as three cards, not as options in a dropdown, precisely so it can.
+  const VISIBILITY_CHOICES: { value: Visibility; label: string; hint: string }[] = [
+    { value: 'friends', label: 'Friends', hint: 'Everyone you synced' },
+    { value: 'private', label: 'Private', hint: 'Only people you invite' },
+    { value: 'public', label: 'Public', hint: 'Anyone in a server it is posted to' }
+  ];
+
+  // Same derivation Frame uses for the header avatar, including the
+  // default-avatar fallback for accounts that never set one.
+  $: avatarUrl = profile?.avatar
+    ? `https://cdn.discordapp.com/avatars/${profile.discord_id}/${profile.avatar}.png`
+    : `https://cdn.discordapp.com/embed/avatars/${defaultAvatarIndex(profile?.discord_id)}.png`;
+
+  function defaultAvatarIndex(discordId: string | undefined): number {
+    if (!discordId) return 0;
+    try {
+      return Number((BigInt(discordId) >> 22n) % 6n);
+    } catch {
+      return 0;
+    }
+  }
+
   let displayName = '';
   let timezone = 'UTC';
   let defaultVisibility: Visibility = 'friends';
@@ -97,64 +120,95 @@
 </svelte:head>
 
 <Frame>
-  <div class="max-w-2xl mx-auto py-6 px-3 sm:px-4 space-y-6 md:space-y-8 anim-fade-up">
+  <div class="space-y-4 anim-fade-up">
+    <!-- md:hidden: the rail lists Settings from md: up, so this is only a way
+         back on mobile, where the rail isn't rendered. -->
     <button
-      class="inline-flex items-center gap-1 text-sm text-discord-blurple hover:underline"
+      class="inline-flex items-center gap-1 text-sm text-discord-blurple hover:underline md:hidden"
       on:click={() => goto('/')}
     >
       <Icon name="back" size={14} /> Back to calendar
     </button>
 
-    <h1 class="text-2xl font-semibold m-0">Settings</h1>
+    <h1 class="m-0 text-[28px] font-bold tracking-[-0.02em]">Settings</h1>
 
     {#if loadError}
       <p class="text-sm text-red-600" role="alert">{loadError}</p>
     {:else if loading}
       <p class="text-sm text-gray-500">Loading…</p>
     {:else if profile}
-      <section class="space-y-4">
-        <h2 class="text-lg font-semibold">Profile</h2>
+      <!-- Grouped into cards, per the mockup: it separates Profile, default
+           visibility, notifications and the destructive action instead of
+           running them together as one column of form controls. -->
+      <section class="rounded-[14px] border border-line bg-surface p-[18px] space-y-4">
+        <h2 class="m-0 text-[15px] font-semibold">Profile</h2>
 
-        <div>
-          <label for="display-name" class="block text-sm font-medium text-gray-700 mb-1"
-            >Display name</label
-          >
-          <input
-            id="display-name"
-            type="text"
-            bind:value={displayName}
-            placeholder={profile.username}
-            class="w-full max-w-sm px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
-          />
+        <div class="flex items-center gap-3.5">
+          <img src={avatarUrl} alt="" class="h-[54px] w-[54px] shrink-0 rounded-full" />
+          <div class="min-w-0">
+            <div class="truncate text-[15px] font-semibold">{profile.username}</div>
+            <div class="truncate font-mono text-[12px] text-muted">synced from Discord</div>
+          </div>
         </div>
 
-        <div>
-          <label for="timezone" class="block text-sm font-medium text-gray-700 mb-1">Timezone</label
-          >
-          <input
-            id="timezone"
-            type="text"
-            bind:value={timezone}
-            placeholder="UTC"
-            class="w-full max-w-sm px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
-          />
-        </div>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label for="display-name" class="mb-1.5 block text-[13px] font-medium text-body"
+              >Display name</label
+            >
+            <input
+              id="display-name"
+              type="text"
+              bind:value={displayName}
+              placeholder={profile.username}
+              class="w-full rounded-[9px] border border-line bg-surface px-3 py-[9px] text-[13px] outline-none focus:border-primary"
+            />
+          </div>
 
-        <div>
-          <label for="default-visibility" class="block text-sm font-medium text-gray-700 mb-1">
-            Default event visibility
-          </label>
-          <select
-            id="default-visibility"
-            bind:value={defaultVisibility}
-            class="w-full max-w-sm px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-discord-blurple focus:border-transparent"
-          >
-            <option value="private">Private</option>
-            <option value="friends">Friends</option>
-            <option value="public">Public</option>
-          </select>
+          <div>
+            <label for="timezone" class="mb-1.5 block text-[13px] font-medium text-body"
+              >Timezone</label
+            >
+            <input
+              id="timezone"
+              type="text"
+              bind:value={timezone}
+              placeholder="UTC"
+              class="w-full rounded-[9px] border border-line bg-surface px-3 py-[9px] text-[13px] outline-none focus:border-primary"
+            />
+          </div>
         </div>
+      </section>
 
+      <!-- Segmented options rather than a <select>, per the mockup - each
+           choice can then carry the one line that says what it actually
+           means, which a dropdown has nowhere to put. (It also sidesteps
+           happy-dom's inability to match <select> options by value, the trap
+           noted in CLAUDE.md.) -->
+      <section class="rounded-[14px] border border-line bg-surface p-[18px] space-y-3.5">
+        <div>
+          <h2 class="m-0 text-[15px] font-semibold">Default event visibility</h2>
+          <p class="m-0 mt-1 text-[13px] text-muted">Applied to every event you create.</p>
+        </div>
+        <div class="grid gap-2.5 sm:grid-cols-3" role="group" aria-label="Default event visibility">
+          {#each VISIBILITY_CHOICES as choice (choice.value)}
+            <button
+              type="button"
+              aria-pressed={defaultVisibility === choice.value}
+              on:click={() => (defaultVisibility = choice.value)}
+              class="rounded-[11px] border p-3 text-left transition-colors {defaultVisibility ===
+              choice.value
+                ? 'border-primary bg-tint'
+                : 'border-line bg-surface hover:bg-subtle'}"
+            >
+              <span class="block text-[14px] font-semibold">{choice.label}</span>
+              <span class="block text-[12px] text-muted">{choice.hint}</span>
+            </button>
+          {/each}
+        </div>
+      </section>
+
+      <section class="rounded-[14px] border border-line bg-surface p-[18px] space-y-3.5">
         <!-- Deliberately outside the Save button's scope: this is a
              per-device preference kept in localStorage, not a column on
              `users`. Routing it through PATCH /api/auth/me would mean one
@@ -178,7 +232,7 @@
               </button>
             {/each}
           </div>
-          <p class="text-xs text-gray-500 mt-1">
+          <p class="mt-1 text-[12px] text-muted">
             Saved on this device only. “System” follows your OS setting as it changes.
           </p>
         </div>
@@ -201,25 +255,59 @@
         <Icon name="chevron-right" size={16} class="text-muted" />
       </a>
 
-      <section class="space-y-3">
-        <h2 class="text-lg font-semibold">Notifications</h2>
+      <!-- The mockup's notification rows: label over an explanatory line,
+           with the switch on the right and a hairline between rows.
 
-        <label class="flex items-center gap-2 text-sm">
-          <input type="checkbox" bind:checked={notifyEventInvites} />
-          Event invites
+           Each switch is still a real `<input type="checkbox">`, visually
+           hidden and drawn by the sibling span. That keeps the label
+           association, the keyboard behaviour and `checked` exactly as they
+           were - a div with a click handler would have looked the same and
+           broken all three. -->
+      <section class="rounded-[14px] border border-line bg-surface p-[18px]">
+        <h2 class="m-0 mb-1 text-[15px] font-semibold">Notifications</h2>
+
+        <label class="flex items-center gap-4 border-b border-subtle py-3.5">
+          <span class="min-w-0 flex-1">
+            <span class="block text-[14px]">Event invites</span>
+            <span class="block text-[12px] text-muted">When a friend invites you to something</span>
+          </span>
+          <input type="checkbox" bind:checked={notifyEventInvites} class="peer sr-only" />
+          <span
+            class="relative h-[22px] w-[38px] shrink-0 rounded-full bg-line transition-colors peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:absolute after:left-0.5 after:top-0.5 after:h-[18px] after:w-[18px] after:rounded-full after:bg-white after:transition-transform after:content-[''] peer-checked:after:translate-x-4"
+          ></span>
         </label>
-        <label class="flex items-center gap-2 text-sm">
-          <input type="checkbox" bind:checked={notifyRsvpChanges} />
-          RSVP changes
+        <label class="flex items-center gap-4 border-b border-subtle py-3.5">
+          <span class="min-w-0 flex-1">
+            <span class="block text-[14px]">RSVP changes</span>
+            <span class="block text-[12px] text-muted"
+              >When someone answers an event you created</span
+            >
+          </span>
+          <input type="checkbox" bind:checked={notifyRsvpChanges} class="peer sr-only" />
+          <span
+            class="relative h-[22px] w-[38px] shrink-0 rounded-full bg-line transition-colors peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:absolute after:left-0.5 after:top-0.5 after:h-[18px] after:w-[18px] after:rounded-full after:bg-white after:transition-transform after:content-[''] peer-checked:after:translate-x-4"
+          ></span>
         </label>
-        <label class="flex items-center gap-2 text-sm">
-          <input type="checkbox" bind:checked={notifyAnnouncements} />
-          Announcements
+        <label class="flex items-center gap-4 border-b border-subtle py-3.5">
+          <span class="min-w-0 flex-1">
+            <span class="block text-[14px]">Announcements</span>
+            <span class="block text-[12px] text-muted">New posts in the mirrored channel</span>
+          </span>
+          <input type="checkbox" bind:checked={notifyAnnouncements} class="peer sr-only" />
+          <span
+            class="relative h-[22px] w-[38px] shrink-0 rounded-full bg-line transition-colors peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:absolute after:left-0.5 after:top-0.5 after:h-[18px] after:w-[18px] after:rounded-full after:bg-white after:transition-transform after:content-[''] peer-checked:after:translate-x-4"
+          ></span>
         </label>
-        <label class="flex items-center gap-2 text-sm">
-          <input type="checkbox" bind:checked={notifyEventReminders} />
-          Event reminders
-          <span class="text-gray-500">— an hour before an event you're going to</span>
+        <label class="flex items-center gap-4 py-3.5">
+          <span class="min-w-0 flex-1">
+            <span class="block text-[14px]">Event reminders</span>
+            <span class="block text-[12px] text-muted">An hour before an event you're going to</span
+            >
+          </span>
+          <input type="checkbox" bind:checked={notifyEventReminders} class="peer sr-only" />
+          <span
+            class="relative h-[22px] w-[38px] shrink-0 rounded-full bg-line transition-colors peer-checked:bg-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:absolute after:left-0.5 after:top-0.5 after:h-[18px] after:w-[18px] after:rounded-full after:bg-white after:transition-transform after:content-[''] peer-checked:after:translate-x-4"
+          ></span>
         </label>
         <!-- No per-user "Weekly digest" toggle here on purpose. The digest
              is a single message posted to one shared Discord channel
@@ -227,9 +315,9 @@
              per-user preference to switch off - a checkbox here could only
              ever look functional. The real switch is the guild-level one
              on /server. -->
-        <p class="text-sm text-gray-500">
+        <p class="m-0 pt-3 text-[12px] text-muted">
           The weekly digest is posted once to a shared Discord channel, so it's configured for the
-          whole server on the <a href="/server" class="text-discord-blurple hover:underline"
+          whole server on the <a href="/server" class="text-primary hover:underline"
             >Discord server</a
           > page rather than per person.
         </p>
@@ -245,14 +333,14 @@
       <button
         on:click={handleSave}
         disabled={saving}
-        class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold disabled:opacity-50"
+        class="rounded-[9px] bg-primary px-3.5 py-[9px] text-[13px] font-semibold text-white hover:bg-primary-active disabled:opacity-50"
       >
         {saving ? 'Saving…' : 'Save changes'}
       </button>
 
-      <section class="space-y-3 border border-red-200 rounded-lg p-4">
-        <h2 class="text-lg font-semibold text-red-700">Delete account</h2>
-        <p class="text-sm text-gray-600">
+      <section class="space-y-3 rounded-[14px] border border-red-300 bg-surface p-[18px]">
+        <h2 class="m-0 text-[15px] font-semibold text-red-600">Delete account</h2>
+        <p class="m-0 text-[13px] text-muted">
           This permanently deletes your account and everything tied to it (events you created,
           RSVPs, friend links). This can't be undone.
         </p>
@@ -271,7 +359,7 @@
         <button
           on:click={handleDelete}
           disabled={deleting || confirmUsername !== profile.username}
-          class="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50"
+          class="rounded-[9px] bg-red-600 px-3.5 py-[9px] text-[13px] font-semibold text-white disabled:opacity-50"
         >
           {deleting ? 'Deleting…' : 'Delete my account'}
         </button>

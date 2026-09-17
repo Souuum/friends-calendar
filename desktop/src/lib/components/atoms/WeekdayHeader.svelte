@@ -14,10 +14,13 @@
   $: abbreviated = weekdays.map((day) => day.slice(0, 3));
 </script>
 
-<div class="grid grid-cols-7 mb-2">
+<!-- 12px/600 muted with 4px of vertical padding, and 6px under the row -
+     the mockup's values. This was `text-sm` (14px) at `py-3`, which made the
+     weekday strip heavier than the day numbers under it. -->
+<div class="mb-1.5 grid grid-cols-7">
   {#each weekdays as day, i}
-    <div class="text-center py-3">
-      <span class="text-sm font-medium text-gray-600">
+    <div class="py-1 text-center">
+      <span class="text-[12px] font-semibold text-muted">
         {#if short}
           {abbreviated[i]}
         {:else}

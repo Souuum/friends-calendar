@@ -127,7 +127,10 @@ for (const modal of MODALS) {
  * kind of thing only a real browser can check.
  */
 test.describe('event peek sheet', () => {
-  const sheet = (page: Page) => page.getByRole('complementary');
+  // By testid, not by role: the sidebar is an <aside> too, and it's visible
+  // from md: up - so `getByRole('complementary')` matches two elements at
+  // tablet width. Same trap the sidebar's own testid exists for.
+  const sheet = (page: Page) => page.getByTestId('event-peek');
 
   async function openSheet(page: Page) {
     await page.goto('/');
@@ -141,7 +144,7 @@ test.describe('event peek sheet', () => {
   }
 
   test('tapping outside dismisses it on mobile', async ({ page }, testInfo) => {
-    test.skip(testInfo.project.name !== 'mobile-402', 'a persistent column from md: (768px) up');
+    test.skip(testInfo.project.name === 'desktop-1280', 'a persistent column from lg: (1024px) up');
     await openSheet(page);
 
     // Well above the sheet, over the calendar grid.
@@ -151,7 +154,7 @@ test.describe('event peek sheet', () => {
   });
 
   test('the close control is reachable and big enough', async ({ page }, testInfo) => {
-    test.skip(testInfo.project.name !== 'mobile-402', 'no close control on the column');
+    test.skip(testInfo.project.name === 'desktop-1280', 'no close control on the column');
     await openSheet(page);
 
     const close = sheet(page).getByRole('button', { name: 'Close' });
@@ -165,7 +168,7 @@ test.describe('event peek sheet', () => {
   });
 
   test('the back gesture dismisses it without leaving the page', async ({ page }, testInfo) => {
-    test.skip(testInfo.project.name !== 'mobile-402', 'a persistent column from md: (768px) up');
+    test.skip(testInfo.project.name === 'desktop-1280', 'a persistent column from lg: (1024px) up');
     await page.goto('/settings');
     await openSheet(page);
 
@@ -181,13 +184,13 @@ test.describe('event peek sheet', () => {
   test('the desktop column is not dismissed by clicking the calendar', async ({
     page
   }, testInfo) => {
-    test.skip(testInfo.project.name === 'mobile-402', 'sheet behaviour is tested above');
+    test.skip(testInfo.project.name !== 'desktop-1280', 'sheet behaviour is tested above');
     await page.goto('/');
     await page.getByText('Soirée jeux de société chez Hugo', { exact: false }).first().click();
-    await expect(page.getByRole('complementary').getByText('Cost per person')).toBeVisible();
+    await expect(page.getByTestId('event-peek').getByText('Cost per person')).toBeVisible();
 
     await page.mouse.click(400, 200);
 
-    await expect(page.getByRole('complementary').getByText('Cost per person')).toBeVisible();
+    await expect(page.getByTestId('event-peek').getByText('Cost per person')).toBeVisible();
   });
 });

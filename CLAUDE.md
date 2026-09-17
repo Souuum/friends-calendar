@@ -980,6 +980,101 @@ speculatively.
   genuine product-scope decisions baked into their skill files already, not
   open questions left for whoever runs them next.
 
+## Matching the desktop mockup, screen by screen (2026-09-17)
+
+Driven by a real side-by-side: the `.dc.html` mockup was rendered in
+Chromium (it needs React on `window` before `support.js`, and its screens
+are switched by the nav buttons in its own chrome) and every screen
+captured at 1440x1000, then the same routes captured from `yarn preview`
+with `e2e/fixtures.ts` stubbing the API. Comparing pictures, not reading
+CSS, is what surfaced most of the below - several of these had been wrong
+since the screens were built.
+
+**The shell** (`Frame`, `ViewButton`, `Header`) now follows the mockup's own
+values: a 216px rail on `surface` with a right hairline, a mono "Navigate"
+label, the signed-in user pinned to the foot of the rail, and a header that
+names the screen you're on.
+
+- ⚠️ **Three routes were missing from the rail entirely** - Add friends,
+  Discord server and Settings were reachable only from inside another page.
+- The mockup's **"New event" row is deliberately not reproduced**: here that
+  is a modal owned by the calendar, not a route, so the row could only
+  navigate to the calendar without opening anything.
+- ⚠️ **The rail uses dots, not icons.** That is the mockup's own design, and
+  it applies *only* to the desktop rail - `MobileTabBar.dc.html` uses icons,
+  so `BottomTabBar` keeps them. If the icons are wanted back, that's a
+  deliberate departure from the mockup, not a regression.
+- **One content container for every screen** (1080px, 26/24/60 padding),
+  where each page previously carried its own `max-w-*` and padding and no two
+  agreed. Pages keep a narrower `max-w-2xl` only where the content is a feed.
+- ⚠️ **`md:h-screen` + a scrolling content column.** Without it the rail
+  stretches to the height of the *page*, so its footer sits below the fold on
+  any long screen. Below `md:` the page scrolls normally.
+- The header handle was `text-xl`, making it the largest thing on every
+  screen - louder than the page title. It's the mockup's 14px/600 now.
+
+**Calendar.** Event chips are the mockup's 3px status rail + title +
+headcount, not filled tint pills - the filled version made every event read
+as "going" regardless of status. Cells carry the mockup's 126px minimum and
+its two dim levels (0.45 outside the month, 0.72 in the past, which were one
+level before), day numbers sit in a fixed 25px box so they line up whether
+or not today's circle is drawn, and the grid gained the rounded outer border
+it never had.
+
+⚠️ **`STATUS` now lives in `lib/utils/eventStatus.ts`.** It was inlined in
+`EventPeekPanel` and needed again by the chip, which is exactly how two
+components end up disagreeing about what "maybe" looks like.
+
+⚠️ **The peek panel docks at `lg:`, not `md:`.** At 768 the 216px rail plus
+its 296px column left ~192px for seven day cells - 27px each - and every
+chip title truncated to **zero width**. Found because a modal-dismiss test
+started timing out on a zero-width click target, not by looking. Below
+`lg:` it is the sheet, which means tablet now gets sheet behaviour and the
+dismissal tests are split on `desktop-1280` rather than `mobile-402`.
+
+⚠️ **`EventPeekPanel` has `data-testid="event-peek"`.** The sidebar is an
+`<aside>` too and is visible from `md:` up, so `getByRole('complementary')`
+matched two elements at tablet width. Same trap the sidebar's own testid
+already existed for.
+
+**Friends.** Cards are the mockup's 250px auto-fill grid with a 42px avatar
+carrying a presence dot, a mono sub-line, and a divider above the footer
+row. ⚠️ The "Free now" pill was **green**, which the mockup's palette has
+nowhere - "available" is the same affirmative as "Going" and takes
+tint/accent. The dot means *free right now*, the only presence this app
+actually knows; it is not Discord's online status.
+
+**Settings** was the furthest off: one narrow column of bare form controls
+against the mockup's cards. Now grouped into Profile / visibility /
+appearance / notifications / delete cards, with segmented visibility options
+(each carrying the line that says what it means, which a `<select>` has
+nowhere to put) and real toggle switches.
+
+⚠️ **The switches are still `<input type="checkbox">`**, `sr-only` with a
+sibling span drawn by `peer-checked:`. A div with a click handler would look
+identical and silently drop the label association, the keyboard behaviour
+and `checked` - which every existing test reads.
+
+⚠️ **`after:content-[""]` breaks the Svelte parser**: the double quote closes
+the `class` attribute. Use `after:content-['']`.
+
+**Tokens.** `--color-ink`, `--color-bg` and `--color-subtle` were the last
+mockup `:root` entries with no app equivalent; `body` now paints with the
+mockup's own ground and ink rather than the nearest Tailwind greys.
+⚠️ They needed **dark values too** - adding them light-only turned the whole
+page light in dark mode, which `theme.spec.ts` caught immediately.
+
+⚠️ **`theme.spec.ts` measured `.bg-surface`, which is now the hidden rail.**
+It samples `main .bg-surface` instead. Not `:visible` - that is a Playwright
+locator pseudo-class and the helper resolves its selector with
+`querySelector` in page context.
+
+**Known gaps, left on purpose:** the mockup's friends filter chips (All /
+Free this week / Pending / Recently added) need per-friend availability that
+no endpoint returns; the announcements right rail (Channels / Digest cards)
+would duplicate `/server`, which owns that config; and the "Poll" tag has no
+signal behind it (see the announcements feed note).
+
 ## Motion system (`desktop/src/app.css`)
 
 2026-09-15, same pass as the mockup work above: the mockup's own `<style>`

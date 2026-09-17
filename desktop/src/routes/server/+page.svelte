@@ -76,7 +76,7 @@
 </svelte:head>
 
 <Frame>
-  <div class="max-w-2xl mx-auto py-6 px-3 sm:px-4 space-y-6 md:space-y-8 anim-fade-up">
+  <div class="space-y-4 anim-fade-up">
     <!-- Mobile reaches this page by pushing in from Settings ("Me"), so the
          back affordance points there; on desktop the sidebar is visible and
          either destination is one click away. -->

@@ -226,7 +226,7 @@
     on:view-change={handleViewChange}
   />
 
-  <div class="px-6">
+  <div>
     <div
       class="flex items-center gap-3 flex-wrap bg-surface border border-line rounded-[11px] px-3.5 py-[11px] mb-3"
     >
@@ -277,7 +277,7 @@
     </div>
   </div>
 
-  <div class="flex gap-4 items-start px-6 pb-6">
+  <div class="flex gap-4 items-start">
     <div class="flex-1 min-w-0">
       {#if view === 'month'}
         <MonthView

@@ -54,6 +54,12 @@ body {
   --color-on-invert: #ebebeb;
   /* Pressed/hover state for the primary button. */
   --color-primary-active: #3b1fc4;
+  /* Remaining tokens from the mockup's :root that the app had no equivalent
+     for. `ink` is its strongest text (Tailwind's gray-900 is a different
+     hue), `bg` the page ground behind cards, `subtle` the hover/inset fill. */
+  --color-ink: #171719;
+  --color-bg: #f4f4f7;
+  --color-subtle: #f4f4f7;
   --font-mono: 'JetBrains Mono', monospace;
 }
 
@@ -130,6 +136,14 @@ body {
   --color-muted: oklch(68% 0.014 285);
   --color-body: oklch(80% 0.01 285);
   --color-tint: oklch(28% 0.03 285);
+  /* The page ground and strongest text, dark halves. The mockup's own
+     html[data-theme="dark"] block gives these as #101013 / #f2f2f4 / #232329;
+     they're kept in oklch to sit on the same ramp as everything else here,
+     and because `body` now paints with them the light values leaking into
+     dark mode is a whole-page regression, not a subtle one. */
+  --color-bg: oklch(15% 0.005 285);
+  --color-ink: oklch(96% 0.003 285);
+  --color-subtle: oklch(19% 0.006 285);
   --color-grey: oklch(30% 0.007 285);
   --color-dark-grey: oklch(65% 0.012 285);
 
@@ -190,8 +204,9 @@ body {
    every component and shows through anywhere a container doesn't paint,
    which is most visible while a route is still loading. */
 body {
-  background-color: var(--color-gray-50);
-  color: var(--color-gray-900);
+  /* The mockup's own --bg / --ink rather than the nearest Tailwind greys. */
+  background-color: var(--color-bg);
+  color: var(--color-ink);
 }
 
 /* Motion system, lifted verbatim from the mockup's own <style> block

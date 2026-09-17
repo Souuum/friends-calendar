@@ -63,7 +63,7 @@
 </svelte:head>
 
 <Frame>
-  <div class="max-w-2xl mx-auto py-6 px-3 sm:px-4 space-y-4 anim-fade-up">
+  <div class="max-w-2xl space-y-4 anim-fade-up">
     <div class="flex items-center justify-between">
       <h1 class="text-xl font-semibold m-0">Announcements</h1>
       <button

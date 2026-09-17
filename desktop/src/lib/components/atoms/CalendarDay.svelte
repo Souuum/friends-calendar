@@ -5,27 +5,22 @@
   export let size: 'small' | 'large' = 'large';
 
   $: isLarge = size === 'large';
-  $: isSmall = !isLarge;
 </script>
 
+<!--
+  The mockup's day number: a fixed 25x25 box so numbers line up whether or
+  not today's circle is drawn, 13px, 600 in-month and 400 out. The circle is
+  the accent fill, never an accent *text* colour on no background - that read
+  as a link.
+-->
 <span
-  class="transition-colors"
-  class:text-sm={isSmall}
-  class:text-lg={isLarge}
-  class:font-medium={isSmall}
-  class:mt-1={isLarge}
-  class:text-primary={isToday && isLarge}
-  class:bg-primary={isToday}
-  class:text-white={isToday}
-  class:rounded-full={isToday}
-  class:w-7={isToday && isSmall}
-  class:h-7={isToday && isSmall}
-  class:w-8={isToday && isLarge}
-  class:h-8={isToday && isLarge}
-  class:flex={isToday}
-  class:items-center={isToday}
-  class:justify-center={isToday}
-  class:opacity-60={!isCurrentMonth && isSmall}
+  class="flex shrink-0 items-center justify-center rounded-full
+    {isLarge ? 'h-[25px] w-[25px] text-[13px]' : 'h-[22px] w-[22px] text-[12px]'}
+    {isToday
+    ? 'bg-primary font-bold text-white'
+    : isCurrentMonth
+      ? 'font-semibold text-ink'
+      : 'font-normal text-ink'}"
 >
   {date.getDate()}
 </span>

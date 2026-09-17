@@ -101,9 +101,14 @@ test('cards stay distinguishable from the page behind them', async ({ page }) =>
   await visit(page, '/servers', 'dark');
 
   const pageBg = await luminanceOf(page, 'body', 'background-color');
-  const card = page.locator('.bg-surface').first();
-  await expect(card).toBeVisible();
-  const cardBg = await luminanceOf(page, '.bg-surface', 'background-color');
+  // Scoped to `main`, because the first `.bg-surface` in the document is the
+  // sidebar, which is `hidden` below md - measuring a display:none element
+  // told us nothing about whether a card is distinguishable. (Not
+  // `:visible`: that's a Playwright locator pseudo-class, and `luminanceOf`
+  // resolves its selector with querySelector in page context.)
+  const SURFACE = 'main .bg-surface';
+  await expect(page.locator(SURFACE).first()).toBeVisible();
+  const cardBg = await luminanceOf(page, SURFACE, 'background-color');
 
   expect(
     Math.abs(cardBg - pageBg),

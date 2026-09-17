@@ -31,7 +31,7 @@
 </svelte:head>
 
 <Frame>
-  <div class="max-w-2xl mx-auto py-6 px-3 sm:px-4 space-y-6 anim-fade-up">
+  <div class="max-w-2xl space-y-6 anim-fade-up">
     <div>
       <h1 class="text-2xl font-semibold m-0">Discord servers</h1>
       <p class="text-sm text-gray-500 m-0 mt-1">

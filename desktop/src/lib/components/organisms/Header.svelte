@@ -12,6 +12,8 @@
 
   export let user;
   export let avatarUrl: string;
+  /** The screen you're on, as the mockup's header shows it. */
+  export let title = '';
 
   let show = false;
   let showCreateModal = false;
@@ -46,48 +48,54 @@
   $: username = $user?.username;
 </script>
 
-<header class="bg-surface">
-  <div class="mx-auto px-4 pt-2 sm:px-6 lg:px-8 flex items-center justify-end gap-3">
-    {#if user}
-      <!-- Icon shows what you'd switch TO, which is the prevailing
+<!-- Mockup header: the screen name on the left, actions on the right, on a
+     surface band with a hairline under it. 34px controls at radius 9 are its
+     values. -->
+<header class="border-b border-line bg-surface px-4 py-3 md:px-6">
+  <div class="flex items-center gap-3.5">
+    <h1 class="m-0 text-[15px] font-semibold">{title}</h1>
+    <div class="ml-auto flex items-center gap-2.5">
+      {#if user}
+        <!-- Icon shows what you'd switch TO, which is the prevailing
            convention (moon while light, sun while dark). The aria-label
            says it outright so the icon doesn't have to carry that alone.
            Reads $resolvedTheme, not $theme: on 'system' the stored value
            isn't what's on screen. -->
-      <button
-        on:click={toggleTheme}
-        data-testid="theme-toggle"
-        aria-label={$resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-        title={$resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-        class="w-9 h-9 flex items-center justify-center border border-gray-200 rounded-lg hover:bg-gray-50"
-      >
-        <Icon name={$resolvedTheme === 'dark' ? 'light-mode' : 'dark-mode'} />
-      </button>
+        <button
+          on:click={toggleTheme}
+          data-testid="theme-toggle"
+          aria-label={$resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          title={$resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          class="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] border border-line bg-surface hover:bg-subtle"
+        >
+          <Icon name={$resolvedTheme === 'dark' ? 'light-mode' : 'dark-mode'} />
+        </button>
 
-      <button
-        on:click={goToNotifications}
-        aria-label="Notifications"
-        class="relative w-9 h-9 flex items-center justify-center border border-gray-200 rounded-lg hover:bg-gray-50"
-      >
-        <Icon name="notifications" />
-        {#if $unreadNotificationCount > 0}
-          <span
-            data-testid="unread-dot"
-            class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500"
-          ></span>
-        {/if}
-      </button>
-      <ProfileMenuTrigger {username} {show} avatar={avatarUrl} on:click={toggleMenu} />
-    {/if}
+        <button
+          on:click={goToNotifications}
+          aria-label="Notifications"
+          class="relative flex h-[34px] w-[34px] items-center justify-center rounded-[9px] border border-line bg-surface hover:bg-subtle"
+        >
+          <Icon name="notifications" />
+          {#if $unreadNotificationCount > 0}
+            <span
+              data-testid="unread-dot"
+              class="absolute right-1.5 top-1.5 h-[7px] w-[7px] rounded-full bg-secondary"
+            ></span>
+          {/if}
+        </button>
+        <ProfileMenuTrigger {username} {show} avatar={avatarUrl} on:click={toggleMenu} />
+      {/if}
 
-    {#if show}
-      {console.log('showing profile menu')}
-      <div
-        class="absolute w-48 bg-surface shadow-lg rounded-lg p-2 top-16 z-50"
-        use:clickOutside={() => (show = false)}
-      >
-        <ProfileMenu on:settings={goToSettings} on:logout={handleLogout} />
-      </div>
-    {/if}
+      {#if show}
+        {console.log('showing profile menu')}
+        <div
+          class="absolute w-48 bg-surface shadow-lg rounded-lg p-2 top-16 z-50"
+          use:clickOutside={() => (show = false)}
+        >
+          <ProfileMenu on:settings={goToSettings} on:logout={handleLogout} />
+        </div>
+      {/if}
+    </div>
   </div>
 </header>

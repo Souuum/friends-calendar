@@ -9,7 +9,7 @@
   export let onEventClick: ((event: EventWithParticipants) => void) | undefined = undefined;
 </script>
 
-<div class="space-y-1">
+<div class="flex w-full flex-col gap-0.5">
   {#each events.slice(0, maxVisible) as event}
     <div on:click={() => onEventClick?.(event)} on:keydown role="button" tabindex="0">
       <CalendarEvent {event} {variant} />
@@ -17,6 +17,6 @@
   {/each}
 
   {#if showMore && events.length > maxVisible}
-    <div class="text-xs text-gray-500 px-2">+{events.length - maxVisible} more</div>
+    <span class="pl-[9px] text-[11px] text-muted">+{events.length - maxVisible} more</span>
   {/if}
 </div>
