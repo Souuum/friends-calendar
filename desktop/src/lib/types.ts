@@ -119,6 +119,13 @@ export type AnnouncementTag = 'event' | 'general';
  * ✅ to the message, and adopting recovers those answers instead of asking
  * for them again.
  */
+/** What a nudge reached. */
+export interface NudgeReport {
+  nudged: number;
+  /** The event's Discord thread couldn't be posted to; the in-app half went. */
+  discord_failed: boolean;
+}
+
 /** A channel the bot can post in, as the picker on /server renders it. */
 export interface ChannelInfo {
   id: string;

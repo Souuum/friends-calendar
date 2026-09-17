@@ -1041,10 +1041,40 @@ Run in this order; only the last pair has a real dependency.
      long-pressed.
    - Long-press cancellation is a **browser** test: happy-dom has no
      pointer-movement model, so the threshold is unassertable there.
-3. `.claude/skills/event-nudge-no-answers/SKILL.md` - the last placeholder
-   control in the app. Its genuinely new problem is that it's the first
-   **user-triggered** outbound send, so it needs a DB-level rate limit, not
-   a disabled button.
+3. `.claude/skills/event-nudge-no-answers/SKILL.md` - **done 2026-09-17.**
+   `POST /api/events/:id/nudge` + `services::nudge`, migration **015**
+   (`calendar_events.nudged_at`). This was the last control in the app that
+   existed and did nothing.
+   - ⚠️ **The first user-triggered outbound send in this app.** Everything
+     else is a consequence of creating something or a scheduled job, so this
+     is the first thing that can be used to annoy people. The 24h limit is a
+     **column**, not a disabled button: the button is a suggestion, the
+     endpoint is the surface. A refused nudge does **not** reset the clock.
+   - **Creator-only, enforced in the same query that fetches the event** so
+     there's no check-then-act window - and it answers **404, not 403**,
+     because a 403 confirms the event exists and belongs to somebody else.
+   - ⚠️ **`pending` only.** `maybe` *is* an answer; nudging it turns a
+     considerate feature into pestering. Mutation-tested, along with the
+     creator check.
+   - **Delivered in-app + into the event's own Discord thread**, *not* by
+     DM. A DM is the only thing that reliably reaches someone who doesn't
+     open the app, and also the most annoying thing this app could learn to
+     do - left as a separate decision, deliberately not taken.
+   - Notifications go through `services::notifications::create` with kind
+     `event_invite`, so the preference gate applies for free. Reusing that
+     column is right *here* - a nudge is a second ask about an invitation -
+     unlike `friend_request`, which CLAUDE.md notes must not.
+   - ⚠️ **`nudged_at` is stamped even when the Discord post fails.** The
+     in-app half went out, and letting a failed thread post buy another
+     nudge would defeat the limit.
+   - ⚠️ Clippy caught a `pending_count` service function with **no caller** -
+     the panel already has the participant list on the wire and counts it
+     there. Removed rather than kept "for later": a second source of truth
+     for a number the client can already see.
+   - Migration 015 was applied by hand to a scratch database **seeded with an
+     existing event**, and re-applied to confirm it's a no-op. The
+     `#[sqlx::test]` harness only ever migrates empty databases, so nothing
+     in the suite covers that.
 4. `.claude/skills/availability-best-overlap/SKILL.md` - the mockup's
    "Best overlap this week: Fri 20:00, 7 free", and the create form's
    suggested slot. ⚠️ `services::availability` is **day-granularity on

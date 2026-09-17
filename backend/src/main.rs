@@ -88,6 +88,11 @@ pub(crate) fn build_router(state: AppState) -> Router {
             "/api/events/announcement-preview",
             post(handlers::calendar::preview_announcement),
         )
+        // Creator-only, rate-limited in the DB - see services::nudge.
+        .route(
+            "/api/events/:id/nudge",
+            post(handlers::calendar::nudge_no_answers),
+        )
         .route(
             "/api/events/sync-reactions",
             post(handlers::calendar::sync_reactions),

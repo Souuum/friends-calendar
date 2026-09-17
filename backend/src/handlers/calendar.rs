@@ -373,6 +373,55 @@ pub async fn remove_participant(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Chases the people who never answered.
+///
+/// See `services::nudge` for why this one is rate-limited in the database
+/// rather than in the UI: it is the only endpoint here that lets a person
+/// send something to other people on demand.
+pub async fn nudge_no_answers(
+    claims: Claims,
+    State(state): State<AppState>,
+    Path(event_id): Path<Uuid>,
+) -> Result<Json<crate::services::nudge::NudgeReport>, AppError> {
+    let user = crate::services::auth::get_user_by_discord_id(&state.db, &claims.sub)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+        .ok_or(AppError::Unauthorized)?;
+
+    let outcome = crate::services::nudge::nudge(
+        &state.db,
+        &state.discord_api_base,
+        &state.http_client,
+        state.discord_bot_token.as_deref(),
+        event_id,
+        user.id,
+        chrono::Utc::now(),
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    match outcome {
+        Ok(report) => {
+            tracing::info!(
+                "👋 {} nudged {} no-answer(s) on event {}",
+                user.username,
+                report.nudged,
+                event_id
+            );
+            Ok(Json(report))
+        }
+        // NotFound for "not yours" too: a 403 would confirm the event exists
+        // and belongs to somebody else.
+        Err(crate::services::nudge::NudgeError::NotYours) => Err(AppError::NotFound),
+        Err(crate::services::nudge::NudgeError::TooSoon(next)) => {
+            Err(AppError::ValidationError(format!(
+                "Already nudged recently - you can nudge again after {}",
+                next.format("%H:%M on %e %b")
+            )))
+        }
+    }
+}
+
 /// Records every ✅ already sitting on announcement messages.
 ///
 /// `bot.rs` only sees reactions added while it is connected, so anything
@@ -589,5 +638,103 @@ mod tests {
             },
         );
         assert_eq!(preview, expected);
+    }
+    // --- POST /api/events/:id/nudge --------------------------------------
+
+    #[sqlx::test]
+    async fn nudging_someone_elses_event_is_not_found(db: PgPool) {
+        let creator = seed_user(&db, "creator-discord", "creator").await;
+        let stranger = seed_user(&db, "stranger-discord", "stranger").await;
+        let event: uuid::Uuid = sqlx::query_scalar(
+            r#"
+            INSERT INTO calendar_events (id, creator_id, title, start_time, end_time, created_at, updated_at)
+            VALUES (gen_random_uuid(), $1, 'Theirs', now() + interval '2 days',
+                    now() + interval '2 days 2 hours', now(), now())
+            RETURNING id
+            "#,
+        )
+        .bind(creator.id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+
+        let state = AppState::for_test(db, "http://unused.invalid".to_string());
+        let token = generate_jwt(&stranger.discord_id, &state.jwt_secret).unwrap();
+
+        let response = crate::build_router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/events/{event}/nudge"))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // NotFound, not Forbidden: a 403 confirms the event exists and
+        // belongs to somebody else.
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    // The rate limit is the endpoint's, not the button's - a disabled button
+    // is a suggestion, this is the actual surface.
+    #[sqlx::test]
+    async fn a_second_nudge_over_http_is_refused(db: PgPool) {
+        let creator = seed_user(&db, "creator-discord", "creator").await;
+        let invitee = seed_user(&db, "invitee-discord", "invitee").await;
+        let event: uuid::Uuid = sqlx::query_scalar(
+            r#"
+            INSERT INTO calendar_events (id, creator_id, title, start_time, end_time, created_at, updated_at)
+            VALUES (gen_random_uuid(), $1, 'Mine', now() + interval '2 days',
+                    now() + interval '2 days 2 hours', now(), now())
+            RETURNING id
+            "#,
+        )
+        .bind(creator.id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO event_participants (id, event_id, user_id, status, invited_at)
+             VALUES (gen_random_uuid(), $1, $2, 'pending', now())",
+        )
+        .bind(event)
+        .bind(invitee.id)
+        .execute(&db)
+        .await
+        .unwrap();
+
+        let state = AppState::for_test(db.clone(), "http://unused.invalid".to_string());
+        let token = generate_jwt(&creator.discord_id, &state.jwt_secret).unwrap();
+        let app = crate::build_router(state);
+        let request = || {
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/events/{event}/nudge"))
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap()
+        };
+
+        let first = app.clone().oneshot(request()).await.unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(first.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(report["nudged"], 1);
+
+        let second = app.oneshot(request()).await.unwrap();
+        assert_eq!(second.status(), StatusCode::BAD_REQUEST);
+
+        let notifications: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM notifications WHERE user_id = $1")
+                .bind(invitee.id)
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(notifications, 1);
     }
 }

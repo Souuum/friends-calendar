@@ -10,6 +10,7 @@ pub mod friend_requests;
 pub mod friends;
 pub mod guilds;
 pub mod notifications;
+pub mod nudge;
 pub mod profile;
 pub mod reaction_sync;
 pub mod reminders;

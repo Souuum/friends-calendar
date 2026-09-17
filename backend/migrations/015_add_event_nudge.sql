@@ -1,0 +1,13 @@
+-- "Nudge no-answers": a creator-triggered ping to participants who never
+-- answered. See .claude/skills/event-nudge-no-answers/SKILL.md.
+--
+-- One column, not a child table. Unlike event_reminders there is nothing
+-- per-lead-time to store, and a nudge history nobody reads is not worth a
+-- table - if "who was nudged when" is ever wanted, that is the migration
+-- that adds it.
+--
+-- ⚠️ This is the rate limit. It lives here rather than in the UI because a
+-- disabled button is a suggestion, while POST /api/events/:id/nudge is the
+-- actual surface: this is the first thing in the app a person can fire at
+-- other people on demand.
+ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS nudged_at TIMESTAMPTZ;

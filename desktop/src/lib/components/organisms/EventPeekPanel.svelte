@@ -22,6 +22,42 @@
   let updating = false;
   let error = '';
 
+  let nudging = false;
+  let nudgeMessage = '';
+
+  // Derived from the participants already on the event - no extra request,
+  // and it can't disagree with the list rendered below.
+  $: pendingCount = (event?.participants ?? []).filter((p) => p.status === 'pending').length;
+
+  // Reset when the selection changes, so a message about one event can't
+  // sit above another - the same reason `confirmingDelete` resets below.
+  $: if (event) {
+    void event.id;
+    nudgeMessage = '';
+  }
+
+  async function handleNudge() {
+    if (!event) return;
+    try {
+      nudging = true;
+      error = '';
+      const report = await api.nudgeNoAnswers(event.id);
+      nudgeMessage =
+        report.nudged === 1 ? 'Reminded 1 person.' : `Reminded ${report.nudged} people.`;
+      if (report.discord_failed) {
+        // Said plainly rather than swallowed: the in-app reminders did go
+        // out, so this is a partial success, not a failure.
+        nudgeMessage += " Couldn't post in the Discord thread.";
+      }
+    } catch (err) {
+      // The rate limit comes back as a message naming when the next one is
+      // allowed, so show it rather than a generic failure.
+      error = err instanceof Error ? err.message : 'Could not nudge';
+    } finally {
+      nudging = false;
+    }
+  }
+
   /**
    * Below `lg:` this is a sheet floating over the calendar, and it shipped
    * with **no way to dismiss it at all** - no close control, no backdrop,
@@ -216,10 +252,7 @@
           </div>
         {:else}
           <!-- Creator's own event: "Edit"/"Nudge no-answers" per the mockup,
-           not RSVP buttons. "Nudge no-answers" is still a placeholder -
-           there is no endpoint that pings pending participants, and
-           inventing one (a Discord DM path plus rate-limiting) is its own
-           feature, not a side effect of wiring up Edit. -->
+           not RSVP buttons. -->
           <div class="flex gap-1.5 mb-4">
             <button
               on:click={() => dispatch('edit', event)}
@@ -228,14 +261,27 @@
             >
               Edit
             </button>
+            <!-- Disabled when there is nobody to chase, with the reason on
+                 the button - rather than enabled and silently doing nothing,
+                 which is what it did for the whole time it was a
+                 placeholder. -->
             <button
-              disabled
-              title="Not built yet - there's no endpoint to nudge pending participants"
-              class="flex-1 py-2 rounded-lg text-xs font-semibold border border-line bg-surface text-muted opacity-50 cursor-not-allowed"
+              on:click={handleNudge}
+              disabled={nudging || pendingCount === 0}
+              title={pendingCount === 0
+                ? 'Everyone has answered'
+                : pendingCount === 1
+                  ? "Remind 1 person who hasn't answered"
+                  : `Remind ${pendingCount} people who haven't answered`}
+              class="flex-1 py-2 rounded-lg text-xs font-semibold border border-line bg-surface text-muted hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Nudge no-answers
+              {nudging ? 'Nudging…' : 'Nudge no-answers'}
             </button>
           </div>
+
+          {#if nudgeMessage}
+            <p class="mb-3 text-xs text-primary" role="status">{nudgeMessage}</p>
+          {/if}
 
           <!-- Delete lives here because this panel is the only event detail UI
            in week and day view - the month-view hover tooltip

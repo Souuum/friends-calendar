@@ -15,6 +15,7 @@ import type {
   UpdateBotChannelConfigRequest,
   AdoptionResult,
   ChannelInfo,
+  NudgeReport,
   AnnouncementPostInfo,
   ReplyInfo,
   ServersResponse
@@ -200,6 +201,16 @@ class ApiClient {
    * channels for guilds this app has a row for, so the bot token can't be
    * used as a "read any server" proxy.
    */
+  /**
+   * Chases the participants who never answered.
+   *
+   * Creator-only and rate-limited server-side - the button's disabled state
+   * is a convenience, not the guard.
+   */
+  async nudgeNoAnswers(eventId: string): Promise<NudgeReport> {
+    return this.fetch<NudgeReport>(`/api/events/${eventId}/nudge`, { method: 'POST' });
+  }
+
   async getGuildChannels(guildId: string): Promise<ChannelInfo[]> {
     return this.fetch<ChannelInfo[]>(`/api/guilds/${guildId}/channels`);
   }
