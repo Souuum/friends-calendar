@@ -76,6 +76,12 @@ pub(crate) fn build_router(state: AppState) -> Router {
 
     Router::new()
         .route("/", get(root))
+        // ⚠️ Outside `/api`, and with **no Claims extractor**: a calendar app
+        // is handed a URL and GETs it unattended, so it cannot send an
+        // Authorization header. The token in the path is the authentication.
+        // If this ever ends up behind the JWT middleware it will 401 forever
+        // and the symptom will read as "Google won't subscribe".
+        .route("/calendar/:file", get(handlers::calendar_feed::serve_feed))
         // Auth routes
         .route("/api/auth/discord", get(handlers::auth::discord_login))
         .route("/api/auth/callback", get(handlers::auth::discord_callback))
@@ -184,6 +190,12 @@ pub(crate) fn build_router(state: AppState) -> Router {
             get(handlers::availability::friends_now),
         )
         .route("/api/availability/week", get(handlers::availability::week))
+        // The subscribable .ics feed's link, minted and rotated normally.
+        .route(
+            "/api/calendar/feed",
+            get(handlers::calendar_feed::get_feed_link)
+                .post(handlers::calendar_feed::rotate_feed_link),
+        )
         // When the group could actually meet - the mockup's "Best overlap
         // this week", and the create form's suggested slot.
         .route(

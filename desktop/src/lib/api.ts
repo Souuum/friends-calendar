@@ -434,6 +434,23 @@ class ApiClient {
     return free_friend_ids;
   }
 
+  /**
+   * The subscribable .ics URL for this account, minted on first ask.
+   *
+   * ⚠️ The URL *is* the credential - a calendar app can't send a header -
+   * so treat it as a secret and offer rotation, which is what the POST does.
+   */
+  async getCalendarFeedLink(): Promise<string> {
+    const { url } = await this.fetch<{ url: string }>('/api/calendar/feed');
+    return url;
+  }
+
+  /** Replaces the link, breaking every existing subscription. */
+  async rotateCalendarFeedLink(): Promise<string> {
+    const { url } = await this.fetch<{ url: string }>('/api/calendar/feed', { method: 'POST' });
+    return url;
+  }
+
   async getWeekAvailability(withFriendId: string, weekStart: string): Promise<DayAvailability[]> {
     const query = new URLSearchParams({ with: withFriendId, week_start: weekStart });
     return this.fetch<DayAvailability[]>(`/api/availability/week?${query.toString()}`);

@@ -2,10 +2,18 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import type { User } from '$lib/types';
 
-const { getCurrentUser, updateProfile, deleteAccount } = vi.hoisted(() => ({
+const {
+  getCurrentUser,
+  updateProfile,
+  deleteAccount,
+  getCalendarFeedLink,
+  rotateCalendarFeedLink
+} = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
   updateProfile: vi.fn(),
-  deleteAccount: vi.fn()
+  deleteAccount: vi.fn(),
+  getCalendarFeedLink: vi.fn(),
+  rotateCalendarFeedLink: vi.fn()
 }));
 
 vi.mock('$lib/api', () => ({
@@ -15,7 +23,9 @@ vi.mock('$lib/api', () => ({
     deleteAccount,
     clearToken: vi.fn(),
     getToken: vi.fn(),
-    getUnreadNotificationCount: vi.fn().mockResolvedValue(0)
+    getUnreadNotificationCount: vi.fn().mockResolvedValue(0),
+    getCalendarFeedLink,
+    rotateCalendarFeedLink
   }
 }));
 
@@ -130,5 +140,61 @@ describe('settings page', () => {
     await fireEvent.click(deleteButton);
 
     await waitFor(() => expect(deleteAccount).toHaveBeenCalledWith('me'));
+  });
+  describe('the calendar subscription link', () => {
+    const FEED = 'http://localhost:8080/calendar/abc123.ics';
+
+    async function openSettings() {
+      getCurrentUser.mockResolvedValue(makeUser());
+      render(SettingsPage);
+      await waitFor(() => expect(screen.getByLabelText('Display name')).toBeInTheDocument());
+    }
+
+    // Lazy on purpose: asking for it mints a credential, so nobody who never
+    // opens this row ends up with a live one.
+    it('does not fetch a link until asked', async () => {
+      await openSettings();
+
+      expect(getCalendarFeedLink).not.toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: /Show my calendar link/ })).toBeInTheDocument();
+    });
+
+    it('shows the link and says the URL is the credential', async () => {
+      getCalendarFeedLink.mockResolvedValue(FEED);
+      await openSettings();
+
+      await fireEvent.click(screen.getByRole('button', { name: /Show my calendar link/ }));
+
+      await waitFor(() => expect(screen.getByText(FEED)).toBeInTheDocument());
+      expect(screen.getByText(/treat it like a password/)).toBeInTheDocument();
+      // The support question this heads off.
+      expect(screen.getByText(/can take\s+several hours/)).toBeInTheDocument();
+    });
+
+    // Regenerating breaks every existing subscription, so it asks first.
+    it('confirms before regenerating', async () => {
+      getCalendarFeedLink.mockResolvedValue(FEED);
+      rotateCalendarFeedLink.mockResolvedValue('http://localhost:8080/calendar/new.ics');
+      await openSettings();
+      await fireEvent.click(screen.getByRole('button', { name: /Show my calendar link/ }));
+      await waitFor(() => expect(screen.getByText(FEED)).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+      expect(rotateCalendarFeedLink).not.toHaveBeenCalled();
+
+      await fireEvent.click(screen.getByRole('button', { name: /Yes, break existing/ }));
+
+      await waitFor(() => expect(rotateCalendarFeedLink).toHaveBeenCalled());
+      expect(await screen.findByText(/calendar\/new\.ics/)).toBeInTheDocument();
+    });
+
+    it('reports a failure instead of showing nothing', async () => {
+      getCalendarFeedLink.mockRejectedValue(new Error('nope'));
+      await openSettings();
+
+      await fireEvent.click(screen.getByRole('button', { name: /Show my calendar link/ }));
+
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('nope'));
+    });
   });
 });

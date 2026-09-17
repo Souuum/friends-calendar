@@ -45,6 +45,43 @@
   let notifyEventReminders = true;
   let notifyDiscordDm = true;
 
+  // The .ics subscription link. Loaded lazily - asking for it mints a
+  // credential, so nobody who never opens this row gets one.
+  let feedUrl = '';
+  let feedError = '';
+  let copied = false;
+  let confirmingRotate = false;
+
+  async function loadFeedUrl() {
+    try {
+      feedError = '';
+      feedUrl = await api.getCalendarFeedLink();
+    } catch (err) {
+      feedError = err instanceof Error ? err.message : 'Could not get your calendar link';
+    }
+  }
+
+  async function rotateFeedUrl() {
+    try {
+      feedError = '';
+      feedUrl = await api.rotateCalendarFeedLink();
+      confirmingRotate = false;
+    } catch (err) {
+      feedError = err instanceof Error ? err.message : 'Could not regenerate the link';
+    }
+  }
+
+  async function copyFeedUrl() {
+    try {
+      await navigator.clipboard.writeText(feedUrl);
+      copied = true;
+      setTimeout(() => (copied = false), 2000);
+    } catch {
+      // Clipboard access is refused in some browsers and contexts; the URL
+      // is on screen and selectable either way.
+    }
+  }
+
   let saving = false;
   let saveError = '';
   let saved = false;
@@ -239,6 +276,75 @@
             Saved on this device only. “System” follows your OS setting as it changes.
           </p>
         </div>
+      </section>
+
+      <section class="rounded-[14px] border border-line bg-surface p-[18px] space-y-3">
+        <div>
+          <h2 class="m-0 text-[15px] font-semibold">Subscribe in your calendar app</h2>
+          <p class="m-0 mt-1 text-[13px] text-muted">
+            A read-only feed of your events for Google Calendar, Apple Calendar or Outlook.
+          </p>
+        </div>
+
+        {#if feedError}
+          <p class="m-0 text-[13px] text-red-600" role="alert">{feedError}</p>
+        {/if}
+
+        {#if !feedUrl}
+          <button
+            type="button"
+            on:click={loadFeedUrl}
+            class="rounded-[9px] border border-line bg-surface px-3.5 py-[9px] text-[13px] font-semibold hover:bg-subtle"
+          >
+            Show my calendar link
+          </button>
+        {:else}
+          <!-- ⚠️ The URL is the credential: anyone with it can read your
+               events. Said plainly rather than left for people to infer. -->
+          <p
+            class="m-0 break-all rounded-[9px] border border-line bg-subtle px-3 py-2.5 font-mono text-[12px]"
+          >
+            {feedUrl}
+          </p>
+          <div class="flex flex-wrap gap-2">
+            <button
+              type="button"
+              on:click={copyFeedUrl}
+              class="rounded-[9px] bg-primary px-3.5 py-[9px] text-[13px] font-semibold text-white hover:bg-primary-active"
+            >
+              {copied ? 'Copied' : 'Copy link'}
+            </button>
+            {#if confirmingRotate}
+              <button
+                type="button"
+                on:click={rotateFeedUrl}
+                class="rounded-[9px] border border-red-300 bg-surface px-3.5 py-[9px] text-[13px] font-semibold text-red-600 hover:bg-subtle"
+              >
+                Yes, break existing subscriptions
+              </button>
+              <button
+                type="button"
+                on:click={() => (confirmingRotate = false)}
+                class="rounded-[9px] border border-line bg-surface px-3.5 py-[9px] text-[13px] font-semibold hover:bg-subtle"
+              >
+                Cancel
+              </button>
+            {:else}
+              <button
+                type="button"
+                on:click={() => (confirmingRotate = true)}
+                class="rounded-[9px] border border-line bg-surface px-3.5 py-[9px] text-[13px] font-semibold hover:bg-subtle"
+              >
+                Regenerate
+              </button>
+            {/if}
+          </div>
+          <p class="m-0 text-[12px] text-muted">
+            Anyone with this link can read your events — treat it like a password, and regenerate it
+            if it gets out. ⚠️ Calendar apps refresh on their own schedule; Google's can take
+            several hours, so a new event won't appear instantly.
+          </p>
+        {/if}
       </section>
 
       <!-- The sidebar that links to /server is hidden below md:, and the

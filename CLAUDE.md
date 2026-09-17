@@ -980,6 +980,55 @@ speculatively.
   genuine product-scope decisions baked into their skill files already, not
   open questions left for whoever runs them next.
 
+## Calendar sync with Google / Apple / Outlook (2026-09-17)
+
+Split in two, because the two directions have almost nothing in common.
+
+**Export - done.** `GET /calendar/{token}.ics` +
+`services::calendar_feed`, migration **017**. One RFC 5545 document that
+Google, Apple and Outlook all understand, so a single implementation covers
+every provider.
+
+- ⚠️ **The only route in the app that authenticates on the URL itself.** A
+  calendar app is handed a link and GETs it unattended; it cannot send an
+  `Authorization` header. So the route lives **outside `/api`** and must
+  never end up behind the JWT middleware - it would 401 forever and the
+  symptom reads as "Google won't subscribe". There's a test asserting it
+  works with no header at all.
+- ⚠️ **The token is a bearer credential people paste around.** Not the JWT:
+  that expires (the feed would silently die a week later) and it is a
+  *login* credential. 32 random bytes, hex, rotatable from `/settings` -
+  rotation is the entire revocation story, since the alternative for a
+  leaked link would be deleting the account. An unknown token 404s rather
+  than 401s, so the response can't be used to probe which exist.
+- The column is **nullable with a partial unique index**
+  (`WHERE calendar_feed_token IS NOT NULL`) - a plain UNIQUE would let one
+  NULL through and collide on the second. Verified by hand against a
+  database with two token-less users.
+- ⚠️ **iCalendar fails silently when malformed** - the app subscribes and
+  shows nothing. Hence the fussiness, all of it mutation-tested: CRLF line
+  endings everywhere, folding at 75 **octets** (not chars - splitting
+  mid-UTF-8 breaks parsers, and titles here are routinely French), escaping
+  `\ ; ,` and newlines in TEXT, and a **stable `UID`** (an unstable one
+  makes every refresh look like delete-and-recreate, which on a phone is a
+  notification storm).
+- Visibility reuses `list_user_events` rather than a second rule. That
+  mismatch has bitten twice.
+- The settings card says outright that the URL is the credential **and**
+  that providers refresh on their own schedule - Google's can take hours.
+  Without that line the first bug report is "it's not updating".
+
+**Import - not built.** `.claude/skills/calendar-import-availability/SKILL.md`.
+The short version: `fetch_busy_intervals` is the single place availability
+data is built, and four pure consumers take plain `(user_id, start, end)`
+tuples - so an external calendar is *more rows in one function*, and the
+ranking never changes. The decision that makes it shippable is storing
+**busy intervals and never event content**; Google's `freeBusy` and Graph's
+`getSchedule` both return exactly that.
+
+⚠️ **Two-way sync is deliberately out of scope** - dedup loops, deletion
+tombstones and conflict resolution, for something nobody asked for.
+
 ## Feature backlog from the mockups - 2026-09-17 (written, not executed)
 
 Derived from a pass over **all 13 mobile screens and all 8 desktop ones**,

@@ -2,6 +2,7 @@ pub mod announcements;
 pub mod auth;
 pub mod availability;
 pub mod calendar;
+pub mod calendar_feed;
 pub mod discord;
 pub mod discord_config;
 pub mod friend_requests;

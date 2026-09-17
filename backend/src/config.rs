@@ -28,6 +28,10 @@ pub struct AppState {
     pub oauth_http_client: reqwest::Client,
     pub jwt_secret: String,
     pub frontend_url: String,
+    /// The API's own public origin. Backs the OAuth redirect and the
+    /// calendar-feed URL - both are fetched by something outside the
+    /// browser, so neither can use the frontend's origin.
+    pub public_api_url: String,
     pub pkce_verifiers: Arc<Mutex<HashMap<String, PkceCodeVerifier>>>,
     // Used by services::friends to sync friend lists via the Discord bot's
     // REST API. Optional: unlike the OAuth vars above, the server still
@@ -113,11 +117,9 @@ impl AppState {
             .ok()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "http://localhost:8080".to_string());
-        let redirect_url = RedirectUrl::new(format!(
-            "{}/api/auth/callback",
-            public_api_url.trim_end_matches('/')
-        ))
-        .expect("PUBLIC_API_URL must be a valid URL, e.g. https://api.example.com");
+        let public_api_url = public_api_url.trim_end_matches('/').to_string();
+        let redirect_url = RedirectUrl::new(format!("{public_api_url}/api/auth/callback"))
+            .expect("PUBLIC_API_URL must be a valid URL, e.g. https://api.example.com");
 
         let oauth_client = BasicClient::new(discord_client_id)
             .set_client_secret(discord_client_secret)
@@ -165,6 +167,7 @@ impl AppState {
             oauth_http_client: build_oauth_http_client(),
             jwt_secret,
             frontend_url,
+            public_api_url,
             pkce_verifiers: Arc::new(Mutex::new(HashMap::new())),
             discord_bot_token,
             discord_guild_id,
@@ -199,6 +202,7 @@ impl AppState {
             oauth_http_client: build_oauth_http_client(),
             jwt_secret: "test-jwt-secret".to_string(),
             frontend_url: "http://localhost:1420".to_string(),
+            public_api_url: "http://localhost:8080".to_string(),
             pkce_verifiers: Arc::new(Mutex::new(HashMap::new())),
             discord_bot_token: Some("test-bot-token".to_string()),
             discord_guild_id: Some("test-guild-id".to_string()),

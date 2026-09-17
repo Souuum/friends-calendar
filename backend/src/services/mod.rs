@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod availability;
 pub mod calendar;
+pub mod calendar_feed;
 pub mod digest;
 pub mod discord_announcement;
 pub mod discord_config;

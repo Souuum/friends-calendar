@@ -5,6 +5,9 @@ edition = "2024"
 
 [dependencies]
 axum = "0.7"
+# CSPRNG for the calendar-feed token. Already in the tree transitively; a
+# direct dependency so the intent is visible where it is used.
+rand = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.4", features = ["util"] } # util = ServiceExt::oneshot, used by functional tests
 tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
