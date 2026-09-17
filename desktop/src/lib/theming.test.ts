@@ -25,7 +25,8 @@ function svelteFiles(dir: string): string[] {
  */
 describe('theme-ability', () => {
   it('no component hard-codes a colour a theme cannot reach', () => {
-    const pattern = /class[^>]*?\b(?:bg|text|border|ring|from|via|to|fill|stroke|divide|outline|shadow)-\[#[0-9a-fA-F]{3,8}\]/;
+    const pattern =
+      /class[^>]*?\b(?:bg|text|border|ring|from|via|to|fill|stroke|divide|outline|shadow)-\[#[0-9a-fA-F]{3,8}\]/;
     const offenders: string[] = [];
 
     for (const file of svelteFiles('src')) {
@@ -36,8 +37,9 @@ describe('theme-ability', () => {
         });
     }
 
-    expect(offenders, `arbitrary colours cannot follow the theme:\n${offenders.join('\n')}`).toEqual(
-      []
-    );
+    expect(
+      offenders,
+      `arbitrary colours cannot follow the theme:\n${offenders.join('\n')}`
+    ).toEqual([]);
   });
 });
