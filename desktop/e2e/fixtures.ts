@@ -152,7 +152,11 @@ const ROUTES: Array<[string, unknown]> = [
   ['/api/notifications/unread-count', { count: 12 }],
   ['/api/availability/friends-now', ['u1', 'u2']],
   ['/api/availability/week', []],
-  ['/api/friend-requests/missing-members', { missing: [] }],
+  // `{ count }`, not `{ missing }` - api.ts destructures `count`, so the
+  // wrong shape left it undefined and the whole "N members aren't on
+  // Friends Calendar yet" banner silently never rendered in any test or
+  // screenshot. A non-zero count is what makes it appear.
+  ['/api/friend-requests/missing-members', { count: 3 }],
   ['/api/friend-requests', []],
   ['/api/announcements/a1/replies', REPLIES],
   ['/api/announcements', ANNOUNCEMENTS],

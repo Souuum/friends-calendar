@@ -133,12 +133,53 @@ body {
   --color-grey: oklch(30% 0.007 285);
   --color-dark-grey: oklch(65% 0.012 285);
 
+  /* ---------------------------------------------------------------------
+     Tint ramps, inverted like the greys.
+
+     Only the greys were inverted at first, so every `bg-red-100`,
+     `bg-indigo-50` and friend stayed light in dark mode while the text on
+     it flipped light - the unread notification row measured **1.01:1**,
+     i.e. its text was the same colour as its background.
+
+     Same rule as the greys: 50<->900, 100<->800, 200<->700, so `bg-x-100`
+     keeps meaning "a faint tint of x" and `text-x-800` keeps meaning "a
+     strong x". Mid-ramp fills (400-600) are left alone: they carry white
+     ink in both themes and inverting them would break that.
+
+     Only the shades actually used are defined. A new one that needs a dark
+     value will fail the contrast audit rather than ship broken.
+     --------------------------------------------------------------------- */
+  --color-red-100: oklch(28% 0.09 25);
+  --color-red-200: oklch(33% 0.10 25);
+  --color-red-700: oklch(80% 0.13 25);
+  --color-red-800: oklch(86% 0.10 25);
+
+  --color-yellow-100: oklch(30% 0.07 75);
+  --color-yellow-800: oklch(88% 0.12 85);
+
+  --color-green-100: oklch(28% 0.07 150);
+  --color-green-700: oklch(80% 0.14 150);
+  --color-green-800: oklch(86% 0.12 150);
+
+  --color-blue-50: oklch(24% 0.05 255);
+  --color-blue-100: oklch(29% 0.07 255);
+  --color-blue-800: oklch(86% 0.09 255);
+
+  --color-indigo-50: oklch(24% 0.05 280);
+
   /* Brand colours stay recognisable but are lifted for contrast: the
      light-mode primary is legible on white and too dark on a dark
      surface. */
-  --color-primary: oklch(62% 0.19 285);
+  /* Primary has the same fill-vs-ink split as white, and the two pull in
+     opposite directions: white ink on a primary *fill* wants it darker,
+     while primary used as *text* on a dark surface wants it lighter. One
+     value cannot satisfy both - measured 3.89:1 for white-on-primary and
+     2.93:1 for primary-on-surface at a single mid value. So the token is
+     the fill, and `.dark .text-primary` below overrides the ink. */
+  --color-primary: oklch(52% 0.23 285);
   --color-primary-hover: oklch(35% 0.05 285 / 0.55);
-  --color-primary-active: oklch(70% 0.19 285);
+  --color-primary-active: oklch(58% 0.23 285);
+  --color-primary-ink: oklch(80% 0.13 285);
   --color-secondary: oklch(60% 0.19 4);
   --color-discord-blurple: oklch(65% 0.18 274);
   --color-red: oklch(65% 0.2 25);
@@ -252,6 +293,17 @@ a,
 }
 button:active {
   transform: scale(0.985);
+}
+
+/* `text-primary` is ink, not a fill. The `--color-primary` token is tuned
+   so white labels on a primary button clear contrast; that same value used
+   as text on a dark surface only reaches 2.93:1. This lifts the text case
+   alone, leaving every `bg-primary` untouched.
+
+   Scoped to `.dark` because light mode has no such conflict: the surface is
+   white there, so the fill colour is already a fine ink colour. */
+.dark .text-primary {
+  color: var(--color-primary-ink);
 }
 
 /* ---------------------------------------------------------------------

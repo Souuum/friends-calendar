@@ -1208,6 +1208,28 @@ writes a new component.
   The tokens added for the ones that existed: `--color-invert` /
   `--color-on-invert` (the featured announcement card, values from the
   mockup's own `--invert`) and `--color-primary-active`.
+- ⚠️ **Every tint ramp is inverted, not just the greys.** Inverting only
+  grey left `bg-red-100`, `bg-indigo-50` and friends light in dark mode
+  while the text on them flipped light: the unread notification row and the
+  "N members aren't on Friends Calendar yet" banner both measured
+  **1.01:1** - text exactly the colour of its background. Mid-ramp fills
+  (400-600) are deliberately left alone: they carry white ink in both
+  themes. Only shades actually used are defined; a new one that needs a
+  dark value fails the contrast audit rather than shipping broken.
+- ⚠️ **`--color-primary` has the same fill-vs-ink split as white.** White
+  ink on a primary *fill* wants the colour darker; primary used as *text*
+  on a dark surface wants it lighter. One value measured 3.89:1 and 2.93:1
+  respectively. The token is the fill; `.dark .text-primary` overrides the
+  ink via `--color-primary-ink`.
+- **`e2e/contrast.spec.ts` audits real WCAG contrast** across every route in
+  both themes, converting colours through a canvas so oklch/oklab/rgb are
+  all handled exactly. It gates at **3:1**, not AA's 4.5: at 4.5 it fails on
+  ~27 light-mode elements using `--color-muted` (#7c7c83) and Discord's
+  blurple (#5865f2), which sit at 3.8-4.4. Those are the mockup's and
+  Discord's own values - a real gap, but a design decision rather than
+  something a test should force. Everything between 3 and AA is printed in
+  the failure message so the gap stays visible.
+
 - **Switching themes cross-fades** (`.theme-transition` in app.css, driven
   by `applyTheme`). The class is added for the duration of a change and
   removed again - never left on. A standing `* { transition }` would animate
