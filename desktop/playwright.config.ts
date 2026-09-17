@@ -26,8 +26,13 @@ export default defineConfig({
   // A `.only` left in a commit would silently shrink the suite to one test.
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
+  // `github` emits check annotations, which land on the run itself rather
+  // than only inside the job log - the log needs admin rights to read, so a
+  // failure here was previously invisible to anyone without them (and to
+  // any tool reading the public API). The annotations carry the test name,
+  // file, line and message.
   reporter: process.env.CI
-    ? [['list'], ['html', { open: 'never', outputFolder: 'e2e/.report' }]]
+    ? [['github'], ['list'], ['html', { open: 'never', outputFolder: 'e2e/.report' }]]
     : 'list',
 
   use: {
