@@ -4,11 +4,22 @@
   import TimeLabel from '$lib/components/atoms/TimeLabel.svelte';
   import TimeSlot from '$lib/components/atoms/TimeSlot.svelte';
   import TimedEvent from '$lib/components/molecules/TimedEvent.svelte';
+  import BusyBand from '$lib/components/molecules/BusyBand.svelte';
   import { anchorToFirstEvent } from '$lib/utils/timeGrid';
+  import { mergedBusyForDay, type DayBusy } from '$lib/utils/busyBlocks';
+  import type { ExternalBusy } from '$lib/types';
 
   export let weekDays: Date[];
   export let eventsForDay: (day: Date) => EventWithParticipants[];
   export let onEventClick: ((event: EventWithParticipants) => void) | undefined = undefined;
+  /** Imported busy blocks across the week. Context only - never events. */
+  export let busy: ExternalBusy[] = [];
+
+  // `busy` is named directly here so the reactive statement actually
+  // depends on it - a closure would leave bands stale after a sync.
+  $: busyForHour = (day: Date, hour: number): DayBusy[] =>
+    mergedBusyForDay(busy, day).filter((block) => block.start.getHours() === hour);
+  $: hasBusy = (day: Date): boolean => mergedBusyForDay(busy, day).length > 0;
 
   const hours = Array.from({ length: 24 }, (_, i) => i);
 
@@ -74,7 +85,7 @@
     {/each}
   </div>
 
-  {#if selectedDayEvents.length === 0}
+  {#if selectedDayEvents.length === 0 && !(selectedDay && hasBusy(selectedDay))}
     <p class="text-center text-sm text-gray-500 py-8 m-0">Nothing on this day.</p>
   {:else}
     <div class="overflow-y-auto max-h-[60vh]" use:anchorToFirstEvent={selectedDayEvents}>
@@ -82,7 +93,11 @@
         {#each hours as hour}
           <div class="flex items-start pt-2"><TimeLabel {hour} compact /></div>
           {@const hourEvents = selectedDay ? getEventsForHour(selectedDay, hour) : []}
-          <TimeSlot {hour} hasEvents={hourEvents.length > 0}>
+          {@const hourBusy = selectedDay ? busyForHour(selectedDay, hour) : []}
+          <TimeSlot {hour} hasEvents={hourEvents.length > 0 || hourBusy.length > 0}>
+            {#each hourBusy as block, i (i)}
+              <BusyBand {block} {hour} />
+            {/each}
             {#each hourEvents as event (event.id)}
               <TimedEvent {event} onClick={() => onEventClick?.(event)} />
             {/each}
@@ -121,7 +136,11 @@
         </div>
         {#each weekDays as day (day.toISOString())}
           {@const hourEvents = getEventsForHour(day, hour)}
-          <TimeSlot {hour} hasEvents={hourEvents.length > 0}>
+          {@const hourBusy = busyForHour(day, hour)}
+          <TimeSlot {hour} hasEvents={hourEvents.length > 0 || hourBusy.length > 0}>
+            {#each hourBusy as block, i (i)}
+              <BusyBand {block} {hour} />
+            {/each}
             {#each hourEvents as event (event.id)}
               <TimedEvent {event} onClick={() => onEventClick?.(event)} />
             {/each}

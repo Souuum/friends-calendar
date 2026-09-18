@@ -15,6 +15,19 @@ const IN_4H = new Date(Date.now() + 4 * 3600_000).toISOString();
 const IN_2D = new Date(Date.now() + 48 * 3600_000).toISOString();
 const IN_2D_LATER = new Date(Date.now() + 50 * 3600_000).toISOString();
 const AGO_1H = new Date(Date.now() - 3600_000).toISOString();
+const IN_3H = new Date(Date.now() + 3 * 3600_000).toISOString();
+const IN_5H = new Date(Date.now() + 5 * 3600_000).toISOString();
+const TONIGHT_LATE = (() => {
+  const d = new Date();
+  d.setHours(22, 0, 0, 0);
+  return d.toISOString();
+})();
+const TOMORROW_EARLY = (() => {
+  const d = new Date();
+  d.setHours(22, 0, 0, 0);
+  d.setHours(d.getHours() + 8);
+  return d.toISOString();
+})();
 
 const ME = {
   id: 'me-id',
@@ -172,8 +185,23 @@ const GUILDS = {
 };
 
 /** Longest path first, so `/api/notifications/unread-count` wins over `/api/notifications`. */
+/**
+ * Imported busy blocks, as a connected work calendar would produce.
+ *
+ * Deliberately includes a pair that overlap (so the merge is exercised) and
+ * one that runs past midnight (so the clipping is). They carry no title -
+ * there is no field for one, which is the point of the feature.
+ */
+const BUSY = [
+  { starts_at: IN_2H, ends_at: IN_4H },
+  { starts_at: IN_3H, ends_at: IN_5H },
+  { starts_at: TONIGHT_LATE, ends_at: TOMORROW_EARLY }
+];
+
 const ROUTES: Array<[string, unknown]> = [
   ['/api/notifications/unread-count', { count: 12 }],
+  ['/api/calendar/external/busy', BUSY],
+  ['/api/calendar/external', []],
   ['/api/availability/friends-now', ['u1', 'u2']],
   ['/api/availability/week', []],
   // `{ count }`, not `{ missing }` - api.ts destructures `count`, so the

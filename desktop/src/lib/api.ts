@@ -16,6 +16,7 @@ import type {
   AdoptionResult,
   ChannelInfo,
   BestSlot,
+  ExternalBusy,
   ExternalCalendar,
   NudgeReport,
   AnnouncementPostInfo,
@@ -452,6 +453,22 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify({ url, label })
     });
+  }
+
+  /**
+   * The caller's own imported busy blocks overlapping a window, for drawing
+   * on the calendar.
+   *
+   * ⚠️ `toISOString()` (`…Z`), never `+00:00` - a bare `+` decodes as a
+   * space in a query string and the request 400s. Same trap the best-slot
+   * endpoint hit.
+   */
+  async getExternalBusy(from: Date, to: Date): Promise<ExternalBusy[]> {
+    const params = new URLSearchParams({
+      from: from.toISOString(),
+      to: to.toISOString()
+    });
+    return this.fetch<ExternalBusy[]>(`/api/calendar/external/busy?${params}`);
   }
 
   /** Disconnects, deleting the cached intervals with it. */

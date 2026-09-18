@@ -9,7 +9,7 @@ use crate::{
     config::AppState,
     error::AppError,
     middleware::auth::Claims,
-    services::external_calendar::{self, ExternalCalendar},
+    services::external_calendar::{self, ExternalBusy, ExternalCalendar},
 };
 
 #[derive(serde::Deserialize)]
@@ -36,6 +36,32 @@ pub async fn list_calendars(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     Ok(Json(calendars))
+}
+
+#[derive(serde::Deserialize)]
+pub struct BusyWindow {
+    pub from: chrono::DateTime<chrono::Utc>,
+    pub to: chrono::DateTime<chrono::Utc>,
+}
+
+/// The caller's imported busy blocks, so the calendar can draw them.
+///
+/// ⚠️ Always the authenticated user - the window is the only thing taken
+/// from the request. A `user_id` parameter here would turn raw calendar
+/// intervals into something readable by friend id, which is a different and
+/// much wider disclosure than the aggregate free/busy availability exposes.
+pub async fn list_busy(
+    claims: Claims,
+    State(state): State<AppState>,
+    axum::extract::Query(window): axum::extract::Query<BusyWindow>,
+) -> Result<Json<Vec<ExternalBusy>>, AppError> {
+    let user = current_user(&state, &claims).await?;
+
+    let busy = external_calendar::busy_for_user(&state.db, user.id, window.from, window.to)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    Ok(Json(busy))
 }
 
 /// Connects a secret `.ics` URL and syncs it immediately.

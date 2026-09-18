@@ -6,6 +6,8 @@
   import { createEventDispatcher } from 'svelte';
   import { calculateTooltipPosition } from '$lib/utils/tooltipUtils';
   import { longPress } from '$lib/actions/longPress';
+  import { mergedBusyForDay } from '$lib/utils/busyBlocks';
+  import type { ExternalBusy } from '$lib/types';
 
   export let monthGrid: Date[];
   export let currentMonth: Date;
@@ -16,6 +18,13 @@
   export let onDayClick: ((day: Date) => void) | undefined = undefined;
   /** Long press (touch) or double-click (mouse): start an event on that day. */
   export let onDayLongPress: ((day: Date) => void) | undefined = undefined;
+  /** Imported busy blocks for the month. Context only - never events. */
+  export let busy: ExternalBusy[] = [];
+
+  // ⚠️ A summary, not one chip per block. A work calendar routinely has
+  // five blocks in a day, and a 126px cell already caps events at three -
+  // drawing each would bury the events the grid is actually for.
+  $: busyCountFor = (day: Date): number => mergedBusyForDay(busy, day).length;
 
   function isSameDay(a: Date | null, b: Date): boolean {
     return (
@@ -125,6 +134,7 @@
   <div class="grid grid-cols-7 gap-px overflow-hidden rounded-xl border border-line bg-line">
     {#each monthGrid as day}
       {@const dayEvents = eventsForDay(day)}
+      {@const busyCount = busyCountFor(day)}
       {@const outside = !isCurrentMonth(day)}
       <!-- These cells carried `role="button"`, `tabindex="0"` and a pointer
            cursor with **no handler at all** - 35 promises per screen that
@@ -159,6 +169,16 @@
           showMore={true}
           {onEventClick}
         />
+
+        {#if busyCount > 0}
+          <!-- Not a button: there is no detail to open. See BusyBand. -->
+          <span
+            class="mt-1 inline-flex w-fit items-center rounded border border-dashed border-line px-1.5 py-px text-[10px] font-medium text-muted"
+            data-testid="busy-summary"
+          >
+            {busyCount} busy
+          </span>
+        {/if}
       </div>
     {/each}
   </div>

@@ -767,7 +767,12 @@ mod tests {
     #[sqlx::test]
     async fn best_slots_avoids_imported_meetings(db: PgPool) {
         let user = seed_user(&db, "busy-d", "busy").await;
-        // Tomorrow 18:00-22:00 UTC, covering every evening candidate slot.
+        // ⚠️ From 12:00, not 18:00: `candidate_local_hours` offers weekend
+        // *afternoons* (12, 14, 16) on top of the weekday evenings, so a
+        // block starting at 18:00 left those three free whenever "tomorrow"
+        // fell on a Saturday or Sunday. The test passed Sunday to Thursday
+        // and failed every Friday and Saturday - a real flake, found when
+        // the date rolled over mid-session rather than by the suite.
         let day = (Utc::now() + Duration::days(1))
             .date_naive()
             .and_hms_opt(0, 0, 0)
@@ -776,7 +781,7 @@ mod tests {
         connect_and_block(
             &db,
             user,
-            day_start + Duration::hours(18),
+            day_start + Duration::hours(12),
             day_start + Duration::hours(23),
         )
         .await;

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import type { BestSlot, EventWithParticipants, FriendInfo } from '$lib/types';
+  import type { BestSlot, EventWithParticipants, ExternalBusy, FriendInfo } from '$lib/types';
   import CalendarHeader from '$lib/components/molecules/CalendarHeader.svelte';
   import MonthView from '$lib/components/organisms/MonthView.svelte';
   import WeekView from '$lib/components/organisms/WeekView.svelte';
@@ -109,6 +109,51 @@
       freeTonightError = err instanceof Error ? err.message : 'Failed to load availability';
     }
   }
+
+  /**
+   * Imported busy blocks for whatever range is on screen.
+   *
+   * ⚠️ Deliberately *not* merged into `events`. They are not events: no
+   * title, no participants, nothing to RSVP to, and they belong to the
+   * viewer alone. Keeping them separate is what stops them reaching the
+   * filter chips, the peek panel or `eventsForDay`.
+   */
+  let busy: ExternalBusy[] = [];
+
+  async function loadBusy(from: Date, to: Date) {
+    try {
+      busy = await api.getExternalBusy(from, to);
+    } catch {
+      // No connected calendar is the common case, and a failure here must
+      // not take the calendar down - the events are the point.
+      busy = [];
+    }
+  }
+
+  // The span actually on screen, which is the month grid's six weeks in
+  // month view and the week or day otherwise. Named directly in the `$:`
+  // line so navigating re-fetches.
+  $: visibleRange = (() => {
+    if (view === 'month' && monthGrid.length > 0) {
+      const from = new Date(monthGrid[0]);
+      const to = new Date(monthGrid[monthGrid.length - 1]);
+      to.setDate(to.getDate() + 1);
+      return { from, to };
+    }
+    if (view === 'week' && weekDays.length > 0) {
+      const from = new Date(weekDays[0]);
+      const to = new Date(weekDays[weekDays.length - 1]);
+      to.setDate(to.getDate() + 1);
+      return { from, to };
+    }
+    const from = new Date(currentDate);
+    from.setHours(0, 0, 0, 0);
+    const to = new Date(from);
+    to.setDate(to.getDate() + (view === 'list' ? 30 : 1));
+    return { from, to };
+  })();
+
+  $: loadBusy(visibleRange.from, visibleRange.to);
 
   onMount(() => {
     loadFreeTonight();
@@ -377,6 +422,7 @@
         <MonthView
           bind:this={monthViewRef}
           {monthGrid}
+          {busy}
           currentMonth={currentDate}
           {eventsForDay}
           {selectedDay}
@@ -451,11 +497,16 @@
           </section>
         {/if}
       {:else if view === 'week'}
-        <WeekView {weekDays} {eventsForDay} onEventClick={selectEvent} />
+        <WeekView {weekDays} {eventsForDay} {busy} onEventClick={selectEvent} />
       {:else if view === 'list'}
         <AgendaView events={filteredEvents} onEventClick={selectEvent} />
       {:else}
-        <DayView events={eventsForDay(currentDate)} onEventClick={selectEvent} />
+        <DayView
+          events={eventsForDay(currentDate)}
+          {busy}
+          day={currentDate}
+          onEventClick={selectEvent}
+        />
       {/if}
     </div>
 

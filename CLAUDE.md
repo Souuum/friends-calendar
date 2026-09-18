@@ -1086,6 +1086,46 @@ sync) is in place for them.
   the server validates the scheme and returns a readable message. Found by a
   failing test that turned out to be right about the code.
 
+**Busy blocks on the calendar - done 2026-09-18.** Reported as "i added my
+google calendar but there should be events appearing on my calendar, yet
+there is nothing". Nothing was broken: `external_busy` was read only by
+`services::availability`, so importing improved free/busy and drew nothing.
+It now also renders, as anonymous bands.
+
+- `GET /api/calendar/external/busy?from=&to=` +
+  `external_calendar::busy_for_user`. ⚠️ **Always the authenticated user** -
+  the window is the only thing taken from the request. A `user_id` parameter
+  would turn raw intervals into something readable by friend id, which is far
+  wider than the *aggregate* free/busy availability exposes. There's a test
+  asserting one user cannot see another's.
+- ⚠️ **Still no titles, and the option was refused deliberately.** The user
+  was offered "anonymous blocks" vs "store titles too" and chose the former,
+  so `ExternalBusy` has only `starts_at`/`ends_at` and `ics_parse` still
+  never reads `SUMMARY`. A test serialises the response and asserts the
+  feed's own SUMMARY/DESCRIPTION/LOCATION strings cannot appear in it.
+- **`lib/utils/busyBlocks.ts`** clips to the local day and merges. Both are
+  load-bearing and mutation-tested: an overnight block positioned from its
+  real start gives a *negative* offset on the following day (it renders above
+  the grid or not at all), and two calendars covering the same hour drew as
+  stacked bands that read as separate commitments.
+- **Not merged into `events`, anywhere.** They have no title, no participants
+  and no RSVP, so the filter chips, `eventsForDay` and the peek panel must
+  never see one. A `Calendar.test.ts` test switches to "Created by me" and
+  asserts the band survives - a busy block has no creator to filter on.
+- `BusyBand` is a **div with `pointer-events-none`**, not a button: there is
+  no detail view for something with no title, and it must not swallow clicks
+  meant for the day cell under it. Tested.
+- **Month view gets a "N busy" summary, not one chip per block** - a work
+  calendar routinely has five in a day and the 126px cell already caps events
+  at three. **The agenda/list view is deliberately left out**: 30 days of
+  anonymous "Busy" rows would bury the events it exists to list.
+- Empty states had to learn about them: a day with a full work calendar and
+  no app events is not "No events today".
+- ⚠️ Fixed a **pre-existing date-dependent flake** found by this work, not
+  caused by it: `best_slots_avoids_imported_meetings` blocked 18:00-23:00,
+  but `candidate_local_hours` offers weekend *afternoons* (12/14/16), so it
+  passed Sunday-Thursday and failed every Friday and Saturday.
+
 ⚠️ **Two-way sync is deliberately out of scope** - dedup loops, deletion
 tombstones and conflict resolution, for something nobody asked for.
 

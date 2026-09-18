@@ -3,21 +3,34 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import Calendar from './Calendar.svelte';
 import type { EventWithParticipants, FriendInfo } from '$lib/types';
 
-const { getFreeFriendsNow, getFriends, getServers, previewAnnouncement, getBestSlots } = vi.hoisted(
-  () => ({
-    getFreeFriendsNow: vi.fn(),
-    getFriends: vi.fn(),
-    getBestSlots: vi.fn(),
-    // CreateEventModal loads these on mount. Stubbed here because opening the
-    // create form is now reachable from the calendar itself (double-click a
-    // day), not only from a test that renders the modal directly.
-    getServers: vi.fn(),
-    previewAnnouncement: vi.fn()
-  })
-);
+const {
+  getFreeFriendsNow,
+  getFriends,
+  getServers,
+  previewAnnouncement,
+  getBestSlots,
+  getExternalBusy
+} = vi.hoisted(() => ({
+  getFreeFriendsNow: vi.fn(),
+  getFriends: vi.fn(),
+  getBestSlots: vi.fn(),
+  getExternalBusy: vi.fn(),
+  // CreateEventModal loads these on mount. Stubbed here because opening the
+  // create form is now reachable from the calendar itself (double-click a
+  // day), not only from a test that renders the modal directly.
+  getServers: vi.fn(),
+  previewAnnouncement: vi.fn()
+}));
 
 vi.mock('$lib/api', () => ({
-  api: { getFreeFriendsNow, getFriends, getServers, previewAnnouncement, getBestSlots }
+  api: {
+    getFreeFriendsNow,
+    getFriends,
+    getServers,
+    previewAnnouncement,
+    getBestSlots,
+    getExternalBusy
+  }
 }));
 
 const alice: FriendInfo = {
@@ -62,6 +75,8 @@ describe('Calendar', () => {
     // call; tests that care about specific friends override it.
     getFriends.mockResolvedValue([]);
     getFreeFriendsNow.mockResolvedValue([]);
+    getExternalBusy.mockReset();
+    getExternalBusy.mockResolvedValue([]);
     getServers.mockResolvedValue({ guilds: [], invite_url: '' });
     getBestSlots.mockResolvedValue([]);
     previewAnnouncement.mockResolvedValue('');
@@ -336,5 +351,84 @@ describe('Calendar', () => {
       await fireEvent.click(screen.getByRole('button', { name: 'Propose a time' }));
       expect(await screen.findByLabelText(/Start Time/i)).toBeInTheDocument();
     });
+  });
+});
+
+/**
+ * Imported busy blocks on the calendar.
+ *
+ * ⚠️ The guarantee that matters is separation: these must never reach the
+ * event paths. They have no title, no participants and no RSVP, so a filter
+ * chip that swept one up, or a peek panel opened on one, would be operating
+ * on something that cannot answer.
+ */
+describe('Calendar busy blocks', () => {
+  beforeEach(() => {
+    getFreeFriendsNow.mockResolvedValue([]);
+    getFriends.mockResolvedValue([]);
+    getBestSlots.mockResolvedValue([]);
+    getExternalBusy.mockReset();
+    getExternalBusy.mockResolvedValue([]);
+  });
+
+  function busyToday(startHour: number, endHour: number) {
+    const start = new Date();
+    start.setHours(startHour, 0, 0, 0);
+    const end = new Date();
+    end.setHours(endHour, 0, 0, 0);
+    return { starts_at: start.toISOString(), ends_at: end.toISOString() };
+  }
+
+  it('asks for the busy blocks covering the view', async () => {
+    render(Calendar, { props: { events: [] } });
+
+    await waitFor(() => expect(getExternalBusy).toHaveBeenCalled());
+    const [from, to] = getExternalBusy.mock.calls[0];
+    expect(from).toBeInstanceOf(Date);
+    expect(to).toBeInstanceOf(Date);
+    expect(to.getTime()).toBeGreaterThan(from.getTime());
+  });
+
+  it('summarises them in the month grid', async () => {
+    getExternalBusy.mockResolvedValue([busyToday(9, 10), busyToday(14, 15)]);
+    render(Calendar, { props: { events: [] } });
+
+    await waitFor(() => expect(screen.getByTestId('busy-summary')).toBeInTheDocument());
+    expect(screen.getByTestId('busy-summary')).toHaveTextContent('2 busy');
+  });
+
+  // ⚠️ Merged, not counted raw: two calendars covering the same hour are one
+  // block of unavailability, and "2 busy" for one overlapping stretch
+  // overstates how committed the day is.
+  it('counts overlapping blocks once', async () => {
+    getExternalBusy.mockResolvedValue([busyToday(9, 11), busyToday(10, 12)]);
+    render(Calendar, { props: { events: [] } });
+
+    await waitFor(() => expect(screen.getByTestId('busy-summary')).toBeInTheDocument());
+    expect(screen.getByTestId('busy-summary')).toHaveTextContent('1 busy');
+  });
+
+  // The whole point of keeping them out of `events`: a filter that narrowed
+  // to your own events must not be able to hide or surface a busy block,
+  // because a block has no creator to filter on.
+  it('keeps them out of the event filters', async () => {
+    getExternalBusy.mockResolvedValue([busyToday(9, 10)]);
+    render(Calendar, { props: { events: [] } });
+
+    await waitFor(() => expect(screen.getByTestId('busy-summary')).toBeInTheDocument());
+    await fireEvent.click(screen.getByRole('button', { name: /Created by me/i }));
+
+    expect(screen.getByTestId('busy-summary')).toBeInTheDocument();
+  });
+
+  // A connected calendar is the exception, not the rule, and a failure here
+  // must not take the calendar down with it.
+  it('renders the calendar anyway when the busy fetch fails', async () => {
+    getExternalBusy.mockRejectedValue(new Error('offline'));
+    render(Calendar, { props: { events: [] } });
+
+    await waitFor(() => expect(getExternalBusy).toHaveBeenCalled());
+    expect(screen.queryByTestId('busy-summary')).not.toBeInTheDocument();
+    expect(screen.getByTestId('view-switcher')).toBeInTheDocument();
   });
 });

@@ -80,6 +80,52 @@ pub async fn list_for_user(db: &PgPool, user_id: Uuid) -> Result<Vec<ExternalCal
     Ok(rows)
 }
 
+/// One block of time the user is committed, with **nothing** about what it
+/// is.
+///
+/// ⚠️ There is deliberately no title field here, and none in `external_busy`
+/// either - see the module docs and `ics_parse`, which never reads `SUMMARY`.
+/// Rendering these on the calendar shows *that* you are busy, never *why*,
+/// and that is the whole privacy position of the import feature. Adding a
+/// label to this struct would mean reversing it in the parser first.
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct ExternalBusy {
+    pub starts_at: DateTime<Utc>,
+    pub ends_at: DateTime<Utc>,
+}
+
+/// The caller's own imported busy blocks overlapping a window.
+///
+/// ⚠️ Scoped to one `user_id` by construction, and the handler passes the
+/// authenticated user rather than anything from the request. Availability
+/// exposes other people's *aggregate* free/busy; raw intervals are the
+/// user's own business and must not become readable by friend id.
+pub async fn busy_for_user(
+    db: &PgPool,
+    user_id: Uuid,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> Result<Vec<ExternalBusy>> {
+    let rows = sqlx::query_as::<_, ExternalBusy>(
+        r#"
+        SELECT b.starts_at, b.ends_at
+        FROM external_busy b
+        JOIN external_calendars c ON c.id = b.calendar_id
+        WHERE c.user_id = $1
+          AND b.starts_at < $3
+          AND b.ends_at > $2
+        ORDER BY b.starts_at
+        "#,
+    )
+    .bind(user_id)
+    .bind(from)
+    .bind(to)
+    .fetch_all(db)
+    .await?;
+
+    Ok(rows)
+}
+
 pub async fn connect_ics(
     db: &PgPool,
     user_id: Uuid,
@@ -265,6 +311,118 @@ mod tests {
             .mount(&server)
             .await;
         server
+    }
+
+    // --- busy_for_user: what the calendar draws --------------------------
+
+    #[sqlx::test]
+    async fn busy_for_user_returns_the_intervals_in_the_window(db: PgPool) {
+        let user = a_user(&db, "alice").await;
+        let server = serving(FEED).await;
+        let url = format!("{}/cal.ics", server.uri());
+        let id = connect_ics(&db, user, &url, Some("Work")).await.unwrap();
+        sync_one(&db, &Client::new(), id, &url, now())
+            .await
+            .unwrap();
+
+        let busy = busy_for_user(
+            &db,
+            user,
+            Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2026, 3, 8, 0, 0, 0).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(busy.len(), 1);
+        assert_eq!(
+            busy[0].starts_at,
+            Utc.with_ymd_and_hms(2026, 3, 2, 9, 0, 0).unwrap()
+        );
+        assert_eq!(
+            busy[0].ends_at,
+            Utc.with_ymd_and_hms(2026, 3, 2, 10, 0, 0).unwrap()
+        );
+    }
+
+    // ⚠️ The point of the whole import design: the feed above has a SUMMARY,
+    // a DESCRIPTION and a LOCATION, and none of them can reach a caller
+    // because none of them were ever stored. This is what lets the calendar
+    // render these blocks without leaking what they are.
+    #[sqlx::test]
+    async fn busy_blocks_carry_no_trace_of_what_the_event_was(db: PgPool) {
+        let user = a_user(&db, "alice").await;
+        let server = serving(FEED).await;
+        let url = format!("{}/cal.ics", server.uri());
+        let id = connect_ics(&db, user, &url, Some("Work")).await.unwrap();
+        sync_one(&db, &Client::new(), id, &url, now())
+            .await
+            .unwrap();
+
+        let busy = busy_for_user(
+            &db,
+            user,
+            Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2026, 3, 8, 0, 0, 0).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let rendered = serde_json::to_string(&busy).unwrap();
+        for leak in ["Oncology", "private", "Hospital"] {
+            assert!(
+                !rendered.contains(leak),
+                "{leak} reached the client: {rendered}"
+            );
+        }
+    }
+
+    // ⚠️ Raw intervals are the user's own. Availability deliberately exposes
+    // only *aggregate* free/busy about other people; if this ever returned
+    // somebody else's rows it would be a far wider disclosure.
+    #[sqlx::test]
+    async fn one_users_busy_blocks_are_invisible_to_another(db: PgPool) {
+        let alice = a_user(&db, "alice").await;
+        let bob = a_user(&db, "bob").await;
+        let server = serving(FEED).await;
+        let url = format!("{}/cal.ics", server.uri());
+        let id = connect_ics(&db, alice, &url, Some("Work")).await.unwrap();
+        sync_one(&db, &Client::new(), id, &url, now())
+            .await
+            .unwrap();
+
+        let theirs = busy_for_user(
+            &db,
+            bob,
+            Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2026, 3, 8, 0, 0, 0).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        assert!(theirs.is_empty(), "bob saw alice's calendar");
+    }
+
+    #[sqlx::test]
+    async fn blocks_outside_the_window_are_left_out(db: PgPool) {
+        let user = a_user(&db, "alice").await;
+        let server = serving(FEED).await;
+        let url = format!("{}/cal.ics", server.uri());
+        let id = connect_ics(&db, user, &url, Some("Work")).await.unwrap();
+        sync_one(&db, &Client::new(), id, &url, now())
+            .await
+            .unwrap();
+
+        let busy = busy_for_user(
+            &db,
+            user,
+            Utc.with_ymd_and_hms(2026, 3, 5, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2026, 3, 8, 0, 0, 0).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        assert!(busy.is_empty());
     }
 
     // --- the URL check is a security boundary ----------------------------

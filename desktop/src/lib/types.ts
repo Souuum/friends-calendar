@@ -140,6 +140,19 @@ export interface ExternalCalendar {
   last_error?: string;
 }
 
+/**
+ * A block of time imported from a connected calendar.
+ *
+ * ⚠️ No title, and there is no way to add one from the client: the server
+ * never reads `SUMMARY` out of the feed and `external_busy` has nowhere to
+ * put it. These render as anonymous "Busy" bands - *that* you are committed,
+ * never *why*.
+ */
+export interface ExternalBusy {
+  starts_at: string;
+  ends_at: string;
+}
+
 /** What a nudge reached. */
 export interface NudgeReport {
   nudged: number;

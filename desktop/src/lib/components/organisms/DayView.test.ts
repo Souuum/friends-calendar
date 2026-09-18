@@ -49,3 +49,73 @@ describe('DayView', () => {
     expect(screen.queryByText(/September 17, 2026/)).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Imported busy blocks.
+ *
+ * ⚠️ These are context, not events. The guarantees worth holding are that
+ * they show up, that they carry no title (there is none to carry), and that
+ * they are not interactive - a block with nothing behind it must not look
+ * like something you can open.
+ */
+describe('DayView busy blocks', () => {
+  function busy(startHour: number, endHour: number) {
+    const start = new Date(DAY);
+    start.setHours(startHour, 0, 0, 0);
+    const end = new Date(DAY);
+    end.setHours(endHour, 0, 0, 0);
+    return { starts_at: start.toISOString(), ends_at: end.toISOString() };
+  }
+
+  it('draws a band for an imported block', () => {
+    render(DayView, { props: { events: [], busy: [busy(9, 10)], day: DAY } });
+
+    expect(screen.getAllByTestId('busy-band')).toHaveLength(1);
+    expect(screen.getByText('Busy')).toBeInTheDocument();
+  });
+
+  // A day with a work calendar full of meetings and no app events is not an
+  // empty day, and saying so would contradict the band right next to it.
+  it('does not claim the day is empty when only busy blocks are on it', () => {
+    render(DayView, { props: { events: [], busy: [busy(9, 10)], day: DAY } });
+
+    expect(screen.queryByText('No events today')).not.toBeInTheDocument();
+  });
+
+  it('still shows the empty state when there is genuinely nothing', () => {
+    render(DayView, { props: { events: [], busy: [], day: DAY } });
+
+    expect(screen.getByText('No events today')).toBeInTheDocument();
+  });
+
+  // ⚠️ Not a button and not clickable: there is no detail view for a block
+  // that has no title, no participants and no RSVP, so looking clickable
+  // would promise something that cannot exist.
+  it('renders busy blocks as non-interactive', () => {
+    render(DayView, { props: { events: [], busy: [busy(9, 10)], day: DAY } });
+
+    const band = screen.getAllByTestId('busy-band')[0];
+    expect(band.tagName).not.toBe('BUTTON');
+    expect(band.closest('button')).toBeNull();
+    expect(band.className).toContain('pointer-events-none');
+  });
+
+  it('ignores blocks belonging to another day', () => {
+    const other = new Date(DAY);
+    other.setDate(other.getDate() + 3);
+    const start = new Date(other);
+    start.setHours(9, 0, 0, 0);
+    const end = new Date(other);
+    end.setHours(10, 0, 0, 0);
+
+    render(DayView, {
+      props: {
+        events: [],
+        busy: [{ starts_at: start.toISOString(), ends_at: end.toISOString() }],
+        day: DAY
+      }
+    });
+
+    expect(screen.queryAllByTestId('busy-band')).toHaveLength(0);
+  });
+});

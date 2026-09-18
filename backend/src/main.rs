@@ -197,6 +197,12 @@ pub(crate) fn build_router(state: AppState) -> Router {
             get(handlers::external_calendar::list_calendars)
                 .post(handlers::external_calendar::connect_calendar),
         )
+        // The same intervals the line above feeds into availability, drawn
+        // on the calendar as anonymous "Busy" bands.
+        .route(
+            "/api/calendar/external/busy",
+            get(handlers::external_calendar::list_busy),
+        )
         .route(
             "/api/calendar/external/:id",
             axum::routing::delete(handlers::external_calendar::disconnect_calendar),
