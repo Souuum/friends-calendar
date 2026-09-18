@@ -60,10 +60,20 @@ pub(crate) fn build_router(state: AppState) -> Router {
     // Build CORS layer - specific origins and headers when using credentials
     let cors = CorsLayer::new()
         .allow_origin(allowed_origins(&state.frontend_url))
+        // ⚠️ Every method the router actually serves has to be listed, or the
+        // browser's preflight fails and the request never arrives. PATCH was
+        // missing, and `PATCH /api/auth/me` is the app's only PATCH route -
+        // so saving anything on /settings (display name, timezone, default
+        // visibility, every notification toggle) failed in the browser with
+        // "Failed to fetch" while the endpoint itself was perfectly fine.
+        // Nothing caught it: functional tests call the router through
+        // `oneshot`, which has no preflight, and the frontend tests mock the
+        // API. `preflight_allows_every_method_the_router_serves` is the guard.
         .allow_methods([
             Method::GET,
             Method::POST,
             Method::PUT,
+            Method::PATCH,
             Method::DELETE,
             Method::OPTIONS,
         ])
@@ -445,6 +455,58 @@ mod tests {
         // rest of the list survives.
         let origins = allowed_origins("https://bad\norigin");
         assert!(origins.contains(&HeaderValue::from_static("tauri://localhost")));
+    }
+
+    /// ⚠️ The preflight test below this one asks for `GET`, which proved the
+    /// *origin* was accepted and said nothing about the *method*. `PATCH` was
+    /// absent from `allow_methods` for the whole life of the settings page,
+    /// and `PATCH /api/auth/me` is the app's only PATCH route - so every save
+    /// on /settings died in the browser as "Failed to fetch" while the
+    /// endpoint answered 200 to anything that skipped the preflight, which is
+    /// every test in this file and every `curl`.
+    ///
+    /// Table-driven over the methods the router actually serves, so adding a
+    /// route with a new method fails here rather than in someone's browser.
+    #[sqlx::test]
+    async fn preflight_allows_every_method_the_router_serves(db: PgPool) {
+        let cases = [
+            ("GET", "/api/events"),
+            ("POST", "/api/events"),
+            ("PUT", "/api/events/00000000-0000-0000-0000-000000000000"),
+            ("PATCH", "/api/auth/me"),
+            ("DELETE", "/api/auth/me"),
+        ];
+
+        for (method, uri) in cases {
+            let mut state = AppState::for_test(db.clone(), "http://unused.invalid".to_string());
+            state.frontend_url = "https://calendar.example.com".to_string();
+            let app = build_router(state);
+
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method("OPTIONS")
+                        .uri(uri)
+                        .header("Origin", "https://calendar.example.com")
+                        .header("Access-Control-Request-Method", method)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            let allowed = response
+                .headers()
+                .get("access-control-allow-methods")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+
+            assert!(
+                allowed.to_uppercase().contains(method),
+                "{method} {uri} is routed but the preflight only allows: {allowed:?}"
+            );
+        }
     }
 
     // The real router, so this can't pass while the deployed server rejects

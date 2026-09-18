@@ -170,6 +170,28 @@ related subtlety: a *single* hard-coded origin makes tower-http echo
 it, which is why the "unrelated origin is not granted" test also failed
 before.
 
+⚠️ **`allow_methods` must list every method the router serves.** `PATCH` was
+missing until 2026-09-18, and `PATCH /api/auth/me` is the app's **only**
+PATCH route - so every save on `/settings` (display name, timezone, default
+visibility, all six notification toggles) failed in a browser with "Failed
+to fetch", while the endpoint itself answered 200 to anything that skipped
+the preflight.
+
+Nothing caught it for the whole life of that page, and the reasons are worth
+keeping: functional tests reach the router through `tower::oneshot`, which
+performs **no preflight**; `curl` doesn't either; the frontend component
+tests mock `$lib/api` entirely; and the one router-level preflight test that
+existed asked for `GET`, so it proved the *origin* was accepted and said
+nothing about the *method*. Only a real browser against a real API on a
+different origin can see this - and both halves have to be real, which is
+why it survived a session that had already tested the select in Chromium
+against mocked routes.
+
+`preflight_allows_every_method_the_router_serves` is the guard: it is
+table-driven over the methods actually routed, so adding a route with a new
+method fails there rather than in someone's browser. Mutation-tested by
+commenting `Method::PATCH` back out.
+
 (This is also why `terraform/templates/nginx.conf` doesn't set its own CORS
 headers — see the Terraform section below for why that combination breaks
 browsers when both layers do it. That file is unused now; see
