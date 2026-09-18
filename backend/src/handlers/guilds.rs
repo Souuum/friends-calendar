@@ -10,7 +10,7 @@ use crate::{
     middleware::auth::Claims,
     services::{
         discord_feed::{self, ChannelInfo},
-        guilds::{self, GuildInfo},
+        guilds::{self, GuildInfo, RegisterError},
     },
 };
 
@@ -60,6 +60,48 @@ pub async fn list_servers(
     );
 
     Ok(Json(ServersResponse { guilds, invite_url }))
+}
+
+#[derive(serde::Deserialize)]
+pub struct RegisterServerRequest {
+    pub discord_guild_id: String,
+}
+
+/// Registers a server by its Discord id, for when the gateway hasn't.
+///
+/// ⚠️ Servers still register themselves - `guild_create` fires on join and
+/// for every server on reconnect - and that remains the normal path. This
+/// exists because that path needs the gateway to be *up*: a deployment whose
+/// bot token isn't configured, or whose gateway has never connected, has the
+/// bot sitting in servers with no rows for them and no way to say so.
+///
+/// It is not a second way to add a server. The bot still has to be invited on
+/// Discord first, and the service refuses anything Discord doesn't confirm -
+/// so this can only ever record something already true, never assert it.
+pub async fn register_server(
+    _claims: Claims,
+    State(state): State<AppState>,
+    Json(req): Json<RegisterServerRequest>,
+) -> Result<Json<GuildInfo>, AppError> {
+    let guild = guilds::register_guild_by_id(
+        &state.db,
+        &state.http_client,
+        &state.discord_api_base,
+        state.discord_bot_token.as_deref(),
+        &req.discord_guild_id,
+    )
+    .await
+    .map_err(|e| match e {
+        // Every one of these is something the person typing can act on, so
+        // the message goes back verbatim rather than as a bare 400.
+        RegisterError::NotASnowflake | RegisterError::BotNotInServer => {
+            AppError::ValidationError(e.to_string())
+        }
+        RegisterError::NoBotToken => AppError::ValidationError(e.to_string()),
+        RegisterError::Unreachable(_) => AppError::ExternalApiError(e.to_string()),
+    })?;
+
+    Ok(Json(guild))
 }
 
 /// The channels the bot could post in, for the picker on `/server`.

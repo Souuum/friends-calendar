@@ -21,7 +21,8 @@ import type {
   NudgeReport,
   AnnouncementPostInfo,
   ReplyInfo,
-  ServersResponse
+  ServersResponse,
+  GuildInfo
 } from './types';
 
 /**
@@ -272,6 +273,22 @@ class ApiClient {
 
   async getServers(): Promise<ServersResponse> {
     return this.fetch<ServersResponse>('/api/guilds');
+  }
+
+  /**
+   * Registers a server by its Discord id.
+   *
+   * ⚠️ Not a second way to add a server - the bot still has to be invited on
+   * Discord first. The server checks with Discord and refuses anything it
+   * can't confirm the bot is in, so this only ever records something already
+   * true. It exists because the usual path (the gateway's `guild_create`)
+   * needs the gateway to be running.
+   */
+  async registerServer(discordGuildId: string): Promise<GuildInfo> {
+    return this.fetch<GuildInfo>('/api/guilds', {
+      method: 'POST',
+      body: JSON.stringify({ discord_guild_id: discordGuildId })
+    });
   }
 
   // Friends

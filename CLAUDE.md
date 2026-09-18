@@ -2315,6 +2315,39 @@ end to end:
   both the page and the picker render the id with a "name appears once the
   bot reconnects" note instead of blank.
 
+**Adding a server by id - done 2026-09-18.** `POST /api/guilds` +
+`guilds::register_guild_by_id`, with an `AddServerForm` on `/servers`.
+
+⚠️ This does **not** replace self-registration, and the note above still
+stands: authorising the bot on Discord is what adds a server, and
+`guild_create` records it on join and on every reconnect. What that path
+needs is the **gateway to be up** - a deployment with no bot token, or whose
+gateway has never connected, has the bot sitting in servers with no rows for
+them and no way to say so. This is the recovery path for exactly that.
+
+- ⚠️ **It asks Discord rather than trusting the id.** A recovery path that
+  writes whatever it is handed is worse than none: a guild the bot is not in
+  cannot be announced to, cannot list channels and has no name, so it would
+  sit in the picker looking real and fail only when somebody published to it.
+  `GET /guilds/{id}` on the bot token settles it, and returns the name and
+  icon as a side effect - so the row is complete immediately instead of blank
+  until the next reconnect. Mutation-tested: dropping the check fails two
+  tests, and a refused server must leave **no row behind**.
+- **404 and 403 are treated identically.** Discord answers 404 for a guild
+  the bot isn't in rather than 403, deliberately, so this cannot be used to
+  probe which ids exist.
+- The id must be all ASCII digits before it is interpolated into the request
+  path - a pasted invite URL or a `../` never reaches Discord.
+- **The name is never taken from the request.** There is no field for one;
+  `upsert_guild_metadata` still gets it from Discord, as the gateway does.
+- ⚠️ **A wiring bug the components' own tests could not see**: the page
+  refreshed by calling `load()`, which sets `loading = true` and swaps the
+  whole branch out - unmounting `AddServerForm` and taking its "Added X"
+  confirmation with it the instant it appeared. Both components were correct
+  in isolation and every one of their tests passed. Found by driving it in a
+  browser; `load(false)` refreshes without the spinner, and
+  `servers/page.test.ts` pins it.
+
 **Deliberately not done: editing publications after creation** (agreed with
 the user). Un-publishing means deleting a Discord message that people may
 have already reacted to — reactions *are* the RSVP record, so deleting one

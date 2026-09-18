@@ -1,10 +1,18 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { render, screen, waitFor, fireEvent } from '@testing-library/svelte';
 
-const { getServers } = vi.hoisted(() => ({ getServers: vi.fn() }));
+const { getServers, registerServer } = vi.hoisted(() => ({
+  getServers: vi.fn(),
+  registerServer: vi.fn()
+}));
 
 vi.mock('$lib/api', () => ({
-  api: { getServers, getUnreadNotificationCount: vi.fn().mockResolvedValue(0), clearToken: vi.fn() }
+  api: {
+    getServers,
+    registerServer,
+    getUnreadNotificationCount: vi.fn().mockResolvedValue(0),
+    clearToken: vi.fn()
+  }
 }));
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
@@ -80,5 +88,75 @@ describe('servers page', () => {
     render(ServersPage);
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('network down'));
+  });
+});
+
+/**
+ * Adding a server by id, from the page rather than the form component.
+ *
+ * ⚠️ The bug this exists for was in the *wiring*, not in either piece: the
+ * page refreshed by calling `load()`, which sets `loading = true` and swaps
+ * the whole branch out - unmounting `AddServerForm` and taking its "Added X"
+ * confirmation with it the instant it appeared. Both components were fine
+ * and all their own tests passed. Found by driving it in a browser.
+ */
+describe('servers page, adding by id', () => {
+  beforeEach(() => {
+    getServers.mockReset();
+    registerServer.mockReset();
+  });
+
+  it('keeps the confirmation visible while the list refreshes', async () => {
+    getServers.mockResolvedValue({ guilds: [], invite_url: 'https://discord.example/invite' });
+    registerServer.mockResolvedValue({
+      id: 'row-1',
+      discord_guild_id: '123456789012345678',
+      name: 'The Hangout',
+      icon_url: undefined
+    });
+
+    render(ServersPage);
+    await waitFor(() => expect(screen.getByLabelText('Discord server ID')).toBeInTheDocument());
+
+    await fireEvent.input(screen.getByLabelText('Discord server ID'), {
+      target: { value: '123456789012345678' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /Add server/i }));
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('The Hangout'));
+    // And the list really was re-read, so the new server shows up.
+    expect(getServers).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows the newly added server in the list', async () => {
+    getServers
+      .mockResolvedValueOnce({ guilds: [], invite_url: 'https://discord.example/invite' })
+      .mockResolvedValueOnce({
+        guilds: [
+          {
+            id: 'row-1',
+            discord_guild_id: '123456789012345678',
+            name: 'The Hangout',
+            icon_url: undefined
+          }
+        ],
+        invite_url: 'https://discord.example/invite'
+      });
+    registerServer.mockResolvedValue({
+      id: 'row-1',
+      discord_guild_id: '123456789012345678',
+      name: 'The Hangout',
+      icon_url: undefined
+    });
+
+    render(ServersPage);
+    await waitFor(() => expect(screen.getByLabelText('Discord server ID')).toBeInTheDocument());
+
+    await fireEvent.input(screen.getByLabelText('Discord server ID'), {
+      target: { value: '123456789012345678' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /Add server/i }));
+
+    await waitFor(() => expect(screen.getByText('The Hangout')).toBeInTheDocument());
   });
 });

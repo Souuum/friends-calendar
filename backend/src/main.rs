@@ -137,7 +137,10 @@ pub(crate) fn build_router(state: AppState) -> Router {
             delete(handlers::calendar::remove_participant),
         )
         // Servers the bot is in
-        .route("/api/guilds", get(handlers::guilds::list_servers))
+        .route(
+            "/api/guilds",
+            get(handlers::guilds::list_servers).post(handlers::guilds::register_server),
+        )
         // Channels the bot can post in, for the /server picker - so nobody
         // has to paste a snowflake.
         .route(
