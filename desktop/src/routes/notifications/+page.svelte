@@ -65,6 +65,14 @@
         notification.event_id,
         status as 'accepted' | 'declined' | 'maybe'
       );
+      // ⚠️ Record the answer on the card too, not just the read flag. Marking
+      // it read only removes the unread dot - the three buttons stayed
+      // exactly as they were, so answering looked like it had done nothing.
+      // The server returns the same status on the next load (`my_status`),
+      // so this only has to bridge until then.
+      notifications = notifications.map((n) =>
+        n.id === notification.id ? { ...n, my_status: status } : n
+      );
       await markRead(notification.id);
     } catch (err) {
       // Scoped to this card. The event may have been deleted, or you may
@@ -85,6 +93,17 @@
   // (older rows, friend requests) has nothing to RSVP to.
   function canRsvp(n: NotificationInfo): boolean {
     return n.kind === 'event_invite' && !!n.event_id;
+  }
+
+  // `pending` is an answer nobody gave, so it reads as still open.
+  const ANSWER_LABEL: Record<string, string> = {
+    accepted: "You're going",
+    maybe: 'You said maybe',
+    declined: "You can't make it"
+  };
+
+  function answerOf(n: NotificationInfo): string | null {
+    return n.my_status && n.my_status !== 'pending' ? ANSWER_LABEL[n.my_status] : null;
   }
 
   function formatTime(iso: string): string {
@@ -167,31 +186,65 @@
               </button>
 
               {#if canRsvp(notification)}
+                {@const answer = answerOf(notification)}
                 <!-- Two flexible buttons plus a narrower "Can't", per the
-                     mockup - three equal-width buttons don't fit at 402px. -->
-                <div class="flex gap-1.5 px-4 pb-3 -mt-1">
+                     mockup - three equal-width buttons don't fit at 402px.
+
+                     ⚠️ All three stay after answering rather than collapsing
+                     to a label: changing your mind is the normal case, and
+                     the selected one carries `aria-pressed` so the answer is
+                     announced rather than only coloured in. -->
+                <div class="flex gap-1.5 px-4 pb-1.5 -mt-1">
                   <button
                     on:click={() => respond(notification, 'accepted')}
                     disabled={rsvpPending.has(notification.id)}
-                    class="flex-1 py-2 rounded-lg text-xs font-semibold bg-primary text-white disabled:opacity-50"
+                    aria-pressed={notification.my_status === 'accepted'}
+                    class="flex-1 py-2 rounded-lg text-xs font-semibold border disabled:opacity-50
+                      {notification.my_status === 'accepted'
+                      ? 'border-primary bg-primary text-white'
+                      : answer
+                        ? 'border-line bg-surface text-muted hover:bg-gray-50'
+                        : 'border-primary bg-primary text-white'}"
                   >
                     Going
                   </button>
                   <button
                     on:click={() => respond(notification, 'maybe')}
                     disabled={rsvpPending.has(notification.id)}
-                    class="flex-1 py-2 rounded-lg text-xs font-semibold border border-line bg-surface text-muted hover:bg-gray-50 disabled:opacity-50"
+                    aria-pressed={notification.my_status === 'maybe'}
+                    class="flex-1 py-2 rounded-lg text-xs font-semibold border disabled:opacity-50
+                      {notification.my_status === 'maybe'
+                      ? 'border-primary bg-tint text-primary'
+                      : 'border-line bg-surface text-muted hover:bg-gray-50'}"
                   >
                     Maybe
                   </button>
                   <button
                     on:click={() => respond(notification, 'declined')}
                     disabled={rsvpPending.has(notification.id)}
-                    class="shrink-0 px-3 py-2 rounded-lg text-xs font-semibold border border-line bg-surface text-muted hover:border-red-600 hover:text-red-600 disabled:opacity-50"
+                    aria-pressed={notification.my_status === 'declined'}
+                    class="shrink-0 px-3 py-2 rounded-lg text-xs font-semibold border disabled:opacity-50
+                      {notification.my_status === 'declined'
+                      ? 'border-red-600 text-red-600 bg-surface'
+                      : 'border-line bg-surface text-muted hover:border-red-600 hover:text-red-600'}"
                   >
                     Can't
                   </button>
                 </div>
+                {#if answer}
+                  <!-- Said in words as well as colour: the report was that
+                       answering "seems bugged", which is what a control that
+                       looks identical afterwards produces. -->
+                  <p
+                    class="px-4 pb-3 m-0 text-xs font-medium text-muted"
+                    data-testid="rsvp-answer"
+                    role="status"
+                  >
+                    {answer} — tap another to change it.
+                  </p>
+                {:else}
+                  <div class="pb-1.5"></div>
+                {/if}
                 {#if rsvpErrors[notification.id]}
                   <p class="text-xs text-red-600 px-4 pb-3 m-0" role="alert">
                     {rsvpErrors[notification.id]}

@@ -934,6 +934,36 @@ speculatively.
   extracted and unit-tested because "today" means the same *local calendar
   day*, not "within 24 hours" (23:00 yesterday is yesterday to a reader).
   Empty groups are omitted so no heading ever renders with nothing under it.
+### ⚠️ An answered invite looked exactly like an open one (2026-09-18)
+
+Reported as "accept or deny event modal seems bugged / notification stays
+even after the response is send". Nothing was failing: the RSVP went through
+and the row was marked read. But `canRsvp` checked only `kind` and
+`event_id`, so the three Going/Maybe/Can't buttons rendered identically
+before and after - the one visible change was the unread dot, and on reload
+even that came back looking unanswered.
+
+- **`NotificationInfo.my_status`** (joined from `event_participants`) is the
+  fix, because the page structurally could not know otherwise. ⚠️ Joined on
+  `n.user_id`, never `n.actor_user_id` - the actor is whoever *sent* the
+  invite, and reading their answer would show you their RSVP on your card.
+  Mutation-tested in both directions.
+- ⚠️ **`read` is not a substitute.** Seen and answered are different facts,
+  and conflating them is what made "mark it read on answering" look like the
+  whole job.
+- ⚠️ **`pending` must read as unanswered**, or every open invite claims you
+  replied. It is a real row, distinct from having no row at all.
+- The buttons **stay** after answering rather than collapsing to a label -
+  changing your mind is the normal case - with `aria-pressed` on the chosen
+  one and a line saying which it is.
+- ⚠️ **`aria-pressed` was not enough, and the attribute tests all passed
+  while it was wrong.** "Going" is the primary call to action and was filled
+  purple unconditionally, so after choosing "Can't" the filled emphasis still
+  sat on Going: the card announced one answer and looked like another. Caught
+  by *reading a screenshot* of the real page, then pinned by a test. The
+  emphasis now follows the answer, and Going is only filled while the invite
+  is still open.
+
 - `.claude/skills/mockup-responsive-create-event/SKILL.md` — **done
   2026-09-16.** `CreateEventModal` gains a two-step wizard below `md:`
   (step 1 when/where, step 2 invite + Discord preview); desktop is

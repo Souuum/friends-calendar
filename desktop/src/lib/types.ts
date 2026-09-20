@@ -201,6 +201,15 @@ export interface NotificationInfo {
   message: string;
   read: boolean;
   created_at: string;
+  /**
+   * How *you* have answered the event this is about, when it is about one.
+   *
+   * ⚠️ Without this the page cannot tell an answered invite from an open
+   * one: it showed three untouched Going/Maybe/Can't buttons either way, so
+   * answering looked like it did nothing and a reload brought them back.
+   * `read` is not a substitute - seen and answered are different facts.
+   */
+  my_status?: Status;
 }
 
 export interface FriendRequestInfo {

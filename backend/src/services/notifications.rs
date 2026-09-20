@@ -1,4 +1,4 @@
-use crate::models::{NotificationInfo, User};
+use crate::models::{NotificationInfo, ParticipationStatus, User};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
@@ -94,15 +94,23 @@ struct NotificationRow {
     message: String,
     read_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
+    my_status: Option<ParticipationStatus>,
 }
 
 pub async fn list(db: &PgPool, user_id: Uuid, limit: i64) -> Result<Vec<NotificationInfo>> {
     let rows = sqlx::query_as::<_, NotificationRow>(
         r#"
         SELECT n.id, n.kind, u.username AS actor_username, u.discord_id AS actor_discord_id,
-               u.avatar AS actor_avatar, n.event_id, n.message, n.read_at, n.created_at
+               u.avatar AS actor_avatar, n.event_id, n.message, n.read_at, n.created_at,
+               ep.status AS my_status
         FROM notifications n
         LEFT JOIN users u ON u.id = n.actor_user_id
+        -- The recipient's own answer, so the page can show an invite it has
+        -- already been acted on as answered rather than as still open.
+        -- ⚠️ Joined on n.user_id, never the actor: whose answer this is
+        -- matters, and the actor is the person who *sent* the invite.
+        LEFT JOIN event_participants ep
+               ON ep.event_id = n.event_id AND ep.user_id = n.user_id
         WHERE n.user_id = $1
         ORDER BY n.created_at DESC
         LIMIT $2
@@ -131,6 +139,7 @@ pub async fn list(db: &PgPool, user_id: Uuid, limit: i64) -> Result<Vec<Notifica
                 message: row.message,
                 read: row.read_at.is_some(),
                 created_at: row.created_at,
+                my_status: row.my_status,
             }
         })
         .collect();
@@ -196,6 +205,165 @@ mod tests {
         .await
         .unwrap();
         id
+    }
+
+    async fn seed_event(db: &PgPool, creator: Uuid) -> Uuid {
+        let id = Uuid::new_v4();
+        sqlx::query(
+            r#"
+            INSERT INTO calendar_events
+                (id, creator_id, title, start_time, end_time, visibility, created_at, updated_at)
+            VALUES ($1, $2, 'Raclette', now() + interval '1 day',
+                    now() + interval '1 day 2 hours', 'friends', now(), now())
+            "#,
+        )
+        .bind(id)
+        .bind(creator)
+        .execute(db)
+        .await
+        .unwrap();
+        id
+    }
+
+    async fn invite(db: &PgPool, event: Uuid, user: Uuid, status: &str) {
+        sqlx::query(
+            r#"
+            INSERT INTO event_participants (id, event_id, user_id, status, invited_at)
+            VALUES (gen_random_uuid(), $1, $2, $3::participation_status, now())
+            ON CONFLICT (event_id, user_id) DO UPDATE SET status = EXCLUDED.status
+            "#,
+        )
+        .bind(event)
+        .bind(user)
+        .bind(status)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+
+    // --- my_status: "seen" and "answered" are different facts -------------
+
+    /// ⚠️ The bug this exists for: the notifications page showed three
+    /// untouched Going/Maybe/Can't buttons whether or not you had already
+    /// answered, because nothing on the notification said. Answering looked
+    /// like it did nothing, and reloading brought the buttons back.
+    #[sqlx::test]
+    async fn an_answered_invite_reports_the_answer(db: PgPool) {
+        let host = seed_user(&db, "host", "host").await;
+        let guest = seed_user(&db, "guest", "guest").await;
+        let event = seed_event(&db, host).await;
+        invite(&db, event, guest, "accepted").await;
+        create(
+            &db,
+            guest,
+            "event_invite",
+            Some(host),
+            Some(event),
+            "invited",
+        )
+        .await
+        .unwrap();
+
+        let listed = list(&db, guest, 20).await.unwrap();
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].my_status, Some(ParticipationStatus::Accepted));
+    }
+
+    #[sqlx::test]
+    async fn an_unanswered_invite_reports_pending_not_nothing(db: PgPool) {
+        let host = seed_user(&db, "host", "host").await;
+        let guest = seed_user(&db, "guest", "guest").await;
+        let event = seed_event(&db, host).await;
+        invite(&db, event, guest, "pending").await;
+        create(
+            &db,
+            guest,
+            "event_invite",
+            Some(host),
+            Some(event),
+            "invited",
+        )
+        .await
+        .unwrap();
+
+        let listed = list(&db, guest, 20).await.unwrap();
+
+        // Pending is a real state and must stay distinguishable from "not on
+        // the list at all" - the buttons should show for one and not the other.
+        assert_eq!(listed[0].my_status, Some(ParticipationStatus::Pending));
+    }
+
+    #[sqlx::test]
+    async fn a_notification_about_no_event_has_no_status(db: PgPool) {
+        let user = seed_user(&db, "u1", "u1").await;
+        create(
+            &db,
+            user,
+            "friend_request",
+            None,
+            None,
+            "wants to be friends",
+        )
+        .await
+        .unwrap();
+
+        let listed = list(&db, user, 20).await.unwrap();
+
+        assert_eq!(listed[0].my_status, None);
+    }
+
+    /// ⚠️ Joined on the *recipient*, never the actor. The actor is whoever
+    /// sent the invite, and reading their answer would show you their RSVP
+    /// on your own card.
+    #[sqlx::test]
+    async fn the_status_is_the_recipients_not_the_senders(db: PgPool) {
+        let host = seed_user(&db, "host", "host").await;
+        let guest = seed_user(&db, "guest", "guest").await;
+        let event = seed_event(&db, host).await;
+        invite(&db, event, host, "accepted").await;
+        invite(&db, event, guest, "declined").await;
+        create(
+            &db,
+            guest,
+            "event_invite",
+            Some(host),
+            Some(event),
+            "invited",
+        )
+        .await
+        .unwrap();
+
+        let listed = list(&db, guest, 20).await.unwrap();
+
+        assert_eq!(
+            listed[0].my_status,
+            Some(ParticipationStatus::Declined),
+            "showed the sender's answer instead of the recipient's"
+        );
+    }
+
+    // Being removed from an event after the notification was written leaves
+    // the row pointing at an event you are no longer on.
+    #[sqlx::test]
+    async fn an_event_you_are_not_on_has_no_status(db: PgPool) {
+        let host = seed_user(&db, "host", "host").await;
+        let guest = seed_user(&db, "guest", "guest").await;
+        let event = seed_event(&db, host).await;
+        create(
+            &db,
+            guest,
+            "event_invite",
+            Some(host),
+            Some(event),
+            "invited",
+        )
+        .await
+        .unwrap();
+
+        let listed = list(&db, guest, 20).await.unwrap();
+
+        assert_eq!(listed[0].my_status, None);
     }
 
     #[sqlx::test]

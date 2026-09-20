@@ -1,3 +1,4 @@
+use crate::models::ParticipationStatus;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use uuid::Uuid;
@@ -17,4 +18,13 @@ pub struct NotificationInfo {
     pub message: String,
     pub read: bool,
     pub created_at: DateTime<Utc>,
+    /// How the *recipient* has answered the event this notification is
+    /// about, if it is about one and they are on its participant list.
+    ///
+    /// ⚠️ Without this the notifications page cannot tell an invite you have
+    /// answered from one you haven't: it showed three untouched
+    /// Going/Maybe/Can't buttons either way, so answering appeared to do
+    /// nothing and the state was gone again on reload. Marking the row read
+    /// is not a substitute - "seen" and "answered" are different facts.
+    pub my_status: Option<ParticipationStatus>,
 }
