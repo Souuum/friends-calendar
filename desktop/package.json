@@ -45,6 +45,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
+    "@storybook/addon-docs": "10.0.7",
     "@storybook/addon-svelte-csf": "^5.0.10",
     "@sveltejs/adapter-static": "^3.0.10",
     "@sveltejs/kit": "^2.9.0",

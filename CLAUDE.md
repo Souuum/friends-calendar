@@ -2580,6 +2580,17 @@ gitignored `storybook-static/`). As of 2026-10-19 every component in
 mirroring the atoms/molecules/organisms/templates split (`root/` for the
 top-level ones). Two shared helpers:
 
+- **Homepage: `src/test/stories/Introduction.mdx`**, sorted first by
+  `storySort` in `.storybook/preview.js`, so `/storybook/` opens on it. Needs
+  `@storybook/addon-docs`, pinned to the same version as `storybook`.
+  - ⚠️ **No Markdown tables.** Storybook's MDX ships without GFM, so a table
+    renders as raw pipes. Use a list, or add `remark-gfm` deliberately.
+  - Colour swatches use `var(--color-*)`, not hex, so they follow `app.css`.
+  - Code blocks render **asynchronously**: the highlighter loads after the
+    page. A screenshot taken straight after load shows them missing.
+  - The smoke test also renders every docs page and fails on a
+    `?path=/story/<id>` link to a story that doesn't exist, so renaming a
+    story can't leave the homepage with a dead link. Mutation-tested.
 - `src/test/stories/fixtures.ts` - typed fixtures, with times relative to
   *now* so the grid views always open on a month/week/day that has events.
 - `src/test/stories/mockApi.ts` - `mockApi({...})` stubs methods on the

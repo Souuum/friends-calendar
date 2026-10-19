@@ -1,0 +1,116 @@
+import { Meta, ColorPalette, ColorItem } from '@storybook/addon-docs/blocks';
+
+<Meta title="Introduction" />
+
+# Friends Calendar
+
+The component library behind [Friends Calendar](https://calendar.capybara-soum.ovh): a
+calendar for a group of friends that lives next to their Discord server. Events get
+announced in a channel, a ✅ reaction counts as an RSVP, and the app works out when
+everyone is free.
+
+Every component in `desktop/src/lib/components` has stories here. They run on fixture data
+with the API stubbed out, so nothing on this site talks to a real backend.
+
+## Where to start
+
+- **The whole calendar:** [Templates / Calendar](?path=/story/components-templates-calendar--with-events) shows the month grid, free-tonight bar, filters and side panel together.
+- **The app shell:** [Templates / Frame](?path=/story/components-templates-frame--calendar-route) is the sidebar, header and page slot every route renders into.
+- **Creating an event:** [CreateEventModal](?path=/story/components-createeventmodal--create) covers create and edit, with the server picker and invite list.
+- **Discord announcements:** [Molecules / AnnouncementPostCard](?path=/story/components-molecules-announcementpostcard--event-announcement) is a mirrored channel post, Discord markdown included.
+
+## How it's organised
+
+The sidebar follows the folders in `src/lib/components`, smallest pieces first:
+
+- **Atoms** are single elements: a button, an avatar, an icon, one event chip.
+- **Molecules** combine a few atoms into one unit: a post card, the calendar header.
+- **Organisms** are whole sections: the month, week, day and agenda views, the event
+  panel, the modals.
+- **Templates** are page-level layouts: the calendar screen, the app frame, the mobile tab bar.
+
+Components at the root of `src/lib/components` (the create-event modal, the login screen)
+sit at the bottom of the list.
+
+## Colours
+
+These swatches read the app's own CSS variables from `src/app.css`, so they can't drift
+from what the app renders. They show the light theme. Dark mode redefines the same
+variables under `.dark` rather than adding `dark:` classes to components.
+
+<ColorPalette>
+  <ColorItem
+    title="Brand"
+    subtitle="Primary actions, the current-day marker, 'Going'"
+    colors={{
+      primary: 'var(--color-primary)',
+      'primary-active': 'var(--color-primary-active)',
+      tint: 'var(--color-tint)',
+      secondary: 'var(--color-secondary)'
+    }}
+  />
+  <ColorItem
+    title="Text"
+    subtitle="Strongest to quietest"
+    colors={{
+      ink: 'var(--color-ink)',
+      body: 'var(--color-body)',
+      muted: 'var(--color-muted)'
+    }}
+  />
+  <ColorItem
+    title="Surfaces"
+    subtitle="Page ground, cards, dividers, the inverted featured card"
+    colors={{
+      bg: 'var(--color-bg)',
+      surface: 'var(--color-surface)',
+      line: 'var(--color-line)',
+      invert: 'var(--color-invert)'
+    }}
+  />
+  <ColorItem
+    title="Status"
+    subtitle="'Maybe' and 'Can't' on event chips and RSVP buttons"
+    colors={{ yellow: 'var(--color-yellow)', red: 'var(--color-red)' }}
+  />
+  <ColorItem
+    title="Discord"
+    subtitle="Discord's own brand colours, used where the app links out to it"
+    colors={{
+      blurple: 'var(--color-discord-blurple)',
+      fuchsia: 'var(--color-discord-fuchsia)'
+    }}
+  />
+</ColorPalette>
+
+Use these tokens, never an arbitrary colour like `bg-[#f4f4f7]`. Tailwind compiles that to a
+literal value that dark mode can't reach, and `src/lib/theming.test.ts` fails the build on one.
+
+## Writing a story
+
+Stories live in `src/test/stories/components/`, in the same folder layout as the components.
+Two helpers sit next to this page:
+
+- **`fixtures.ts`** has typed sample data: events in every RSVP state, friends, servers and
+  announcements. Times are relative to today, so the calendar views always open on a month
+  that has something in it.
+- **`mockApi.ts`** stubs `api` methods for a single story. Call it from `beforeEach` and
+  return what it gives back, which puts the real methods back afterwards:
+
+```js
+beforeEach: () => mockApi({ getFriends: async () => FRIENDS });
+```
+
+The stubs are type-checked against the real client, so a fake response with the wrong shape
+fails `yarn run check`.
+
+`yarn test:storybook` builds Storybook and opens every story in Chromium. It fails on any
+story that throws or logs an error, and it runs in CI as the **Storybook** job.
+
+This site is public, so stories must only ever use fixture data. Never point one at a real
+backend or paste real user data into a fixture.
+
+## Links
+
+- [The app](https://calendar.capybara-soum.ovh)
+- [Source on GitHub](https://github.com/souuum/friends-calendar)
