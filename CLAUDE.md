@@ -2566,15 +2566,50 @@ desktop/
 │   │       ├── organisms/      # DayView, WeekView, MonthView, Header,
 │   │       │                   # EventDetailsModal, EventPeekPanel, BlurModal
 │   │       └── templates/      # Calendar, Frame, BottomTabBar, ViewButton
-│   └── test/stories/           # Storybook stories (atoms + ProfileMenu)
+│   └── test/stories/           # Storybook stories for every component + fixtures.ts/mockApi.ts
 ├── .storybook/                 # Storybook + SvelteKit config
 ├── build/                      # yarn build output, gitignored (`/build` in desktop/.gitignore) — not committed
 └── static/
 ```
 
 Atomic-design component layout (atoms → molecules → organisms → templates).
-Storybook is wired up for the atoms and the ProfileMenu molecule only; most
-molecules/organisms/templates have no stories yet.
+
+**Storybook** (`yarn storybook`, `yarn build:storybook`; output in the
+gitignored `storybook-static/`). As of 2026-10-19 every component in
+`src/lib/components` has stories, under `src/test/stories/components/`
+mirroring the atoms/molecules/organisms/templates split (`root/` for the
+top-level ones). Two shared helpers:
+
+- `src/test/stories/fixtures.ts` - typed fixtures, with times relative to
+  *now* so the grid views always open on a month/week/day that has events.
+- `src/test/stories/mockApi.ts` - `mockApi({...})` stubs methods on the
+  `api` singleton for a single story. Call it from `beforeEach` and return
+  its result, which is the cleanup that restores the real methods. Stubs are
+  typed against `api`, so a wrong response shape fails `yarn run check` -
+  that caught three such mistakes while the stories were being written.
+  Components that read `$lib/stores` (`user`, `unreadNotificationCount`)
+  get them `.set()` in the same `beforeEach`, reset in the cleanup.
+- ⚠️ `Header`'s `user` prop is the **store**, not a `User` - `Frame` passes
+  `$lib/stores`' `user` straight through, and `Header` reads `$user`. A plain
+  object throws `subscribe is not a function`.
+- `$app/stores`' `page` comes from `parameters.sveltekit_experimental.stores`
+  (see `frame.stories.svelte`'s `onRoute`); `$app/navigation` is stubbed by
+  `@storybook/sveltekit` itself.
+- `Calendar`'s `events` prop collides with a Svelte mount option, same as
+  in vitest, so its story passes it through a `template` snippet.
+- **`yarn test:storybook` renders every story in Chromium** and fails on
+  any that throws or logs an error (`storybook-smoke/stories.spec.ts`,
+  `playwright.storybook.config.ts`, CI job **Storybook**). Type-checking and
+  `build:storybook` both pass on a story that crashes on mount; this is what
+  doesn't. It builds first because the spec reads
+  `storybook-static/index.json` at collection time to make one test per
+  story. Mutation-tested by passing `Header` a plain `User` again.
+- **Deployed with the app at `/storybook/`**, via a `build.command` in
+  `desktop/wrangler.jsonc` that Cloudflare runs after `yarn build` (which
+  empties `build/`, hence the order). Not part of `yarn build` itself, which
+  also feeds Tauri and the layout tests. Not gated on CI, same as the app -
+  see `docs/deployment.md`. ⚠️ It is public, so stories must only ever hold
+  fixture data.
 
 ## Terraform / GitHub Actions / Discord bot — real vs. discussed-only
 

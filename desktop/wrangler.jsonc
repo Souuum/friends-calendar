@@ -15,6 +15,20 @@
   "name": "friends-calendar",
   "compatibility_date": "2026-09-16",
 
+  // Storybook ships with the app at /storybook/, rather than as a second
+  // Cloudflare project with its own API token. Wrangler runs this before
+  // every `wrangler deploy` - i.e. *after* the dashboard's `yarn build` -
+  // which matters: adapter-static empties build/ when it runs, so Storybook
+  // has to be written into it afterwards, not before.
+  //
+  // Kept out of `yarn build` itself on purpose: that script also feeds the
+  // Tauri bundle and the layout tests, and neither should carry a component
+  // library. Storybook's output uses relative paths, so it works from a
+  // subdirectory unchanged.
+  "build": {
+    "command": "yarn build:storybook --quiet --output-dir build/storybook"
+  },
+
   // No "main": this is an assets-only deployment. Without a Worker script
   // Cloudflare serves the directory directly from its edge, which is all a
   // static SPA needs.
