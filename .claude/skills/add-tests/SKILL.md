@@ -1,6 +1,6 @@
 ---
 name: add-tests
-description: Add unit, integration, and/or functional tests for a backend (Rust/Axum/sqlx) or frontend (Svelte/vitest) change in this repo, following the conventions already established here. Use whenever implementing or reviewing a backend or frontend feature - tests are not optional follow-up in this repo, they're part of finishing the feature.
+description: Add unit, integration, and/or functional tests for a backend (Rust/Axum/sqlx) or frontend (Svelte/vitest) change in this repo, plus a Storybook story for every new or changed component, following the conventions already established here. Use whenever implementing or reviewing a backend or frontend feature - tests and stories are not optional follow-up in this repo, they're part of finishing the feature.
 ---
 
 # Adding tests in rust-friends-calendar
@@ -167,6 +167,77 @@ After adding/changing tests, also run `yarn run check` (svelte-check) - not
 `yarn check`, which is yarn's own built-in command and silently runs
 something else entirely.
 
+## Storybook stories (every component, no exceptions)
+
+**Every `.svelte` file under `desktop/src/lib/components` has a story.** A new
+component isn't done without one, and a changed component's stories get
+updated when its props or states change. This is enforced:
+`src/test/stories/coverage.test.ts` runs in `yarn test` and fails, naming the
+file, for any component that no story imports by its `$lib` path.
+
+Where it goes: `desktop/src/test/stories/components/`, mirroring the
+component's folder (`atoms/`, `molecules/`, `organisms/`, `templates/`,
+`icons/`, and `root/` for files directly in `components/`). Name it
+`<kebab-name>.stories.svelte`, titled `Components/<Layer>/<Name>`. Copy the
+shape of a neighbour, e.g. `molecules/event-rsvp-card.stories.svelte`:
+
+```svelte
+<script module>
+  import { defineMeta } from '@storybook/addon-svelte-csf';
+  import EventRsvpCard from '$lib/components/molecules/EventRsvpCard.svelte';
+  import { EVENT_HOSTED, EVENT_INVITED } from '../../fixtures';
+
+  const { Story } = defineMeta({
+    title: 'Components/Molecules/EventRsvpCard',
+    component: EventRsvpCard,
+    args: { event: EVENT_HOSTED }
+  });
+</script>
+
+<Story name="Going" />
+<Story name="Awaiting answer" args={{ event: EVENT_INVITED }} />
+```
+
+What a story set should cover:
+
+- **One story per state a user can actually see**: loaded, empty, loading,
+  error, and each variant a prop switches (RSVP status, `featured`, creator
+  vs invitee). The same states the component's `.test.ts` covers.
+- **Long content** where layout could break: long titles, unbroken URLs,
+  narrow containers. Wrap the component in a sized `<div>` as the story's
+  children.
+- Callbacks as `fn()` from `storybook/test`, so clicks show in the Actions
+  panel.
+
+Data and mocking:
+
+- **Fixtures from `src/test/stories/fixtures.ts`**, not inline objects. Add
+  one there if it's missing; times relative to now via `at(dayOffset, hour)`.
+- **Components that call `api`**: stub with `mockApi({...})` from
+  `src/test/stories/mockApi.ts` in `beforeEach`, and *return* its result
+  (that's the cleanup). `delay(value)` shows an in-flight state, `pending()`
+  a permanent loading state. Stubs are typed against `api`, so a wrong
+  response shape fails `yarn run check`. Fix the fixture, don't cast it.
+- **Stores** (`user`, `unreadNotificationCount`): `.set()` them in the same
+  `beforeEach` and reset them in the cleanup.
+- **`$app/stores` page**: `parameters.sveltekit_experimental.stores.page`,
+  see `templates/frame.stories.svelte`.
+- ⚠️ **The site is public** (`/storybook/` on the deployed frontend). Fixture
+  data only: never a real backend URL, never real user data.
+
+Gotchas already hit here:
+
+- A prop named `events` (or any Svelte mount option) must be passed through
+  a `template` snippet, not `args`. See `templates/calendar.stories.svelte`.
+- `Header`'s `user` prop is the *store*, not a `User`.
+- Snippets in a `<script module lang="ts">` file need typed parameters:
+  `{#snippet row(args: ComponentProps<typeof X>)}`.
+
+Before calling it done, run **`yarn test:storybook`**. It builds Storybook
+and opens every story in Chromium, failing on any that throws or logs an
+error; type-checking and the build both pass on a story that crashes on
+mount. CI runs it as the **Storybook** job.
+
 ## Checklist before calling a feature done
 
 - [ ] Pure logic pulled out and unit-tested where it was easy to do so
@@ -177,6 +248,9 @@ something else entirely.
       the wiring itself (route, auth, status/shape) is worth locking down
 - [ ] New Svelte components have a co-located `.test.ts` covering their
       states (empty/loading/error/loaded, key interactions)
+- [ ] Every new or changed component has stories for those same states
+      under `src/test/stories/components/` (`coverage.test.ts` enforces
+      that one exists), and `yarn test:storybook` passes
 - [ ] `cargo test`, `cargo clippy -D warnings` (backend) and `yarn test`,
       `yarn run check` (frontend) all pass, with no *new* warnings beyond
       this repo's known pre-existing ones

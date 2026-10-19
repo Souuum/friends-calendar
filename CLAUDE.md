@@ -602,6 +602,13 @@ frontend change that adds or changes behavior gets tests at whichever tiers
 apply (unit / integration / functional for backend, component tests for
 frontend) — it's part of finishing the feature, not optional follow-up.**
 
+**Same policy for Storybook: every component in `desktop/src/lib/components`
+has a story, and a new component isn't done without one.** Enforced, not
+just stated: `src/test/stories/coverage.test.ts` fails `yarn test` for any
+component no story imports. Its first run found two components the "every
+component" pass had missed (the chevron icons and `CalendarView`). How to
+write one is in `.claude/skills/add-tests/SKILL.md`, "Storybook stories".
+
 Full conventions, worked examples, and a pre-flight checklist live in
 `.claude/skills/add-tests/SKILL.md` — read that before writing tests here
 rather than re-deriving the patterns. Summary:
@@ -2575,8 +2582,9 @@ desktop/
 Atomic-design component layout (atoms → molecules → organisms → templates).
 
 **Storybook** (`yarn storybook`, `yarn build:storybook`; output in the
-gitignored `storybook-static/`). As of 2026-10-19 every component in
-`src/lib/components` has stories, under `src/test/stories/components/`
+gitignored `storybook-static/`). Every component in
+`src/lib/components` has stories (enforced by `coverage.test.ts`, see
+"Testing"), under `src/test/stories/components/`
 mirroring the atoms/molecules/organisms/templates split (`root/` for the
 top-level ones). Two shared helpers:
 
