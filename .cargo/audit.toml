@@ -40,4 +40,20 @@ ignore = [
     "RUSTSEC-2026-0098",
     "RUSTSEC-2026-0099",
     "RUSTSEC-2026-0049",
+
+    # rustls 0.22.4 (x2, published 2026-10-14) - same serenity chain as the
+    # four above (serenity 0.12.5 -> tokio-tungstenite 0.21 -> rustls 0.22).
+    # Only rustls >= 0.23.46 is patched and no 0.22.x release follows 0.22.4,
+    # so this cannot resolve until serenity moves off rustls 0.22. The other
+    # copy of rustls in the tree (0.23.x, via reqwest/hyper-rustls) WAS
+    # bumped to 0.23.46 for these advisories - only the gateway copy is
+    # ignored.
+    #   0346: `Debug` on client session values prints TLS secrets. Needs
+    #         something to debug-format serenity's internal TLS session; this
+    #         codebase never holds one.
+    #   0349: an unauthenticated ServerHello can downgrade later connections
+    #         to classical key exchange. Needs an active attacker on the path
+    #         to Discord's gateway, same exposure as the webpki entries.
+    "RUSTSEC-2026-0346",
+    "RUSTSEC-2026-0349",
 ]
