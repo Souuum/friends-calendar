@@ -15,3 +15,7 @@ vite.config.ts.timestamp-*
 /e2e/screenshots
 /test-results
 /playwright-report
+
+# Storybook build output
+/storybook-static
+/storybook-smoke/.results

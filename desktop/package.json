@@ -19,6 +19,7 @@
     "tauri:build": "tauri build",
     "storybook": "storybook dev -p 6006",
     "build:storybook": "storybook build",
+    "test:storybook": "storybook build --quiet && playwright test -c playwright.storybook.config.ts",
     "prepare": "husky",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

@@ -42,6 +42,6 @@ export default defineConfig(async () => ({
     // matches e2e/*.spec.ts and fails on the @playwright/test import - and
     // those tests need a real browser, which is the whole reason they're
     // not in this tier.
-    exclude: ["**/node_modules/**", "**/build/**", "**/.svelte-kit/**", "e2e/**"],
+    exclude: ["**/node_modules/**", "**/build/**", "**/.svelte-kit/**", "e2e/**", "storybook-smoke/**"],
   },
 }));

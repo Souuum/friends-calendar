@@ -339,6 +339,39 @@ through a sync won't be in it - under the publication-scoped visibility
 rules, a user missing from `user_guilds` sees no published events.
 `POST /api/friends/sync` repopulates it from Discord's live member list.
 
+## Storybook (`/storybook/`)
+
+Storybook ships **with the frontend** and is served at
+`https://calendar.<your-domain>/storybook/` - no second Cloudflare project,
+no extra secrets, no dashboard change.
+
+`desktop/wrangler.jsonc` has a `build.command` that writes Storybook into
+`build/storybook/`. Wrangler runs it at the start of every `wrangler deploy`,
+which is after the dashboard's `yarn build` - and the order matters, because
+adapter-static empties `build/` when it runs. Storybook's output uses
+relative paths, so it works from the subdirectory as is (checked in
+Chromium against a local copy of `build/`: every story renders, and no
+request fails).
+
+- It is deliberately **not** part of `yarn build`. That script also feeds
+  the Tauri bundle and the layout tests, and neither should carry a
+  component library.
+- ⚠️ **It deploys whenever the app does**, so like the app it is *not* gated
+  on CI - Cloudflare's Git integration builds every push to `master` on its
+  own. CI's **Storybook** job (`yarn test:storybook`, which renders every
+  story in Chromium) will flag a broken story on the same push, but won't
+  stop it being published.
+- `/storybook` without the slash is redirected to `/storybook/` by Workers
+  Assets' default trailing-slash handling, because `storybook/index.html`
+  exists. A typo under `/storybook/` falls through to the app's SPA
+  fallback (`not_found_handling`) rather than a 404 - harmless, but it is
+  why a broken asset link shows the app instead of failing loudly.
+- ⚠️ **It is public**, like the rest of the site's static files - the
+  JWT protects the API, not the HTML. The stories hold only fixture data
+  (`desktop/src/test/stories/fixtures.ts`) and `mockApi` stubs every
+  request, so nothing private is in it. Keep it that way: never point a
+  story at a real backend or paste real user data into a fixture.
+
 ## Known gaps
 
 - **No rollback.** A bad deploy overwrites the only binary. The cheapest
