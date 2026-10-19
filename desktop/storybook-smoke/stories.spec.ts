@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 
 type IndexEntry = { id: string; title: string; name: string; type: 'story' | 'docs' };
 
-function loadStories(): IndexEntry[] {
+function loadIndex(): IndexEntry[] {
   const path = new URL('../storybook-static/index.json', import.meta.url);
   let raw: string;
   try {
@@ -12,10 +12,13 @@ function loadStories(): IndexEntry[] {
     throw new Error('storybook-static/index.json not found - run `yarn build:storybook` first.');
   }
   const { entries } = JSON.parse(raw) as { entries: Record<string, IndexEntry> };
-  return Object.values(entries).filter((entry) => entry.type === 'story');
+  return Object.values(entries);
 }
 
-const stories = loadStories();
+const index = loadIndex();
+const stories = index.filter((entry) => entry.type === 'story');
+const docs = index.filter((entry) => entry.type === 'docs');
+const storyIds = new Set(stories.map((story) => story.id));
 
 test('the build contains stories', () => {
   // Guards the loop below: an empty index would otherwise pass vacuously.
@@ -50,6 +53,32 @@ for (const story of stories) {
     );
 
     expect(shownError, 'Storybook showed its error screen').toBeNull();
+    expect(errors, 'errors were thrown while rendering').toEqual([]);
+  });
+}
+
+for (const doc of docs) {
+  test(`${doc.title} (docs page)`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.push(message.text());
+    });
+
+    await page.goto(`/iframe.html?id=${doc.id}&viewMode=docs`);
+    await expect(page.locator('#storybook-docs h1').first()).toBeVisible();
+
+    // Links between pages are plain `?path=/story/<id>` hrefs, which nothing
+    // else checks: renaming a story would leave a dead link on the homepage.
+    const linked = await page
+      .locator('#storybook-docs a[href^="?path=/story/"]')
+      .evaluateAll((links) =>
+        links.map((link) => link.getAttribute('href')!.replace('?path=/story/', ''))
+      );
+    expect(
+      linked.filter((id) => !storyIds.has(id)),
+      'links to stories that do not exist'
+    ).toEqual([]);
     expect(errors, 'errors were thrown while rendering').toEqual([]);
   });
 }
