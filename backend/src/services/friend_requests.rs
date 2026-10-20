@@ -248,21 +248,37 @@ pub async fn count_guild_members_without_accounts(
         .count())
 }
 
-/// Posts a simple text prompt into the configured channel encouraging
-/// non-member guild members to sign up. Uses the same base_url-as-parameter
-/// pattern as every other Discord call here (mockable, no live Discord call
-/// in tests).
+/// The text of the sign-up prompt.
+///
+/// It has to carry the app's address: it used to say "Sign in with Discord
+/// to join!" and nothing else, so the people it was written for - server
+/// members with no account - had no way to act on it. `frontend_url` is the
+/// same `FRONTEND_URL` the login redirect lands on, so the link always
+/// points at the deployment that posted it.
+pub fn invite_prompt_text(missing_count: usize, frontend_url: &str) -> String {
+    let (members, verb) = if missing_count == 1 {
+        ("member", "isn't")
+    } else {
+        ("members", "aren't")
+    };
+    let link = frontend_url.trim_end_matches('/');
+    format!(
+        "👋 {missing_count} {members} of this server {verb} on Friends Calendar yet. Sign in with Discord to join: {link}"
+    )
+}
+
+/// Posts the sign-up prompt into the configured channel. Uses the same
+/// base_url-as-parameter pattern as every other Discord call here (mockable,
+/// no live Discord call in tests).
 pub async fn post_guild_invite_prompt(
     base_url: &str,
     http: &Client,
     bot_token: &str,
     channel_id: &str,
     missing_count: usize,
+    frontend_url: &str,
 ) -> Result<()> {
-    let plural = if missing_count == 1 { "" } else { "s" };
-    let content = format!(
-        "👋 {missing_count} member{plural} of this server aren't on Friends Calendar yet. Sign in with Discord to join!"
-    );
+    let content = invite_prompt_text(missing_count, frontend_url);
 
     let url = format!("{base_url}/channels/{channel_id}/messages");
     let response = http
@@ -494,19 +510,58 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn posts_the_invite_prompt_with_the_right_count() {
+    async fn posts_the_invite_prompt_with_the_right_count_and_a_link() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/channels/chan1/messages"))
             .and(header("Authorization", "Bot test-token"))
-            .and(body_json(json!({ "content": "👋 3 members of this server aren't on Friends Calendar yet. Sign in with Discord to join!" })))
+            .and(body_json(json!({ "content": "👋 3 members of this server aren't on Friends Calendar yet. Sign in with Discord to join: https://calendar.example.com" })))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "msg1" })))
+            .expect(1)
             .mount(&server)
             .await;
 
         let http = Client::new();
-        post_guild_invite_prompt(&server.uri(), &http, "test-token", "chan1", 3)
-            .await
-            .unwrap();
+        post_guild_invite_prompt(
+            &server.uri(),
+            &http,
+            "test-token",
+            "chan1",
+            3,
+            "https://calendar.example.com",
+        )
+        .await
+        .unwrap();
+    }
+
+    #[test]
+    fn invite_prompt_links_to_the_app() {
+        let text = invite_prompt_text(2, "https://calendar.example.com");
+        assert!(
+            text.ends_with("Sign in with Discord to join: https://calendar.example.com"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn invite_prompt_drops_a_trailing_slash_from_the_link() {
+        // FRONTEND_URL is typed by hand, so a trailing slash must not reach the post.
+        let text = invite_prompt_text(2, "https://calendar.example.com/");
+        assert!(
+            text.ends_with("join: https://calendar.example.com"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn invite_prompt_agrees_with_a_single_member() {
+        assert!(
+            invite_prompt_text(1, "https://x.example")
+                .starts_with("👋 1 member of this server isn't on Friends Calendar yet.")
+        );
+        assert!(
+            invite_prompt_text(4, "https://x.example")
+                .starts_with("👋 4 members of this server aren't on Friends Calendar yet.")
+        );
     }
 }

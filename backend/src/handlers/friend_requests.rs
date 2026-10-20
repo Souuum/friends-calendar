@@ -175,6 +175,7 @@ pub async fn post_invite(
         bot_token,
         &channel_id.to_string(),
         count,
+        &state.frontend_url,
     )
     .await
     .map_err(|e| AppError::ExternalApiError(e.to_string()))?;
@@ -319,6 +320,52 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// Through the real router, so the link is proven to come from the
+    /// deployment's FRONTEND_URL rather than only from a direct service call.
+    #[sqlx::test]
+    async fn post_invite_links_to_the_frontend(db: PgPool) {
+        use serde_json::json;
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let alice = seed_user(&db, "alice-discord", "alice").await;
+
+        let discord = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/guilds/test-guild-id/members"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                { "user": { "id": "alice-discord", "username": "alice", "bot": false } },
+                { "user": { "id": "not-signed-up", "username": "carol", "bot": false } },
+            ])))
+            .mount(&discord)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/channels/123456789/messages"))
+            .and(body_json(json!({ "content": "👋 1 member of this server isn't on Friends Calendar yet. Sign in with Discord to join: http://localhost:1420" })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "msg1" })))
+            .expect(1)
+            .mount(&discord)
+            .await;
+
+        let state = AppState::for_test(db, discord.uri());
+        let token = generate_jwt(&alice.discord_id, &state.jwt_secret).unwrap();
+        let app = crate::build_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/friend-requests/post-invite")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
     }
 
     #[sqlx::test]
