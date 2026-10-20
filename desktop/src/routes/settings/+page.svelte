@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { api } from '$lib/api';
   import { user as userStore } from '$lib/stores';
+  import { isAdmin } from '$lib/admin';
   import Frame from '$lib/components/templates/Frame.svelte';
   import { theme, setTheme, type Theme } from '$lib/theme';
   import Icon from '$lib/components/atoms/Icon.svelte';
@@ -582,18 +583,21 @@
            mobile tab bar folds Server under "Me" without a tab of its own -
            so without this row /server is unreachable on a phone. Styled as a
            push-through (chevron) because that's what it is on mobile; it's
-           harmless duplication of the sidebar link on desktop. -->
-      <a
-        href="/server"
-        class="flex items-center gap-3 bg-surface border border-line rounded-xl px-4 py-3 no-underline hover:bg-gray-50"
-      >
-        <Icon name="bot" size={20} />
-        <span class="flex-1 min-w-0">
-          <span class="block text-sm font-semibold text-gray-900">Discord server</span>
-          <span class="block text-xs text-muted">Linked server, bot channels, weekly digest</span>
-        </span>
-        <Icon name="chevron-right" size={16} class="text-muted" />
-      </a>
+           harmless duplication of the sidebar link on desktop.
+           Admins only, like the page: it is the bot's configuration. -->
+      {#if $isAdmin}
+        <a
+          href="/server"
+          class="flex items-center gap-3 bg-surface border border-line rounded-xl px-4 py-3 no-underline hover:bg-gray-50"
+        >
+          <Icon name="bot" size={20} />
+          <span class="flex-1 min-w-0">
+            <span class="block text-sm font-semibold text-gray-900">Discord server</span>
+            <span class="block text-xs text-muted">Linked server, bot channels, weekly digest</span>
+          </span>
+          <Icon name="chevron-right" size={16} class="text-muted" />
+        </a>
+      {/if}
 
       <!-- The mockup's notification rows: label over an explanatory line,
            with the switch on the right and a hairline between rows.
@@ -675,9 +679,13 @@
              on /server. -->
         <p class="m-0 pt-3 text-[12px] text-muted">
           The weekly digest is posted once to a shared Discord channel, so it's configured for the
-          whole server on the <a href="/server" class="text-primary hover:underline"
-            >Discord server</a
-          > page rather than per person.
+          whole server
+          {#if $isAdmin}
+            on the <a href="/server" class="text-primary hover:underline">Discord server</a> page
+          {:else}
+            by the server's admins
+          {/if}
+          rather than per person.
         </p>
       </section>
 

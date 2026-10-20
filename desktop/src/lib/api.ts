@@ -311,6 +311,16 @@ class ApiClient {
     return this.fetch<LinkedServerInfo>('/api/discord/server');
   }
 
+  /**
+   * Whether you administer the linked Discord server (owner, Administrator
+   * or Manage Server). Decides whether the bot-config pages are shown - the
+   * server enforces it separately on every config endpoint.
+   */
+  async getAdminStatus(): Promise<boolean> {
+    const { is_admin } = await this.fetch<{ is_admin: boolean }>('/api/discord/admin');
+    return is_admin;
+  }
+
   async getDiscordConfig(): Promise<BotChannelConfig> {
     return this.fetch<BotChannelConfig>('/api/discord/config');
   }

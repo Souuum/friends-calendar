@@ -10,8 +10,10 @@ const {
   rotateCalendarFeedLink,
   getExternalCalendars,
   connectExternalCalendar,
-  disconnectExternalCalendar
+  disconnectExternalCalendar,
+  getAdminStatus
 } = vi.hoisted(() => ({
+  getAdminStatus: vi.fn().mockResolvedValue(false),
   getCurrentUser: vi.fn(),
   updateProfile: vi.fn(),
   deleteAccount: vi.fn(),
@@ -34,7 +36,8 @@ vi.mock('$lib/api', () => ({
     rotateCalendarFeedLink,
     getExternalCalendars,
     connectExternalCalendar,
-    disconnectExternalCalendar
+    disconnectExternalCalendar,
+    getAdminStatus
   }
 }));
 
@@ -56,6 +59,7 @@ vi.mock('$app/stores', () => ({
 
 // Loaded after the mocks above so the page picks up the mocked $lib/api.
 const { default: SettingsPage } = await import('./+page.svelte');
+const { resetAdminStatus } = await import('$lib/admin');
 
 function makeUser(overrides: Partial<User> = {}): User {
   return {
@@ -366,6 +370,31 @@ describe('settings page', () => {
       await openSettings(makeUser({ timezone: detected }));
 
       expect(screen.queryByRole('button', { name: /^Use / })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('the Discord server row', () => {
+    // It leads to the bot's configuration, which is admin-only.
+    it('is hidden from a non-admin, and the digest note names the admins instead', async () => {
+      resetAdminStatus();
+      getAdminStatus.mockResolvedValue(false);
+      getCurrentUser.mockResolvedValue(makeUser());
+
+      render(SettingsPage);
+
+      await waitFor(() => expect(getAdminStatus).toHaveBeenCalled());
+      await waitFor(() => expect(screen.getByText(/by the server's admins/)).toBeInTheDocument());
+      expect(document.querySelector('a[href="/server"]')).toBeNull();
+    });
+
+    it('is shown to an admin', async () => {
+      resetAdminStatus();
+      getAdminStatus.mockResolvedValue(true);
+      getCurrentUser.mockResolvedValue(makeUser());
+
+      render(SettingsPage);
+
+      await waitFor(() => expect(document.querySelector('a[href="/server"]')).not.toBeNull());
     });
   });
 });

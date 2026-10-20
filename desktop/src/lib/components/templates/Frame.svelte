@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { api } from '$lib/api';
+  import { isAdmin, loadAdminStatus } from '$lib/admin';
   import { user, unreadNotificationCount } from '$lib/stores';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
@@ -58,9 +60,13 @@
     { label: 'Add friends', view: '/friends/add' },
     { label: 'Announcements', view: '/announcements' },
     { label: 'Notifications', view: '/notifications', badge: $unreadNotificationCount },
-    { label: 'Discord server', view: '/server' },
+    // Bot configuration: admins only. `$isAdmin` is named here directly so
+    // this statement re-runs when the answer arrives.
+    ...($isAdmin ? [{ label: 'Discord server', view: '/server' }] : []),
     { label: 'Settings', view: '/settings' }
   ];
+
+  onMount(loadAdminStatus);
 
   // The mockup's header names the screen you're on. `/friends/[id]` shows
   // the friend's name there; the page itself knows that and nothing here

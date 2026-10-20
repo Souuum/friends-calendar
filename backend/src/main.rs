@@ -237,6 +237,8 @@ pub(crate) fn build_router(state: AppState) -> Router {
             "/api/discord/config",
             get(handlers::discord_config::get_config),
         )
+        // Whether the caller may change it - drives which pages the app shows.
+        .route("/api/discord/admin", get(handlers::admin::get_admin_status))
         .route(
             "/api/discord/config",
             put(handlers::discord_config::update_config),

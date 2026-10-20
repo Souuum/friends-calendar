@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/svelte';
 
-const { getServers, registerServer } = vi.hoisted(() => ({
+const { getServers, registerServer, getAdminStatus } = vi.hoisted(() => ({
+  getAdminStatus: vi.fn(),
   getServers: vi.fn(),
   registerServer: vi.fn()
 }));
@@ -10,6 +11,7 @@ vi.mock('$lib/api', () => ({
   api: {
     getServers,
     registerServer,
+    getAdminStatus,
     getUnreadNotificationCount: vi.fn().mockResolvedValue(0),
     clearToken: vi.fn()
   }
@@ -26,6 +28,7 @@ vi.mock('$app/stores', () => ({
 }));
 
 const { default: ServersPage } = await import('./+page.svelte');
+const { resetAdminStatus } = await import('$lib/admin');
 
 describe('servers page', () => {
   // Block body, not `() => getServers.mockReset()` - mockReset() returns the
@@ -33,6 +36,10 @@ describe('servers page', () => {
   // hook, so the concise form gets getServers *called* again after every test.
   beforeEach(() => {
     getServers.mockReset();
+    // The page is admin-only; these tests are about what an admin sees.
+    resetAdminStatus();
+    getAdminStatus.mockReset();
+    getAdminStatus.mockResolvedValue(true);
   });
 
   it('lists the servers the bot is in', async () => {
@@ -104,6 +111,11 @@ describe('servers page, adding by id', () => {
   beforeEach(() => {
     getServers.mockReset();
     registerServer.mockReset();
+    // Its own admin setup, so it doesn't lean on the cached answer the
+    // previous block happened to leave behind.
+    resetAdminStatus();
+    getAdminStatus.mockReset();
+    getAdminStatus.mockResolvedValue(true);
   });
 
   it('keeps the confirmation visible while the list refreshes', async () => {
@@ -158,5 +170,15 @@ describe('servers page, adding by id', () => {
     await fireEvent.click(screen.getByRole('button', { name: /Add server/i }));
 
     await waitFor(() => expect(screen.getByText('The Hangout')).toBeInTheDocument());
+  });
+
+  it('says the page is for admins, and neither lists servers nor offers the form', async () => {
+    getAdminStatus.mockResolvedValue(false);
+
+    render(ServersPage);
+
+    await waitFor(() => expect(screen.getByText('Admins only')).toBeInTheDocument());
+    expect(getServers).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Discord server ID')).not.toBeInTheDocument();
   });
 });
