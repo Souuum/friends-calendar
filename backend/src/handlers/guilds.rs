@@ -7,8 +7,10 @@ use uuid::Uuid;
 use crate::{
     config::AppState,
     error::AppError,
+    handlers::admin::{NOT_AN_ADMIN, admin_check, require_admin},
     middleware::auth::Claims,
     services::{
+        admin::AdminCheck,
         discord_feed::{self, ChannelInfo},
         guilds::{self, GuildInfo, RegisterError},
     },
@@ -78,11 +80,40 @@ pub struct RegisterServerRequest {
 /// It is not a second way to add a server. The bot still has to be invited on
 /// Discord first, and the service refuses anything Discord doesn't confirm -
 /// so this can only ever record something already true, never assert it.
+///
+/// Admin-only, and admin of *that* server: otherwise anyone with a session
+/// could point the app at a server they have no say over.
 pub async fn register_server(
-    _claims: Claims,
+    claims: Claims,
     State(state): State<AppState>,
     Json(req): Json<RegisterServerRequest>,
 ) -> Result<Json<GuildInfo>, AppError> {
+    // Validated before the admin check, which puts the id in a request path.
+    let id = req.discord_guild_id.trim();
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_digit()) {
+        return Err(AppError::ValidationError(
+            RegisterError::NotASnowflake.to_string(),
+        ));
+    }
+    // Without the bot nobody's roles can be read; say so instead of
+    // reporting everyone as "not an admin".
+    if state.discord_bot_token.is_none() {
+        return Err(AppError::ValidationError(
+            RegisterError::NoBotToken.to_string(),
+        ));
+    }
+    match admin_check(&state, id, &claims.sub).await? {
+        AdminCheck::Admin => {}
+        // Same answer the service gives, so the form's message doesn't
+        // depend on which check happened to run first.
+        AdminCheck::BotNotInGuild => {
+            return Err(AppError::ValidationError(
+                RegisterError::BotNotInServer.to_string(),
+            ));
+        }
+        AdminCheck::NotAdmin => return Err(AppError::Forbidden(NOT_AN_ADMIN.to_string())),
+    }
+
     let guild = guilds::register_guild_by_id(
         &state.db,
         &state.http_client,
@@ -111,8 +142,10 @@ pub async fn register_server(
 /// reachable here are ones this app has a row for. Taking a snowflake
 /// straight from the client would turn the bot token into a general-purpose
 /// "list any server's channels" proxy for anyone with a session.
+///
+/// Admin-only: it exists for the config form, and lists the server's channels.
 pub async fn list_channels(
-    _claims: Claims,
+    claims: Claims,
     State(state): State<AppState>,
     Path(guild_id): Path<Uuid>,
 ) -> Result<Json<Vec<ChannelInfo>>, AppError> {
@@ -127,6 +160,7 @@ pub async fn list_channels(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?
         .ok_or(AppError::NotFound)?;
+    require_admin(&state, &discord_guild_id, &claims).await?;
 
     let channels = discord_feed::list_text_channels(
         &state.discord_api_base,
@@ -150,6 +184,7 @@ mod tests {
 
     use crate::config::AppState;
     use crate::handlers::auth::generate_jwt;
+    use crate::services::admin::test_support::mount_guild_member;
     use crate::services::auth::create_or_update_user;
 
     async fn seed_user(db: &PgPool) -> crate::models::User {
@@ -273,6 +308,7 @@ mod tests {
             { "id": "c2", "name": "Voice", "type": 2, "position": 1, "parent_id": null }
         ]))
         .await;
+        mount_guild_member(&server, "111", "me-discord", true).await;
 
         let state = AppState::for_test(db, server.uri());
         let token = generate_jwt(&user.discord_id, &state.jwt_secret).unwrap();
@@ -297,6 +333,87 @@ mod tests {
         assert_eq!(channels.as_array().unwrap().len(), 1);
         assert_eq!(channels[0]["name"], "general");
         assert_eq!(channels[0]["id"], "c1");
+    }
+
+    #[sqlx::test]
+    async fn a_non_admin_cannot_list_channels(db: PgPool) {
+        let user = seed_user(&db).await;
+        let guild = crate::services::guilds::ensure_guild(&db, "111")
+            .await
+            .unwrap();
+        let server = channels_response(serde_json::json!([])).await;
+        mount_guild_member(&server, "111", "me-discord", false).await;
+
+        let state = AppState::for_test(db, server.uri());
+        let token = generate_jwt(&user.discord_id, &state.jwt_secret).unwrap();
+        let response = crate::build_router(state)
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/guilds/{guild}/channels"))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    // --- POST /api/guilds ------------------------------------------------
+
+    async fn register_over_http(
+        db: PgPool,
+        discord: &wiremock::MockServer,
+        discord_guild_id: &str,
+    ) -> StatusCode {
+        let user = seed_user(&db).await;
+        let state = AppState::for_test(db, discord.uri());
+        let token = generate_jwt(&user.discord_id, &state.jwt_secret).unwrap();
+        crate::build_router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/guilds")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"discord_guild_id":"{discord_guild_id}"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status()
+    }
+
+    async fn guild_rows(db: &PgPool) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM guilds")
+            .fetch_one(db)
+            .await
+            .unwrap()
+    }
+
+    #[sqlx::test]
+    async fn an_admin_of_a_server_can_register_it(db: PgPool) {
+        let discord = wiremock::MockServer::start().await;
+        mount_guild_member(&discord, "333", "me-discord", true).await;
+
+        let status = register_over_http(db.clone(), &discord, "333").await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(guild_rows(&db).await, 1);
+    }
+
+    #[sqlx::test]
+    async fn a_non_admin_cannot_register_a_server(db: PgPool) {
+        let discord = wiremock::MockServer::start().await;
+        mount_guild_member(&discord, "333", "me-discord", false).await;
+
+        let status = register_over_http(db.clone(), &discord, "333").await;
+
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(guild_rows(&db).await, 0);
     }
 
     // A snowflake taken straight from the client would make the bot token a

@@ -427,6 +427,42 @@ three places. What's left is genuinely account-scoped:
     `PATCH /api/auth/me`, so no data is lost if per-user delivery ever
     arrives.
 
+### Admins: who may change the bot's configuration (2026-10-20)
+
+**An admin is whoever Discord says runs the linked server**: its owner, or
+anyone whose roles grant Administrator or Manage Server.
+`services::admin::check_guild_admin` asks Discord live, through the bot
+(`GET /guilds/{id}` for roles and owner, then `GET /guilds/{id}/members/{user}`).
+Nothing is stored, so a demotion on Discord takes effect immediately. Chosen
+with the user over an `ADMIN_DISCORD_IDS` list or owner-only.
+
+- **Enforced on the server**, by `handlers::admin::require_admin`, on:
+  `PUT /api/discord/config`, `GET /api/guilds/:id/channels`, and
+  `POST /api/guilds`. For that last one you must be an admin of *the server
+  being added*, so nobody can point the app at a server they don't run.
+  Non-admins get **403** (`AppError::Forbidden`, new).
+- `GET /api/discord/admin` → `{ is_admin }` for the linked server
+  (`DISCORD_GUILD_ID`). It never 403s, because "no" is an answer, not an error.
+- **The frontend only hides things.** `lib/admin.ts` holds an `isAdmin` store
+  (`null` until known), fetched **once per session** because every page
+  renders `Frame` and each ask costs two Discord calls. Any failure reads as
+  "not an admin". `Frame` drops the "Discord server" entry, `/settings` drops
+  its push-through row, and `/server` and `/servers` wrap their content in
+  `AdminGate`, which shows "Admins only" and skips loading data the server
+  would refuse anyway.
+- ⚠️ **No bot token means nobody is an admin**, so a deployment without the
+  bot can't use `/server` at all. That's deliberate: the config only drives
+  the bot.
+- ⚠️ Tests that render `Frame` or these pages need `getAdminStatus` in their
+  `$lib/api` mock, and a `resetAdminStatus()` in `beforeEach`. The answer
+  is cached at module level, so without the reset a test passes or fails
+  depending on what ran before it. That happened here: a describe block in
+  `servers/page.test.ts` was only green because the block above it left
+  "admin" cached. Backend tests use
+  `services::admin::test_support::mount_guild_member`.
+- Still open to every signed-in user, deliberately (no preference was given):
+  "Post invite" and composing announcements.
+
 ### Server page (`/server`) — linked Discord server + bot channel config
 
 Split out of the old `/settings` so "which Discord server, and which

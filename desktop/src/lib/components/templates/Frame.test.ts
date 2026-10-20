@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/svelte';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import Frame from './Frame.svelte';
 import { user } from '$lib/stores';
+import { resetAdminStatus } from '$lib/admin';
 // @ts-expect-error - test-only helper injected by the $app/stores mock below, not a real export
 import { __setPathname } from '$app/stores';
 
-const { goto } = vi.hoisted(() => ({ goto: vi.fn() }));
+const { goto, getAdminStatus } = vi.hoisted(() => ({
+  goto: vi.fn(),
+  getAdminStatus: vi.fn().mockResolvedValue(false)
+}));
 vi.mock('$app/navigation', () => ({ goto }));
 
 // Frame always renders Header (its `{#if user}` checks the stores.ts store
@@ -15,7 +19,11 @@ vi.mock('$app/navigation', () => ({ goto }));
 // unread notification count on mount - mock $lib/api so that stays a
 // no-op instead of a real network call.
 vi.mock('$lib/api', () => ({
-  api: { getUnreadNotificationCount: vi.fn().mockResolvedValue(0), clearToken: vi.fn() }
+  api: {
+    getUnreadNotificationCount: vi.fn().mockResolvedValue(0),
+    clearToken: vi.fn(),
+    getAdminStatus
+  }
 }));
 
 // A settable $page.url.pathname so each test can pick the "current route"
@@ -113,5 +121,34 @@ describe('Frame header avatar', () => {
 
     const src = (screen.getByAltText('User avatar') as HTMLImageElement).src;
     expect(src).toMatch(/embed\/avatars\/[0-5]\.png$/);
+  });
+});
+
+describe('Frame admin-only navigation', () => {
+  // "Discord server" is the bot's configuration, so only admins of the
+  // linked server see it. The backend refuses non-admins regardless; this
+  // just keeps a dead end out of everyone else's sidebar.
+  it('hides the Discord server entry from a non-admin', async () => {
+    resetAdminStatus();
+    getAdminStatus.mockResolvedValue(false);
+    __setPathname('/');
+    render(Frame);
+
+    await waitFor(() => expect(getAdminStatus).toHaveBeenCalled());
+    await tick();
+    expect(within(screen.getByTestId('sidebar')).queryByText('Discord server')).toBeNull();
+    // The rest of the rail is unaffected.
+    expect(within(screen.getByTestId('sidebar')).getByText('Settings')).toBeInTheDocument();
+  });
+
+  it('shows it to an admin', async () => {
+    resetAdminStatus();
+    getAdminStatus.mockResolvedValue(true);
+    __setPathname('/');
+    render(Frame);
+
+    await waitFor(() =>
+      expect(within(screen.getByTestId('sidebar')).getByText('Discord server')).toBeInTheDocument()
+    );
   });
 });

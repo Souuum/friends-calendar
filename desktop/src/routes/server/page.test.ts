@@ -2,14 +2,21 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import type { BotChannelConfig, LinkedServerInfo } from '$lib/types';
 
-const { getLinkedServer, getDiscordConfig, updateDiscordConfig, getServers, getGuildChannels } =
-  vi.hoisted(() => ({
-    getLinkedServer: vi.fn(),
-    getDiscordConfig: vi.fn(),
-    updateDiscordConfig: vi.fn(),
-    getServers: vi.fn(),
-    getGuildChannels: vi.fn()
-  }));
+const {
+  getLinkedServer,
+  getDiscordConfig,
+  updateDiscordConfig,
+  getServers,
+  getGuildChannels,
+  getAdminStatus
+} = vi.hoisted(() => ({
+  getAdminStatus: vi.fn(),
+  getLinkedServer: vi.fn(),
+  getDiscordConfig: vi.fn(),
+  updateDiscordConfig: vi.fn(),
+  getServers: vi.fn(),
+  getGuildChannels: vi.fn()
+}));
 
 vi.mock('$lib/api', () => ({
   api: {
@@ -18,6 +25,7 @@ vi.mock('$lib/api', () => ({
     updateDiscordConfig,
     getServers,
     getGuildChannels,
+    getAdminStatus,
     clearToken: vi.fn(),
     getToken: vi.fn(),
     getUnreadNotificationCount: vi.fn().mockResolvedValue(0)
@@ -38,6 +46,7 @@ vi.mock('$app/stores', () => ({
 }));
 
 const { default: ServerPage } = await import('./+page.svelte');
+const { resetAdminStatus } = await import('$lib/admin');
 
 const server: LinkedServerInfo = {
   id: 'g1',
@@ -55,6 +64,10 @@ const emptyConfig: BotChannelConfig = {
 
 describe('server page', () => {
   beforeEach(() => {
+    // The page is admin-only; these tests are about what an admin sees.
+    resetAdminStatus();
+    getAdminStatus.mockReset();
+    getAdminStatus.mockResolvedValue(true);
     getLinkedServer.mockReset();
     getDiscordConfig.mockReset();
     updateDiscordConfig.mockReset();
@@ -213,6 +226,30 @@ describe('server page', () => {
       );
       expect(screen.getByText(/Copy Channel ID/)).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: '#general' })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('for someone who is not a server admin', () => {
+    it('says the page is for admins and loads nothing', async () => {
+      getAdminStatus.mockResolvedValue(false);
+
+      render(ServerPage);
+
+      await waitFor(() => expect(screen.getByText('Admins only')).toBeInTheDocument());
+      // Nothing behind the gate was fetched - the channel list would 403.
+      expect(getLinkedServer).not.toHaveBeenCalled();
+      expect(getDiscordConfig).not.toHaveBeenCalled();
+      expect(getGuildChannels).not.toHaveBeenCalled();
+      expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
+    });
+
+    it('treats a failed permission check as not an admin', async () => {
+      getAdminStatus.mockRejectedValue(new Error('Bad gateway'));
+
+      render(ServerPage);
+
+      await waitFor(() => expect(screen.getByText('Admins only')).toBeInTheDocument());
+      expect(getDiscordConfig).not.toHaveBeenCalled();
     });
   });
 });

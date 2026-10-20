@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod announcements;
 pub mod auth;
 pub mod availability;

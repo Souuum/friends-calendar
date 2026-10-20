@@ -12,6 +12,8 @@ pub enum AppError {
     ExternalApiError(String),
     JwtError(String),
     Unauthorized,
+    /// Signed in, but not allowed to do this (e.g. not a server admin).
+    Forbidden(String),
     NotFound,
     ValidationError(String),
 }
@@ -24,6 +26,7 @@ impl IntoResponse for AppError {
             AppError::ExternalApiError(msg) => (StatusCode::BAD_GATEWAY, msg),
             AppError::JwtError(msg) => (StatusCode::UNAUTHORIZED, msg),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
+            AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
             AppError::NotFound => (StatusCode::NOT_FOUND, "Not found".to_string()),
             AppError::ValidationError(msg) => (StatusCode::BAD_REQUEST, msg),
         };

@@ -3,6 +3,7 @@ use axum::{Json, extract::State};
 use crate::{
     config::AppState,
     error::AppError,
+    handlers::admin::require_admin,
     middleware::auth::Claims,
     models::{BotChannelConfig, UpdateBotChannelConfigRequest},
     services::discord_config,
@@ -34,12 +35,14 @@ pub async fn get_config(
     Ok(Json(config))
 }
 
+/// Admin-only: this decides where the bot posts for the whole server.
 pub async fn update_config(
-    _claims: Claims,
+    claims: Claims,
     State(state): State<AppState>,
     Json(req): Json<UpdateBotChannelConfigRequest>,
 ) -> Result<Json<BotChannelConfig>, AppError> {
     let guild_id = require_guild_id(&state)?;
+    require_admin(&state, guild_id, &claims).await?;
 
     let config = discord_config::upsert_config(
         &state.db,
@@ -84,7 +87,17 @@ mod tests {
     async fn get_then_update_over_http(db: PgPool) {
         let user = seed_user(&db, "me-discord", "me").await;
 
-        let state = AppState::for_test(db, "http://unused.invalid".to_string());
+        // Saving is admin-only; reading isn't.
+        let discord = wiremock::MockServer::start().await;
+        crate::services::admin::test_support::mount_guild_member(
+            &discord,
+            "test-guild-id",
+            "me-discord",
+            true,
+        )
+        .await;
+
+        let state = AppState::for_test(db, discord.uri());
         let token = generate_jwt(&user.discord_id, &state.jwt_secret).unwrap();
         let app = crate::build_router(state);
 
@@ -137,6 +150,56 @@ mod tests {
             .unwrap();
         let json: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["announcements_channel_id"], "12345");
+    }
+
+    #[sqlx::test]
+    async fn a_non_admin_cannot_change_the_config(db: PgPool) {
+        let user = seed_user(&db, "member-discord", "member").await;
+
+        let discord = wiremock::MockServer::start().await;
+        crate::services::admin::test_support::mount_guild_member(
+            &discord,
+            "test-guild-id",
+            "member-discord",
+            false,
+        )
+        .await;
+
+        let state = AppState::for_test(db, discord.uri());
+        let token = generate_jwt(&user.discord_id, &state.jwt_secret).unwrap();
+        let app = crate::build_router(state);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/discord/config")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"announcements_channel_id":"12345"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        // And nothing was written.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/discord/config")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["announcements_channel_id"].is_null());
     }
 
     #[sqlx::test]
