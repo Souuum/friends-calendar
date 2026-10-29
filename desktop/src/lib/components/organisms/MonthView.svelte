@@ -7,6 +7,7 @@
   import { calculateTooltipPosition } from '$lib/utils/tooltipUtils';
   import { longPress } from '$lib/actions/longPress';
   import { mergedBusyForDay } from '$lib/utils/busyBlocks';
+  import { dateUtils } from '$lib/utils/dateUtils';
   import type { ExternalBusy } from '$lib/types';
 
   export let monthGrid: Date[];
@@ -144,6 +145,7 @@
         role="button"
         tabindex="0"
         aria-pressed={isSameDay(selectedDay, day)}
+        data-date={dateUtils.toDatetimeLocalValue(day.toISOString()).slice(0, 10)}
         class="flex min-h-[126px] cursor-pointer flex-col px-[9px] pb-2.5 pt-[9px] text-left transition-colors
           {isSameDay(selectedDay, day) ? 'bg-tint' : 'bg-surface'}
           {outside ? 'opacity-45' : isPast(day) ? 'opacity-[0.72]' : ''}"
