@@ -368,6 +368,115 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
     }
 
+    async fn post_invite_as(
+        db: PgPool,
+        discord_api_base: String,
+        env_channel: Option<u64>,
+    ) -> StatusCode {
+        let alice = seed_user(&db, "alice-discord", "alice").await;
+        let mut state = AppState::for_test(db, discord_api_base);
+        state.discord_announcement_channel_id = env_channel;
+        let token = generate_jwt(&alice.discord_id, &state.jwt_secret).unwrap();
+        let app = crate::build_router(state);
+
+        app.oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/friend-requests/post-invite")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+    }
+
+    async fn mount_guild_members(discord: &wiremock::MockServer) {
+        use serde_json::json;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        Mock::given(method("GET"))
+            .and(path("/guilds/test-guild-id/members"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                { "user": { "id": "alice-discord", "username": "alice", "bot": false } },
+                { "user": { "id": "not-signed-up", "username": "carol", "bot": false } },
+            ])))
+            .mount(discord)
+            .await;
+    }
+
+    // The channel picked on /server is the source of truth for where the bot
+    // posts; the env var is only a fallback for a guild with no saved config.
+    // Every other posting path resolves it that way - post-invite must too.
+    #[sqlx::test]
+    async fn post_invite_uses_the_channel_configured_on_server_page(db: PgPool) {
+        use serde_json::json;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        crate::services::discord_config::upsert_config(
+            &db,
+            "test-guild-id",
+            Some("987654321".to_string()),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let discord = MockServer::start().await;
+        mount_guild_members(&discord).await;
+        Mock::given(method("POST"))
+            .and(path("/channels/987654321/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "msg1" })))
+            .expect(1)
+            .mount(&discord)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/channels/123456789/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "msg2" })))
+            .expect(0)
+            .mount(&discord)
+            .await;
+
+        let status = post_invite_as(db, discord.uri(), Some(123456789)).await;
+
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        // `.expect(..)` is checked when `discord` drops at the end of scope.
+    }
+
+    // A deployment configured only through /server (no
+    // DISCORD_ANNOUNCEMENT_CHANNEL_ID) must still be able to post the invite.
+    #[sqlx::test]
+    async fn post_invite_works_with_only_a_server_page_channel(db: PgPool) {
+        use serde_json::json;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        crate::services::discord_config::upsert_config(
+            &db,
+            "test-guild-id",
+            Some("987654321".to_string()),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let discord = MockServer::start().await;
+        mount_guild_members(&discord).await;
+        Mock::given(method("POST"))
+            .and(path("/channels/987654321/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "msg1" })))
+            .expect(1)
+            .mount(&discord)
+            .await;
+
+        let status = post_invite_as(db, discord.uri(), None).await;
+
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+
     #[sqlx::test]
     async fn requires_auth(db: PgPool) {
         let state = AppState::for_test(db, "http://unused.invalid".to_string());
