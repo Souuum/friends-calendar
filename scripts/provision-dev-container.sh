@@ -31,8 +31,14 @@
 
 set -euo pipefail
 
-CTID="${CTID:-$(pvesh get /cluster/nextid)}"
 CT_HOSTNAME="${CT_HOSTNAME:-friends-calendar-dev}"
+# Without an explicit CTID, reuse the container this script made before, found
+# by hostname. Taking `nextid` every time made each re-run create a new
+# container instead of finishing the old one.
+if [ -z "${CTID:-}" ]; then
+  CTID=$(pct list | awk -v h="$CT_HOSTNAME" 'NR > 1 && $NF == h {print $1; exit}')
+  CTID="${CTID:-$(pvesh get /cluster/nextid)}"
+fi
 STORAGE="${STORAGE:-local-lvm}"
 DISK_GB="${DISK_GB:-40}"        # Rust target dirs alone reach ~10 GB.
 CORES="${CORES:-4}"
@@ -101,6 +107,11 @@ pct exec "$CTID" -- env \
   bash -s <<'INSIDE'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+# pct exec runs with /sbin:/bin:/usr/sbin:/usr/bin only: without /usr/local/bin
+# the Node installed below is invisible to the rest of this script.
+export PATH="/usr/local/bin:$PATH"
+# The template ships no en_US locale; C.UTF-8 always exists.
+export LANG=C.UTF-8 LC_ALL=C.UTF-8
 log() { printf '\n\033[1;34m  ->\033[0m %s\n' "$*"; }
 as_dev() { runuser -l dev -c "$1"; }
 
@@ -124,9 +135,13 @@ if ! /usr/local/bin/node --version 2>/dev/null | grep -qx "v$NODE_VERSION"; then
   file="node-v$NODE_VERSION-linux-x64.tar.xz"
   curl -fsSL "$base/$file" -o "$tmp/$file"
   curl -fsSL "$base/SHASUMS256.txt" | grep " $file\$" | (cd "$tmp" && sha256sum -c -) >/dev/null
-  tar -xJf "$tmp/$file" -C /usr/local --strip-components=1
+  # --no-same-owner: as root, tar otherwise keeps the archive's uid (1000),
+  # which is `dev` here - leaving dev able to replace a node binary root runs.
+  tar -xJf "$tmp/$file" -C /usr/local --strip-components=1 --no-same-owner
   rm -rf "$tmp"
 fi
+# Repairs installs made before that flag was added. dev never writes here.
+find /usr/local -xdev -uid "$(id -u dev)" -exec chown -h root:root {} +
 command -v yarn >/dev/null || npm install -g --silent yarn@1.22.22
 
 log "Postgres role for tests"
