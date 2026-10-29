@@ -56,4 +56,14 @@ ignore = [
     #         to Discord's gateway, same exposure as the webpki entries.
     "RUSTSEC-2026-0346",
     "RUSTSEC-2026-0349",
+
+    # rustls-webpki 0.102.8 (published 2026-10-20): certificate verification
+    # may accept distrusted intermediates. Same serenity gateway chain as the
+    # webpki entries above, and only >= 0.103.16 is patched, so it cannot
+    # resolve until serenity leaves rustls 0.22. The other copy (0.103.x, via
+    # reqwest) WAS bumped to 0.103.16 for this advisory, and webpki-roots to
+    # 1.0.11 for RUSTSEC-2026-0381 - only the gateway copy is ignored. The
+    # gateway talks only to Discord, so exploiting it needs a path to
+    # Discord's endpoint through a distrusted intermediate CA.
+    "RUSTSEC-2026-0382",
 ]
