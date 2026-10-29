@@ -494,12 +494,17 @@ destination is ever wanted, adding a column back is trivial.
   render an empty form instead of an error state.
   - Every announce path resolves the channel via
     `services::discord_config::resolve_announcement_channel_id` (DB config
-    first, env var as fallback if nothing's configured) - the per-request
-    auto-announce, the announcements feed, and (since 2026-10-29) the weekly
-    digest, which used to read only the DB column and so never posted on an
-    env-var-only deployment. A change here takes effect on the next event or
-    digest tick. `bot.rs` no longer filters reactions by channel at all (see
-    Multi-server steps 3+4), so there is nothing in the gateway to reload.
+    first, env var as fallback if nothing's configured): the per-request
+    event auto-announce, the announcements feed, `POST
+    /api/friend-requests/post-invite`, and the weekly digest. A change here
+    takes effect on the next event, post or digest tick. `bot.rs` doesn't
+    filter reactions by channel at all (see Multi-server steps 3+4), so
+    there is nothing in the gateway to reload.
+  - ⚠️ Any new path that posts to "the announcement channel" must go
+    through the resolver too. Until 2026-10-29 post-invite read the env var
+    directly (posting wherever `.env` pointed, or 400ing without it,
+    whatever `/server` said) and the digest read only the DB column (so it
+    never posted on an env-var-only deployment).
 - `desktop/src/routes/server/+page.svelte` — reachable via `Frame.svelte`'s
   new "Discord server" sidebar item. Renders `LinkedServerCard.svelte`
   (unchanged, reused as-is) plus the channel-config form, and a static
