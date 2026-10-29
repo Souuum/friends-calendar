@@ -891,6 +891,51 @@ mod tests {
         assert!(err.to_string().contains("too big to import"), "{err}");
     }
 
+    // ⚠️ Verifier repro. The fetch has no timeout (`AppState.http_client` is
+    // a bare `Client::new()`, and `sync_one` sets none per request), and
+    // `sync_all` awaits feeds one after another. So a pasted URL whose
+    // server accepts the connection and never answers - or trickles a byte
+    // every few seconds, staying under the size cap - parks the loop on that
+    // feed forever: nobody else's calendar syncs again until a restart, and
+    // the connect request that triggers the first sync never returns. The
+    // same "one feed stops everyone's sync" failure the panic isolation
+    // fixed, by a different route.
+    #[sqlx::test]
+    async fn a_feed_that_never_answers_does_not_stop_the_others(db: PgPool) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                // Hold the connection open and say nothing.
+                held.push(socket);
+            }
+        });
+        let alice = a_user(&db, "alice").await;
+        let bob = a_user(&db, "bob").await;
+        let good = serving(FEED).await;
+        // The silent one first, so a stall blocks the good one behind it.
+        let silent_id = connect_ics(&db, alice, &format!("http://{addr}/cal.ics"), None)
+            .await
+            .unwrap();
+        let ok_id = connect_ics(&db, bob, &format!("{}/cal.ics", good.uri()), None)
+            .await
+            .unwrap();
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(90),
+            sync_all(&db, &Client::new(), now()),
+        )
+        .await;
+
+        assert!(
+            outcome.is_ok(),
+            "sync_all was still waiting on the silent feed after 90s"
+        );
+        assert_eq!(cached(&db, ok_id).await, 1);
+        assert!(last_error(&db, silent_id).await.is_some());
+    }
+
     // ⚠️ A cap, not a truncation: storing the first N blocks would make
     // somebody look free at times they aren't.
     #[sqlx::test]
@@ -1044,6 +1089,66 @@ END:VCALENDAR\r\n";
         assert!(
             starts.contains(&Utc.with_ymd_and_hms(2026, 4, 20, 9, 0, 0).unwrap()),
             "the 20 April meeting is missing from April's grid: {starts:?}"
+        );
+    }
+
+    // --- Verifier: a feed that is not UTF-8 -------------------------------
+    //
+    // `read_capped` decodes lossily rather than honouring the charset. The
+    // only parsed text that can carry non-ASCII is an Outlook display-name
+    // TZID, so a Windows-1252 `Bogotá` becomes `Bogot\u{fffd}`. That must
+    // still land every meeting at the right instant: via the next city IANA
+    // knows, via the feed's own VTIMEZONE (decoded the same way, so the key
+    // still matches), or via the `(UTC-04:00)` prefix.
+    #[sqlx::test]
+    async fn a_windows_1252_feed_still_places_meetings_correctly(db: PgPool) {
+        let user = a_user(&db, "me").await;
+        let text = "BEGIN:VCALENDAR\r\n\
+BEGIN:VTIMEZONE\r\nTZID:(UTC-03:00) Brasília\r\nBEGIN:STANDARD\r\nDTSTART:16010101T000000\r\nTZOFFSETFROM:-0300\r\nTZOFFSETTO:-0300\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\n\
+BEGIN:VEVENT\r\nSUMMARY:Réunion équipe\r\nDTSTART;TZID=\"(UTC-05:00) Bogotá, Lima, Quito\":20260302T090000\r\nDTEND;TZID=\"(UTC-05:00) Bogotá, Lima, Quito\":20260302T100000\r\nEND:VEVENT\r\n\
+BEGIN:VEVENT\r\nDTSTART;TZID=\"(UTC-03:00) Brasília\":20260303T090000\r\nDTEND;TZID=\"(UTC-03:00) Brasília\":20260303T100000\r\nEND:VEVENT\r\n\
+BEGIN:VEVENT\r\nDTSTART;TZID=\"(UTC-04:00) Cuiabá\":20260304T090000\r\nDTEND;TZID=\"(UTC-04:00) Cuiabá\":20260304T100000\r\nEND:VEVENT\r\n\
+END:VCALENDAR\r\n";
+        // Windows-1252: every character here is Latin-1, one byte each.
+        let bytes: Vec<u8> = text.chars().map(|c| c as u32 as u8).collect();
+        assert!(
+            String::from_utf8(bytes.clone()).is_err(),
+            "really not UTF-8"
+        );
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/cal.ics"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(bytes, "text/calendar; charset=windows-1252"),
+            )
+            .mount(&server)
+            .await;
+        let url = format!("{}/cal.ics", server.uri());
+        let id = connect_ics(&db, user, &url, None).await.unwrap();
+
+        sync_one(&db, &Client::new(), id, &url, now())
+            .await
+            .unwrap();
+
+        let starts: Vec<_> = busy_for_user(
+            &db,
+            user,
+            Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2026, 3, 8, 0, 0, 0).unwrap(),
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|b| b.starts_at)
+        .collect();
+        assert_eq!(
+            starts,
+            vec![
+                Utc.with_ymd_and_hms(2026, 3, 2, 14, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2026, 3, 3, 12, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2026, 3, 4, 13, 0, 0).unwrap(),
+            ]
         );
     }
 }

@@ -2079,3 +2079,659 @@ BEGIN:VEVENT\nDTSTART;TZID=Odd:20260302T090000\nDTEND;TZID=Odd:20260302T100000\n
         assert!(timed.is_empty(), "holidays are all-day");
     }
 }
+
+// --- Verifier: seeded fuzzing of `busy_intervals` ---------------------------
+//
+// The feed is any URL a user pasted. These generate structured-but-hostile
+// calendars (and plain garbage), mutate them at the character level, and
+// assert the parser neither panics nor runs away. No dependencies: a seeded
+// xorshift, so any failure is reproducible from the seed and case it prints.
+//
+// `ICS_FUZZ_CASES` raises the case count (the default keeps `cargo test`
+// quick) and `ICS_FUZZ_SEED` (hex) changes the seed. Run it in release too,
+// where overflow wraps instead of panicking.
+#[cfg(test)]
+mod fuzz {
+    use super::*;
+    use std::time::{Duration as StdDuration, Instant};
+
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+        fn chance(&mut self, percent: u64) -> bool {
+            self.next() % 100 < percent
+        }
+        fn pick<'a>(&mut self, pool: &[&'a str]) -> &'a str {
+            pool[self.below(pool.len())]
+        }
+    }
+
+    const DATES: &[&str] = &[
+        "20260302T090000Z",
+        "20260302T090000",
+        "20260302",
+        "20260315T183000",
+        "20251026T023000",
+        "20260329T023000",
+        "20200101T000000Z",
+        "99991231T235959Z",
+        "99991231T235959",
+        "99991231",
+        "00010101T000000",
+        "00010101T000000Z",
+        "00010101",
+        "+2621430101T090000",
+        "-2621430101T090000",
+        "",
+        "2026",
+        "20261302T250000",
+        "20260229",
+        "20240229T120000Z",
+        "1",
+        "-1",
+        "999999999999999999999999",
+        "20260302T090000ZZ",
+        "éééééééé",
+        "2026030é",
+        "20260302T09000é",
+    ];
+
+    const TZIDS: &[&str] = &[
+        "Europe/Paris",
+        "America/New_York",
+        "\"(UTC+01:00) Amsterdam, Berlin, Bern, Rome, Stockholm, Vienna\"",
+        "\"(UTC-05:00) Bogotá, Lima, Quito\"",
+        "\"(UTC-05:00) Bogot\u{fffd}, Lima, Quito\"",
+        "Custom",
+        "Other",
+        "/mozilla.org/20050126_1/Europe/Paris",
+        "\"(UTC+999999:00) Nowhere\"",
+        "\"(UTC-14:59) x\"",
+        "\"(UTC+1193046:00) x\"",
+        "\"(UTC-2147483648:00) x\"",
+        "\"(UTC+\"",
+        "\"(UTC\"",
+        "\"(\"",
+        "\"()\"",
+        "\"(UTC+é) é\"",
+        "\"(UTC) , , ,é,\"",
+        "W. Europe Standard Time",
+        "Canada Central Standard Time",
+        "Mountain Standard Time",
+        "Pacific Standard Time",
+        "",
+        "\"",
+        "é",
+        "//////",
+        "/é/é/",
+        "Etc/GMT+12",
+        "Etc/GMT-14",
+        "UTC",
+    ];
+
+    const DURATIONS: &[&str] = &[
+        "P1D",
+        "PT1H30M",
+        "PT45M",
+        "P99999999999999W",
+        "PT9223372036854775807S",
+        "P9223372036854775807D",
+        "PT9223372036854775807H",
+        "P1W9223372036854775807D",
+        "-PT1H",
+        "P",
+        "PT",
+        "P1Y",
+        "P1DT",
+        "PT-1H",
+        "P1W2D",
+        "PT0S",
+        "Pé",
+        "PT1é",
+        "P10675199DT2H48M5S",
+    ];
+
+    const OFFSETS: &[&str] = &[
+        "+0100",
+        "-0800",
+        "+053000",
+        "+9999",
+        "-99999999",
+        "+",
+        "",
+        "+12",
+        "+01:00",
+        "+0000",
+        "-0000",
+        "+2359",
+        "+995999",
+        "é0100",
+        "+é100",
+        "+01é0",
+    ];
+
+    const FREQS: &[&str] = &[
+        "DAILY", "WEEKLY", "MONTHLY", "YEARLY", "HOURLY", "SECONDLY", "", "daily", "é",
+    ];
+    const INTERVALS: &[&str] = &[
+        "0",
+        "1",
+        "2",
+        "3",
+        "-5",
+        "1000000",
+        "9223372036854775807",
+        "-9223372036854775808",
+        "abc",
+        "",
+    ];
+    const COUNTS: &[&str] = &["0", "1", "5", "100", "4294967295", "-1", "99999999999", "é"];
+    const BYDAYS: &[&str] = &[
+        "MO",
+        "TU,TH",
+        "2TU",
+        "-1SU",
+        "+5FR",
+        "6MO",
+        "-6MO",
+        "-100000000MO",
+        "-2147483648MO",
+        "2147483647MO",
+        "99999999999MO",
+        "éa",
+        "é",
+        "aé",
+        "",
+        "XX",
+        "1",
+        "MO,MO,MO",
+        ",,,",
+        "+-1MO",
+        "--1MO",
+        "MO,TU,WE,TH,FR,SA,SU",
+        "1MO,2MO,3MO,4MO,5MO,-1MO,-2MO,-3MO,-4MO,-5MO",
+    ];
+    const MONTHDAYS: &[&str] = &[
+        "1",
+        "31",
+        "-1",
+        "-31",
+        "0",
+        "32",
+        "-32",
+        "2147483647",
+        "-2147483648",
+        "1,15,-1",
+        "é",
+        "29,30,31",
+    ];
+    const MONTHS: &[&str] = &["0", "1", "3", "10", "12", "13", "4294967295", "-1", "é", ""];
+    const WKSTS: &[&str] = &["SU", "MO", "XX", "", "é"];
+    const WEIRD: &[&str] = &[
+        "é",
+        "\u{10FFFF}",
+        "\u{0}",
+        "\r",
+        "\n",
+        "\n ",
+        "\r\n\t",
+        "\t",
+        ":",
+        ";",
+        "\"",
+        "=",
+        ",",
+        "Z",
+        "T",
+        "-",
+        "+",
+        "9999999999999999999999",
+        "\u{fffd}",
+        "日本",
+        "🎉",
+        "BEGIN:VEVENT\n",
+        "END:VEVENT\n",
+        "BEGIN:VALARM\n",
+        "END:VTIMEZONE\n",
+    ];
+
+    fn rrule(r: &mut Rng) -> String {
+        let mut parts = vec![format!("FREQ={}", r.pick(FREQS))];
+        for _ in 0..r.below(6) {
+            parts.push(match r.below(8) {
+                0 => format!("INTERVAL={}", r.pick(INTERVALS)),
+                1 => format!("COUNT={}", r.pick(COUNTS)),
+                2 => format!("UNTIL={}", r.pick(DATES)),
+                3 => format!("BYDAY={}", r.pick(BYDAYS)),
+                4 => format!("BYMONTHDAY={}", r.pick(MONTHDAYS)),
+                5 => format!("BYMONTH={}", r.pick(MONTHS)),
+                6 => format!("WKST={}", r.pick(WKSTS)),
+                _ => r
+                    .pick(&["BYSETPOS=-1", "X", "=", "FREQ=", ";;", "é=é"])
+                    .to_string(),
+            });
+        }
+        if r.chance(10) {
+            parts.reverse();
+        }
+        parts.join(";")
+    }
+
+    fn time_prop(r: &mut Rng, name: &str) -> String {
+        match r.below(4) {
+            0 => format!("{name}:{}", r.pick(DATES)),
+            1 => format!("{name};VALUE=DATE:{}", r.pick(DATES)),
+            _ => format!("{name};TZID={}:{}", r.pick(TZIDS), r.pick(DATES)),
+        }
+    }
+
+    fn vtimezone(r: &mut Rng) -> String {
+        let mut s = format!(
+            "BEGIN:VTIMEZONE\nTZID:{}\n",
+            r.pick(&[
+                "Custom",
+                "Other",
+                "Europe/Paris",
+                "",
+                "é",
+                "(UTC-05:00) Bogotá, Lima, Quito"
+            ])
+        );
+        for _ in 0..r.below(4) {
+            let kind = r.pick(&["STANDARD", "DAYLIGHT"]);
+            s.push_str(&format!("BEGIN:{kind}\n"));
+            if r.chance(85) {
+                s.push_str(&format!("DTSTART:{}\n", r.pick(DATES)));
+            }
+            if r.chance(85) {
+                s.push_str(&format!("TZOFFSETTO:{}\n", r.pick(OFFSETS)));
+            }
+            s.push_str(&format!("TZOFFSETFROM:{}\n", r.pick(OFFSETS)));
+            if r.chance(70) {
+                s.push_str(&format!(
+                    "RRULE:FREQ=YEARLY;BYMONTH={};BYDAY={}\n",
+                    r.pick(MONTHS),
+                    r.pick(BYDAYS)
+                ));
+            }
+            s.push_str(&format!("END:{kind}\n"));
+        }
+        s.push_str("END:VTIMEZONE\n");
+        s
+    }
+
+    fn vevent(r: &mut Rng) -> String {
+        let mut s = String::from("BEGIN:VEVENT\n");
+        if r.chance(60) {
+            s.push_str(&format!("UID:{}\n", r.pick(&["a", "b", "", "é"])));
+        }
+        if r.chance(95) {
+            s.push_str(&time_prop(r, "DTSTART"));
+            s.push('\n');
+        }
+        match r.below(3) {
+            0 => {
+                s.push_str(&time_prop(r, "DTEND"));
+                s.push('\n');
+            }
+            1 => s.push_str(&format!("DURATION:{}\n", r.pick(DURATIONS))),
+            _ => {}
+        }
+        if r.chance(70) {
+            s.push_str(&format!("RRULE:{}\n", rrule(r)));
+        }
+        for _ in 0..r.below(3) {
+            let list: Vec<&str> = (0..1 + r.below(3)).map(|_| r.pick(DATES)).collect();
+            if r.chance(50) {
+                s.push_str(&format!("EXDATE:{}\n", list.join(",")));
+            } else {
+                s.push_str(&format!(
+                    "EXDATE;TZID={}:{}\n",
+                    r.pick(TZIDS),
+                    list.join(",")
+                ));
+            }
+        }
+        if r.chance(15) {
+            s.push_str(&time_prop(r, "RECURRENCE-ID"));
+            s.push('\n');
+        }
+        if r.chance(10) {
+            s.push_str("STATUS:CANCELLED\n");
+        }
+        if r.chance(10) {
+            s.push_str("TRANSP:TRANSPARENT\n");
+        }
+        if r.chance(15) {
+            s.push_str("BEGIN:VALARM\nTRIGGER:-PT15M\nDURATION:PT5M\nEND:VALARM\n");
+        }
+        s.push_str("END:VEVENT\n");
+        s
+    }
+
+    fn calendar(r: &mut Rng) -> String {
+        let mut s = String::from("BEGIN:VCALENDAR\n");
+        if r.chance(30) {
+            s.push_str(&format!("X-WR-TIMEZONE:{}\n", r.pick(TZIDS)));
+        }
+        for _ in 0..r.below(3) {
+            s.push_str(&vtimezone(r));
+        }
+        for _ in 0..1 + r.below(5) {
+            s.push_str(&vevent(r));
+        }
+        s.push_str("END:VCALENDAR\n");
+        if r.chance(50) {
+            s = s.replace('\n', "\r\n");
+        }
+        s
+    }
+
+    fn char_cut(s: &str, at: usize) -> usize {
+        let mut at = at.min(s.len());
+        while !s.is_char_boundary(at) {
+            at -= 1;
+        }
+        at
+    }
+
+    fn mutate(r: &mut Rng, mut s: String) -> String {
+        for _ in 0..r.below(6) {
+            if s.is_empty() {
+                break;
+            }
+            let a = char_cut(&s, r.below(s.len() + 1));
+            let b = char_cut(&s, a + r.below(40)).max(a);
+            match r.below(6) {
+                0 => s.replace_range(a..b, ""),
+                1 => s.insert_str(a, r.pick(WEIRD)),
+                2 => s.truncate(a),
+                3 => {
+                    let piece = s[a..b].to_string();
+                    s.insert_str(b, &piece);
+                }
+                // Fold a line at an arbitrary point.
+                4 => s.insert_str(a, r.pick(&["\r\n ", "\n\t", "\n "])),
+                _ => {
+                    let n = r.pick(&["0", "9", "99999999999999999999", "-1", "+"]);
+                    s.replace_range(a..b, n);
+                }
+            }
+        }
+        s
+    }
+
+    fn garbage(r: &mut Rng) -> String {
+        let bytes: Vec<u8> = (0..r.below(400)).map(|_| r.next() as u8).collect();
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    fn window(r: &mut Rng) -> (DateTime<Utc>, DateTime<Utc>) {
+        let now = Utc.with_ymd_and_hms(2026, 3, 20, 12, 0, 0).unwrap();
+        match r.below(5) {
+            0 => (
+                Utc.with_ymd_and_hms(1, 1, 1, 0, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(9999, 12, 31, 0, 0, 0).unwrap(),
+            ),
+            1 => (
+                Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2026, 4, 1, 0, 0, 0).unwrap(),
+            ),
+            // What `external_calendar::sync_one` actually asks for.
+            _ => (now - Duration::days(42), now + Duration::days(183)),
+        }
+    }
+
+    fn run(seed: u64, cases: u64, per_case_limit: StdDuration) {
+        let mut slowest = (StdDuration::ZERO, 0u64);
+        let mut errors = 0u64;
+        let mut produced = 0usize;
+        for case in 0..cases {
+            let mut r = Rng((seed ^ case.wrapping_mul(0x9E37_79B9_7F4A_7C15)) | 1);
+            let input = match r.below(10) {
+                0 => garbage(&mut r),
+                1..=3 => calendar(&mut r),
+                _ => {
+                    let c = calendar(&mut r);
+                    mutate(&mut r, c)
+                }
+            };
+            let (from, to) = window(&mut r);
+            let include_all_day = r.chance(50);
+            let started = Instant::now();
+            let result =
+                std::panic::catch_unwind(|| busy_intervals(&input, from, to, include_all_day));
+            let took = started.elapsed();
+            match result {
+                Err(_) => panic!(
+                    "busy_intervals panicked (seed {seed:#x}, case {case}, window {from}..{to}, all_day {include_all_day}) on:\n{input:?}"
+                ),
+                Ok(Ok(out)) => produced += out.len(),
+                Ok(Err(_)) => errors += 1,
+            }
+            if took > slowest.0 {
+                slowest = (took, case);
+            }
+            assert!(
+                took < per_case_limit,
+                "busy_intervals took {took:?} (seed {seed:#x}, case {case}) on:\n{input:?}"
+            );
+        }
+        eprintln!(
+            "fuzzed {cases} feeds from seed {seed:#x}: {produced} intervals, {errors} refused; slowest {:?} (case {})",
+            slowest.0, slowest.1
+        );
+    }
+
+    fn cases() -> u64 {
+        std::env::var("ICS_FUZZ_CASES")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(3_000)
+    }
+
+    fn seed() -> u64 {
+        std::env::var("ICS_FUZZ_SEED")
+            .ok()
+            .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+            .unwrap_or(0x05EE_D1C5)
+    }
+
+    // --- Headroom: the caps must not refuse a real heavy work calendar ----
+
+    /// 300 recurring series (20 daily-on-weekdays stand-ups, 130 weekly,
+    /// 100 fortnightly, 50 monthly, half of them started years ago and a
+    /// third counted with COUNT from their start) plus 3000 one-off
+    /// meetings, in Paris time with a VTIMEZONE, over the real sync window.
+    fn heavy_work_calendar(now: DateTime<Utc>) -> String {
+        let mut s = String::from(
+            "BEGIN:VCALENDAR\r\nX-WR-TIMEZONE:Europe/Paris\r\n\
+BEGIN:VTIMEZONE\r\nTZID:Europe/Paris\r\n\
+BEGIN:DAYLIGHT\r\nDTSTART:19810329T020000\r\nTZOFFSETTO:+0200\r\nRRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU\r\nEND:DAYLIGHT\r\n\
+BEGIN:STANDARD\r\nDTSTART:19961027T030000\r\nTZOFFSETTO:+0100\r\nRRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU\r\nEND:STANDARD\r\n\
+END:VTIMEZONE\r\n",
+        );
+        let days = ["MO", "TU", "WE", "TH", "FR"];
+        for i in 0..300u32 {
+            let started = if i % 2 == 0 { 2016 + i % 9 } else { 2026 };
+            let rule = match i {
+                0..20 => "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR".to_string(),
+                20..150 => format!("FREQ=WEEKLY;BYDAY={}", days[i as usize % 5]),
+                150..250 => format!("FREQ=WEEKLY;INTERVAL=2;BYDAY={}", days[i as usize % 5]),
+                _ => format!("FREQ=MONTHLY;BYDAY={}{}", 1 + i % 4, days[i as usize % 5]),
+            };
+            let rule = if i % 3 == 0 {
+                format!("{rule};COUNT=2000")
+            } else {
+                rule
+            };
+            let hour = 8 + i % 10;
+            s.push_str(&format!(
+                "BEGIN:VEVENT\r\nUID:series-{i}\r\nDTSTART;TZID=Europe/Paris:{started}0105T{hour:02}{:02}00\r\nDTEND;TZID=Europe/Paris:{started}0105T{hour:02}{:02}00\r\nRRULE:{rule}\r\nEXDATE;TZID=Europe/Paris:20260406T{hour:02}0000\r\nEND:VEVENT\r\n",
+                (i % 2) * 30,
+                (i % 2) * 30 + 25,
+            ));
+        }
+        let first = (now - Duration::days(42)).date_naive();
+        for j in 0..3000i64 {
+            let day = first + Duration::days(j % 225);
+            let hour = 8 + j % 10;
+            s.push_str(&format!(
+                "BEGIN:VEVENT\r\nUID:one-{j}\r\nDTSTART;TZID=Europe/Paris:{}T{hour:02}1500\r\nDURATION:PT45M\r\nEND:VEVENT\r\n",
+                day.format("%Y%m%d"),
+            ));
+        }
+        s.push_str("END:VCALENDAR\r\n");
+        s
+    }
+
+    #[test]
+    fn a_heavy_real_work_calendar_fits_well_inside_every_cap() {
+        let now = Utc.with_ymd_and_hms(2026, 3, 20, 12, 0, 0).unwrap();
+        let feed = heavy_work_calendar(now);
+        let started = Instant::now();
+
+        let out = busy_intervals(
+            &feed,
+            now - Duration::days(42),
+            now + Duration::days(183),
+            false,
+        )
+        .unwrap();
+
+        eprintln!(
+            "heavy calendar: {} bytes, {} intervals, parsed in {:?}",
+            feed.len(),
+            out.len(),
+            started.elapsed()
+        );
+        assert!(
+            feed.len() < 5 * 1024 * 1024 / 4,
+            "body well under the size cap"
+        );
+        assert!(
+            out.len() * 3 / 2 < MAX_INTERVALS_PER_FEED,
+            "{} intervals leaves under 1.5x headroom",
+            out.len()
+        );
+    }
+
+    // --- Work that no cap counts --------------------------------------------
+    //
+    // Every series occurrence is checked against every RECURRENCE-ID sharing
+    // its UID, and every EXDATE on it, before it is counted towards
+    // `MAX_INTERVALS_PER_FEED`. An overridden occurrence is never pushed, so
+    // the interval cap never fires; the period budget counts periods, not
+    // comparisons. Only the 5 MB body bounds it.
+    fn override_storm(series: usize, overrides: usize, cancel_every_slot: bool) -> String {
+        let mut s = String::from("BEGIN:VCALENDAR\r\n");
+        for _ in 0..series {
+            s.push_str("BEGIN:VEVENT\r\nUID:x\r\nDTSTART:20260201T090000Z\r\nDTEND:20260201T100000Z\r\nRRULE:FREQ=DAILY\r\nEND:VEVENT\r\n");
+        }
+        let first = NaiveDate::from_ymd_opt(2026, 2, 1).unwrap();
+        for k in 0..overrides {
+            // Distinct slots, none of which the series has, so every
+            // occurrence scans the whole list.
+            let d = first + Duration::days((k % 300) as i64);
+            s.push_str(&format!(
+                "BEGIN:VEVENT\r\nUID:x\r\nRECURRENCE-ID:{}T{:02}{:02}00Z\r\nEND:VEVENT\r\n",
+                d.format("%Y%m%d"),
+                10 + (k / 300) % 12,
+                (k / 3600) % 60
+            ));
+        }
+        if cancel_every_slot {
+            // Last, so each occurrence scans the whole list before it finds
+            // its own. Every occurrence is then skipped - none is pushed, so
+            // the interval cap cannot fire however many series there are.
+            for day in 0..300 {
+                let d = first + Duration::days(day);
+                s.push_str(&format!(
+                    "BEGIN:VEVENT\r\nUID:x\r\nRECURRENCE-ID:{}T090000Z\r\nEND:VEVENT\r\n",
+                    d.format("%Y%m%d")
+                ));
+            }
+        }
+        s.push_str("END:VCALENDAR\r\n");
+        s
+    }
+
+    // ⚠️ Repro. 400 series sharing a UID with 38,000 RECURRENCE-IDs, every
+    // occurrence cancelled by the last few: 2.5 MB, half the size cap, and
+    // no cap fires because nothing is pushed. The cost is
+    // occurrences x overrides; measured in release at 10.6 s for 200 series
+    // and 108 s for 2,000, linear, so 20,000 series (4.7 MB, still under
+    // the size cap and under the 5M period budget) holds a sync for ~18
+    // minutes. `sync_all` awaits feeds one at a time, so that is everybody's
+    // sync, every hour, and the connect request hangs for as long.
+    #[test]
+    fn many_overrides_on_a_shared_uid_cost_linear_not_quadratic_time() {
+        let now = Utc.with_ymd_and_hms(2026, 3, 20, 12, 0, 0).unwrap();
+        let feed = override_storm(400, 38_000, true);
+        assert!(feed.len() < 5 * 1024 * 1024 / 2);
+        let started = Instant::now();
+
+        let out = busy_intervals(
+            &feed,
+            now - Duration::days(42),
+            now + Duration::days(183),
+            false,
+        );
+
+        let took = started.elapsed();
+        assert!(out.is_ok_and(|o| o.is_empty()));
+        assert!(
+            took < StdDuration::from_secs(5),
+            "a 2.5 MB feed held the parser for {took:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "timing probe; run with --ignored --nocapture"]
+    fn override_storm_cost() {
+        let now = Utc.with_ymd_and_hms(2026, 3, 20, 12, 0, 0).unwrap();
+        let scale: usize = std::env::var("STORM_SERIES")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(200);
+        for (series, overrides, cancel) in [
+            (1, 1000, false),
+            (10, 10_000, false),
+            (80, 60_000, false),
+            (scale, 38_000, true),
+        ] {
+            let feed = override_storm(series, overrides, cancel);
+            let started = Instant::now();
+            let out = busy_intervals(
+                &feed,
+                now - Duration::days(42),
+                now + Duration::days(183),
+                false,
+            );
+            eprintln!(
+                "{series} series x {overrides} overrides: {} bytes, {:?} -> {:?}",
+                feed.len(),
+                started.elapsed(),
+                out.map(|o| o.len()).map_err(|e| e.to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn hostile_generated_feeds_never_panic_or_run_away() {
+        // Generous: an unoptimised build on a shared container. The point is
+        // "terminates", not a benchmark.
+        run(seed(), cases(), StdDuration::from_secs(10));
+    }
+}
