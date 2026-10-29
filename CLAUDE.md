@@ -1244,9 +1244,27 @@ sync) is in place for them.
   cached window** rather than importing a prefix (which would show someone
   free when they aren't): 5 MB per feed, counted while streaming so a
   chunked or lying response can't get around it; 20,000 busy blocks per
-  feed in the window; and 5M recurrence periods walked per feed, since the
-  per-rule cap alone let thousands of `COUNT` rules from year 1 burn
-  minutes of CPU.
+  feed in the window; a **30 s deadline per fetch** (connect through the
+  last body byte - a server that never answers, or trickles bytes under the
+  5 MB cap, otherwise held the sync forever); and **5M units of work per
+  feed**, which is what bounds the parse's CPU. A unit is a recurrence
+  period walked, a candidate date in one, or an occurrence *considered* -
+  including one an `EXDATE`/`RECURRENCE-ID` then skips. ⚠️ It must count
+  what is considered, not what is emitted: a skipped occurrence never
+  reaches the 20,000-block cap, so 20,000 series sharing a UID with every
+  occurrence overridden ran ~19 minutes in a 4.5 MB feed and tripped
+  nothing (now refused in ~0.13 s). Every unit is O(1) because overrides
+  and exdates are hash sets keyed by instant (or day, for all-day values) -
+  they were scanned per occurrence. The budget has to bound CPU itself:
+  the parse runs in `spawn_blocking`, which a timeout cannot cancel. A heavy
+  real work calendar spends ~61k. Smaller belts on per-feed cost that isn't
+  occurrences: 32 observances kept per `VTIMEZONE` (the latest onsets),
+  256 distinct `TZID`s resolved (later ones read in the default zone), 16
+  cities tried per Outlook display name, and logged TZIDs cut to 64 chars.
+- `sync_all` runs **8 feeds at once** (a `JoinSet` behind a semaphore), so a
+  feed at its 30 s deadline costs its own sync, not everybody's. The
+  deadline is applied per request in `fetch_feed`, not on the shared client,
+  so it holds whatever client a caller passes.
 - Feed fetches send a `User-Agent` (per request, not on the shared client
   the Discord calls also use); some providers refuse requests without one.
 - **All-day blocks are excluded** from busy time - a day-long "Annual leave"

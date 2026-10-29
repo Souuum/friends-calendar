@@ -57,6 +57,19 @@ pub const SYNC_INTERVAL_MINUTES: u64 = 60;
 /// an unbounded body would let one link exhaust the server's memory.
 pub const MAX_FEED_BYTES: usize = 5 * 1024 * 1024;
 
+/// The longest one feed's fetch may take, from connecting to the last byte.
+///
+/// ⚠️ Overall, not per read. A server that accepts and never answers, or
+/// trickles a byte every few seconds under [`MAX_FEED_BYTES`], otherwise
+/// holds its sync - and, while feeds ran one at a time, everybody's - for as
+/// long as it likes. Real providers answer in a second or two.
+pub const FEED_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Feeds synced at once by [`sync_all`]. Enough that one slow feed (up to
+/// [`FEED_FETCH_TIMEOUT`]) doesn't hold up the rest; few enough that an
+/// hourly pass doesn't open a connection per user all at once.
+const SYNC_CONCURRENCY: usize = 8;
+
 /// Reads a feed's body, refusing it once it passes [`MAX_FEED_BYTES`].
 ///
 /// ⚠️ Streamed and counted, not `text()` then measured: the point is to stop
@@ -84,6 +97,44 @@ async fn read_capped(mut response: reqwest::Response) -> Result<String> {
     // Lossy is safe here: the parser reads only ASCII property names and
     // values, never the text a non-UTF-8 charset would garble.
     Ok(String::from_utf8_lossy(&body).into_owned())
+}
+
+/// Fetches a feed's body within [`FEED_FETCH_TIMEOUT`].
+///
+/// The deadline is applied here, per request, rather than on the shared
+/// client: whatever client a caller hands in, the feed is bounded. The
+/// `tokio::time::timeout` covers connect, headers and the whole body read;
+/// reqwest's per-request timeout is the same bound from inside, so the
+/// connection is torn down rather than left open.
+async fn fetch_feed(http: &Client, url: &str) -> Result<String> {
+    let fetch = async {
+        let response = http
+            .get(url)
+            .header(reqwest::header::USER_AGENT, FEED_USER_AGENT)
+            .timeout(FEED_FETCH_TIMEOUT)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(anyhow!("Calendar returned {}", response.status()));
+        }
+        read_capped(response).await
+    };
+    let too_slow = || {
+        anyhow!(
+            "This calendar took longer than {} seconds to download",
+            FEED_FETCH_TIMEOUT.as_secs()
+        )
+    };
+    match tokio::time::timeout(FEED_FETCH_TIMEOUT, fetch).await {
+        Ok(Err(e))
+            if e.downcast_ref::<reqwest::Error>()
+                .is_some_and(reqwest::Error::is_timeout) =>
+        {
+            Err(too_slow())
+        }
+        Ok(result) => result,
+        Err(_) => Err(too_slow()),
+    }
 }
 
 /// What turns a feed into busy intervals. A parameter so tests can stand in
@@ -277,15 +328,7 @@ async fn sync_one_with(
     let from = now - Duration::days(SYNC_LOOKBACK_DAYS);
     let to = now + Duration::days(SYNC_LOOKAHEAD_DAYS);
 
-    let response = http
-        .get(credential)
-        .header(reqwest::header::USER_AGENT, FEED_USER_AGENT)
-        .send()
-        .await?;
-    if !response.status().is_success() {
-        return Err(anyhow!("Calendar returned {}", response.status()));
-    }
-    let body = read_capped(response).await?;
+    let body = fetch_feed(http, credential).await?;
 
     let intervals = run_isolated(move || parse(&body, from, to)).await?;
 
@@ -351,17 +394,30 @@ async fn sync_all_with(
             .fetch_all(db)
             .await?;
 
-    let mut synced = 0;
+    // A few at a time, so a slow feed costs its own deadline rather than
+    // everybody's. Each feed is its own task, so a panic anywhere in its
+    // sync - not only the parse, which `run_isolated` already covers - is a
+    // `JoinError` for that feed rather than the end of the pass.
+    let permits = std::sync::Arc::new(tokio::sync::Semaphore::new(SYNC_CONCURRENCY));
+    let mut tasks = tokio::task::JoinSet::new();
     for (id, credential) in calendars {
-        // Each feed in its own task, so a panic anywhere in its sync - not
-        // only the parse, which `run_isolated` already covers - is a
-        // `JoinError` for this feed rather than the end of the loop.
-        let (task_db, task_http) = (db.clone(), http.clone());
-        let outcome = tokio::spawn(async move {
+        let (task_db, task_http, permits) = (db.clone(), http.clone(), permits.clone());
+        let task = tokio::spawn(async move {
+            let _permit = permits.acquire_owned().await;
             sync_one_with(&task_db, &task_http, id, &credential, now, parse).await
-        })
-        .await
-        .unwrap_or_else(|e| Err(anyhow!("Calendar sync was interrupted: {e}")));
+        });
+        tasks.spawn(async move {
+            let outcome = task
+                .await
+                .unwrap_or_else(|e| Err(anyhow!("Calendar sync was interrupted: {e}")));
+            (id, outcome)
+        });
+    }
+
+    let mut synced = 0;
+    while let Some(joined) = tasks.join_next().await {
+        // The outer task only awaits the inner one and cannot panic.
+        let Ok((id, outcome)) = joined else { continue };
         match outcome {
             Ok(_) => synced += 1,
             Err(e) => {
@@ -934,6 +990,9 @@ mod tests {
         );
         assert_eq!(cached(&db, ok_id).await, 1);
         assert!(last_error(&db, silent_id).await.is_some());
+        // Builder: and it says why, in words the settings card can show.
+        let why = last_error(&db, silent_id).await.unwrap();
+        assert!(why.contains("took longer than 30 seconds"), "{why}");
     }
 
     // ⚠️ A cap, not a truncation: storing the first N blocks would make

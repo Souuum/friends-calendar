@@ -37,8 +37,9 @@
 //! arithmetically to the requested window rather than walking from
 //! `DTSTART`, so a stand-up created years ago costs the same as one created
 //! last week; only a `COUNT` rule is walked from the start, because `COUNT`
-//! is counted from there. A hard cap on periods walked, per rule and per
-//! feed, is a second belt, and a feed producing more than
+//! is counted from there. A hard cap on periods walked per rule, and a
+//! feed-wide budget on every period, date and occurrence considered
+//! (`MAX_WORK_PER_FEED`), are a second belt, and a feed producing more than
 //! `MAX_INTERVALS_PER_FEED` blocks is refused rather than truncated.
 //!
 //! ⚠️ The feed is any URL somebody pasted. Every piece of arithmetic on its
@@ -54,7 +55,7 @@
 //! would leave a handful of occurrences slightly wrong rather than dropping
 //! a calendar.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use anyhow::{Result, anyhow, bail};
@@ -198,6 +199,23 @@ struct VTimezone {
     observances: Vec<Observance>,
 }
 
+/// Observances kept per `VTIMEZONE`. See `TzContext::from_lines`.
+const MAX_OBSERVANCES: usize = 32;
+
+/// Distinct `TZID`s resolved per feed. Resolving one tries every naming
+/// scheme against chrono-tz's whole table; a real feed names a handful of
+/// zones, and a feed naming thousands would cost that table thousands of
+/// times. Past this, a new name reads as the calendar's default zone.
+const MAX_ZONES_PER_FEED: usize = 256;
+
+/// Cities tried from an Outlook display name. Real ones list up to six.
+const MAX_DISPLAY_NAME_CITIES: usize = 16;
+
+/// Truncates feed text before it reaches a log line.
+fn for_log(s: &str) -> &str {
+    &s[..s.char_indices().nth(64).map_or(s.len(), |(i, _)| i)]
+}
+
 impl VTimezone {
     /// Offset in seconds east of UTC at a wall-clock time: whichever
     /// observance most recently began.
@@ -292,7 +310,7 @@ fn resolve_named(name: &str) -> Option<Tz> {
     // Outlook's display name: the cities listed share the zone's rules by
     // definition, so the first one IANA knows by name settles it.
     if let Some((_, cities)) = name.strip_prefix('(').and_then(|n| n.split_once(')')) {
-        for city in cities.split(',') {
+        for city in cities.split(',').take(MAX_DISPLAY_NAME_CITIES) {
             let wanted = format!("/{}", city.trim().replace(' ', "_"));
             if wanted.len() < 3 {
                 continue;
@@ -311,12 +329,13 @@ struct TzContext {
     /// `X-WR-TIMEZONE`: the calendar's own zone, for floating times.
     default: Option<Zone>,
     cache: HashMap<String, Zone>,
+    warned_too_many: bool,
 }
 
 impl TzContext {
     fn from_lines(lines: &[String]) -> Self {
         let mut vtimezones = HashMap::new();
-        let mut default = None;
+        let mut default_name: Option<String> = None;
 
         let mut in_vtz = false;
         let mut tzid: Option<String> = None;
@@ -336,6 +355,16 @@ impl TzContext {
                     continue;
                 }
                 "END:VTIMEZONE" => {
+                    // ⚠️ Every conversion in this zone walks its observances,
+                    // so a VTIMEZONE of thousands made every occurrence that
+                    // many times dearer. Real ones have two, a historical
+                    // export a few dozen; the latest onsets are the ones
+                    // that decide any time in the sync window.
+                    if observances.len() > MAX_OBSERVANCES {
+                        observances.sort_by_key(|o: &Observance| std::cmp::Reverse(o.start));
+                        observances.truncate(MAX_OBSERVANCES);
+                        observances.sort_by_key(|o| o.start);
+                    }
                     if let Some(id) = tzid.take() {
                         vtimezones.insert(
                             id,
@@ -376,14 +405,19 @@ impl TzContext {
                     _ => {}
                 }
             } else if name == "X-WR-TIMEZONE" {
-                default = resolve_named(&value).map(Zone::Named);
+                // Resolved once, after the loop: a feed repeating this line
+                // would otherwise pay for a full resolution per copy.
+                default_name = Some(value);
             }
         }
 
         TzContext {
             vtimezones,
-            default,
+            default: default_name
+                .and_then(|name| resolve_named(&name))
+                .map(Zone::Named),
             cache: HashMap::new(),
+            warned_too_many: false,
         }
     }
 
@@ -394,6 +428,15 @@ impl TzContext {
     fn zone_for(&mut self, tzid: &str) -> Zone {
         if let Some(zone) = self.cache.get(tzid) {
             return zone.clone();
+        }
+        if self.cache.len() >= MAX_ZONES_PER_FEED {
+            if !self.warned_too_many {
+                self.warned_too_many = true;
+                tracing::warn!(
+                    "An imported calendar names more than {MAX_ZONES_PER_FEED} time zones; reading the rest in its default zone"
+                );
+            }
+            return self.floating();
         }
         let zone = if let Some(tz) = resolve_named(tzid) {
             Zone::Named(tz)
@@ -410,7 +453,12 @@ impl TzContext {
         } else {
             // ⚠️ Not silent: a wrong zone puts every meeting in this feed
             // hours out, and this line is the only trace of why.
-            tracing::warn!("Unrecognised TZID {tzid:?} in an imported calendar; reading it as UTC");
+            // Truncated: the TZID is feed text, and a log line is no place
+            // for an unbounded amount of it.
+            tracing::warn!(
+                "Unrecognised TZID {:?} in an imported calendar; reading it as UTC",
+                for_log(tzid)
+            );
             Zone::Utc
         };
         self.cache.insert(tzid.to_string(), zone.clone());
@@ -448,15 +496,36 @@ impl IcsTime {
     fn utc(&self) -> Option<DateTime<Utc>> {
         self.zone.to_utc(self.local)
     }
+}
 
-    /// Whether this (an `EXDATE` or `RECURRENCE-ID`) names the occurrence.
-    /// A date-only value names the whole day.
-    fn names(&self, local: NaiveDateTime, utc: DateTime<Utc>) -> bool {
-        if self.all_day {
-            self.local.date() == local.date()
-        } else {
-            self.utc() == Some(utc)
+/// The occurrences a set of `EXDATE`s or `RECURRENCE-ID`s removes from a
+/// series, indexed for O(1) lookup.
+///
+/// ⚠️ Hashed, not scanned. Each occurrence of a series is checked against
+/// every override sharing its UID; a scan made that occurrences x overrides,
+/// and since a skipped occurrence is never pushed, no cap counted it - one
+/// 4.5 MB feed of 20,000 series sharing a UID held the parser for ~19
+/// minutes.
+#[derive(Default)]
+struct Slots {
+    /// Timed values, as the instant they name.
+    instants: HashSet<DateTime<Utc>>,
+    /// Date-only values name the whole day, matched on the occurrence's
+    /// wall-clock date.
+    days: HashSet<NaiveDate>,
+}
+
+impl Slots {
+    fn add(&mut self, time: &IcsTime) {
+        if time.all_day {
+            self.days.insert(time.local.date());
+        } else if let Some(utc) = time.utc() {
+            self.instants.insert(utc);
         }
+    }
+
+    fn names(&self, local: NaiveDateTime, utc: DateTime<Utc>) -> bool {
+        self.instants.contains(&utc) || self.days.contains(&local.date())
     }
 }
 
@@ -834,11 +903,12 @@ fn until_instant(raw: &str, zone: &Zone) -> Option<DateTime<Utc>> {
 /// walked from the start, since that's where it counts from - it ends by
 /// itself. `MAX_PERIODS` is a last belt for a pathological rule.
 ///
-/// `budget` is shared by every rule in the feed and counts periods walked.
-/// The per-rule cap alone still let a feed of tens of thousands of
-/// `COUNT` rules starting in year 1 walk billions of periods; running out
-/// of budget fails the whole feed with [`TooComplex`] rather than quietly
-/// importing part of it.
+/// `budget` is shared by the whole feed (see [`MAX_WORK_PER_FEED`]) and is
+/// charged for every period walked and every candidate date in it. The
+/// per-rule cap alone still let a feed of tens of thousands of `COUNT`
+/// rules starting in year 1 walk billions of periods; running out of budget
+/// fails the whole feed with [`TooComplex`] rather than quietly importing
+/// part of it.
 fn expand(
     rule: &Rrule,
     start: &IcsTime,
@@ -884,7 +954,7 @@ fn expand(
     let mut out = Vec::new();
     let mut emitted = 0u32;
     for k in first_k..first_k.saturating_add(MAX_PERIODS) {
-        *budget = budget.checked_sub(1).ok_or(TooComplex)?;
+        spend(budget)?;
         let Some((period_start, dates)) = period(rule, d0, week0, k) else {
             break;
         };
@@ -892,6 +962,7 @@ fn expand(
             break;
         }
         for date in dates {
+            spend(budget)?;
             let local = date.and_time(time);
             if local < start.local {
                 continue;
@@ -919,9 +990,23 @@ fn expand(
 #[derive(Debug)]
 struct TooComplex;
 
-/// Recurrence periods one feed may walk in total. A busy real calendar walks
-/// a few thousand; this leaves three orders of magnitude of headroom.
-const MAX_PERIODS_PER_FEED: u64 = 5_000_000;
+/// Units of work one feed may cost in total: every recurrence period walked,
+/// every candidate date inside one, and every occurrence considered for
+/// output - including the ones an `EXDATE` or `RECURRENCE-ID` then skips.
+///
+/// ⚠️ It must count what is *considered*, not what is emitted. A skipped
+/// occurrence never reaches [`MAX_INTERVALS_PER_FEED`], so a budget charged
+/// only on output can be starved: thousands of series whose every
+/// occurrence is cancelled cost unbounded time and trip nothing. Every unit
+/// here is O(1) (the override lookups are hashed - see [`Slots`]), so this
+/// bounds the parse's CPU, which matters because a `spawn_blocking` parse
+/// cannot be cancelled. A heavy real work calendar spends ~61k.
+const MAX_WORK_PER_FEED: u64 = 5_000_000;
+
+fn spend(budget: &mut u64) -> Result<(), TooComplex> {
+    *budget = budget.checked_sub(1).ok_or(TooComplex)?;
+    Ok(())
+}
 
 /// Busy intervals one feed may produce inside the sync window.
 ///
@@ -941,7 +1026,7 @@ struct RawEvent {
     end: Option<IcsTime>,
     duration: Option<Duration>,
     rrule: Option<Rrule>,
-    exdates: Vec<IcsTime>,
+    exdates: Slots,
     recurrence_id: Option<IcsTime>,
     // A cancelled event still appears in many exports; it should not block.
     cancelled: bool,
@@ -1000,7 +1085,7 @@ fn collect_events(lines: &[String], ctx: &mut TzContext) -> Vec<RawEvent> {
             "EXDATE" => {
                 for one in value.split(',') {
                     if let Some(t) = parse_time(&params, one, ctx) {
-                        event.exdates.push(t);
+                        event.exdates.add(&t);
                     }
                 }
             }
@@ -1023,6 +1108,17 @@ pub fn busy_intervals(
     to: DateTime<Utc>,
     include_all_day: bool,
 ) -> Result<Vec<BusyInterval>> {
+    busy_intervals_with_work(input, from, to, include_all_day).map(|(out, _)| out)
+}
+
+/// [`busy_intervals`], plus how much of [`MAX_WORK_PER_FEED`] it spent - so
+/// a test can hold real calendars to their headroom.
+fn busy_intervals_with_work(
+    input: &str,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    include_all_day: bool,
+) -> Result<(Vec<BusyInterval>, u64)> {
     let lines = unfold(input);
     let mut ctx = TzContext::from_lines(&lines);
     let events = collect_events(&lines, &mut ctx);
@@ -1030,15 +1126,16 @@ pub fn busy_intervals(
     // A moved or cancelled occurrence is a second VEVENT with the series' UID
     // and a RECURRENCE-ID naming the slot it replaces. Whatever it says, the
     // series no longer owns that slot.
-    let mut replaced: HashMap<&str, Vec<&IcsTime>> = HashMap::new();
+    let mut replaced: HashMap<&str, Slots> = HashMap::new();
     for event in &events {
         if let (Some(uid), Some(slot)) = (&event.uid, &event.recurrence_id) {
-            replaced.entry(uid.as_str()).or_default().push(slot);
+            replaced.entry(uid.as_str()).or_default().add(slot);
         }
     }
 
+    let too_complex = || anyhow!("This calendar's repeating events are too complex to import");
     let mut out = Vec::new();
-    let mut budget = MAX_PERIODS_PER_FEED;
+    let mut budget = MAX_WORK_PER_FEED;
     for event in &events {
         if event.cancelled || event.transparent {
             continue;
@@ -1075,9 +1172,8 @@ pub fn busy_intervals(
                 let Some(reach) = from.checked_sub_signed(length) else {
                     continue;
                 };
-                let occurrences = expand(rule, start, reach, to, &mut budget).map_err(|_| {
-                    anyhow!("This calendar's repeating events are too complex to import")
-                })?;
+                let occurrences =
+                    expand(rule, start, reach, to, &mut budget).map_err(|_| too_complex())?;
                 (
                     occurrences,
                     event.uid.as_deref().and_then(|uid| replaced.get(uid)),
@@ -1087,10 +1183,13 @@ pub fn busy_intervals(
         };
 
         for (local, occurrence) in occurrences {
-            if event.exdates.iter().any(|x| x.names(local, occurrence)) {
+            // Charged before the skips below, so a feed whose every
+            // occurrence is cancelled still runs out.
+            spend(&mut budget).map_err(|_| too_complex())?;
+            if event.exdates.names(local, occurrence) {
                 continue;
             }
-            if overrides.is_some_and(|slots| slots.iter().any(|x| x.names(local, occurrence))) {
+            if overrides.is_some_and(|slots| slots.names(local, occurrence)) {
                 continue;
             }
             let Some(end) = occurrence.checked_add_signed(length) else {
@@ -1112,7 +1211,7 @@ pub fn busy_intervals(
         }
     }
 
-    Ok(out)
+    Ok((out, MAX_WORK_PER_FEED - budget))
 }
 
 #[cfg(test)]
@@ -2046,6 +2145,111 @@ BEGIN:VEVENT\nDTSTART;TZID=Odd:20260302T090000\nDTEND;TZID=Odd:20260302T100000\n
         assert!(err.to_string().contains("too complex"), "{err}");
     }
 
+    // ⚠️ A cancelled occurrence is never pushed, so only a budget charged on
+    // every occurrence *considered* can stop a feed of thousands of series
+    // whose every occurrence is overridden. 9,000 daily series cost ~4.2M
+    // in periods and dates alone - under the budget - and ~6.2M once the
+    // skipped occurrences are charged too: removing that charge makes this
+    // feed import as "nothing busy" instead of being refused.
+    #[test]
+    fn occurrences_skipped_by_an_override_still_cost_budget() {
+        let mut s = String::new();
+        for _ in 0..9_000 {
+            s.push_str("BEGIN:VEVENT\nUID:x\nDTSTART:20260201T090000Z\nDTEND:20260201T100000Z\nRRULE:FREQ=DAILY\nEND:VEVENT\n");
+        }
+        let first = NaiveDate::from_ymd_opt(2026, 2, 1).unwrap();
+        for day in 0..300 {
+            let d = first + Duration::days(day);
+            s.push_str(&format!(
+                "BEGIN:VEVENT\nUID:x\nRECURRENCE-ID:{}T090000Z\nEND:VEVENT\n",
+                d.format("%Y%m%d")
+            ));
+        }
+        let now = at(2026, 3, 20, 12);
+
+        let err = busy_intervals(
+            &cal(&s),
+            now - Duration::days(42),
+            now + Duration::days(183),
+            false,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("too complex"), "{err}");
+    }
+
+    #[test]
+    fn exdates_and_overrides_still_match_by_instant_and_by_day() {
+        // A zoned EXDATE names the same instant as the UTC occurrence; an
+        // all-day RECURRENCE-ID names the whole day.
+        let out = parse(
+            "BEGIN:VEVENT\nUID:s\nDTSTART;TZID=Europe/Paris:20260302T090000\nDTEND;TZID=Europe/Paris:20260302T100000\nRRULE:FREQ=DAILY;COUNT=4\nEXDATE:20260303T080000Z\nEND:VEVENT\n\
+BEGIN:VEVENT\nUID:s\nRECURRENCE-ID;VALUE=DATE:20260304\nSTATUS:CANCELLED\nEND:VEVENT\n",
+        );
+
+        assert_eq!(
+            out.iter().map(|i| i.start).collect::<Vec<_>>(),
+            vec![at(2026, 3, 2, 8), at(2026, 3, 5, 8)]
+        );
+    }
+
+    // Every conversion in a VTIMEZONE-only zone walks its observances, so a
+    // VTIMEZONE of thousands multiplied the cost of every occurrence in it.
+    // Only the latest onsets are kept, and they are the ones that decide.
+    #[test]
+    fn a_vtimezone_with_thousands_of_observances_keeps_the_ones_that_matter() {
+        let mut s = String::from("BEGIN:VTIMEZONE\nTZID:Custom/Paris\n");
+        for i in 0..5_000 {
+            s.push_str(&format!(
+                "BEGIN:STANDARD\nDTSTART:{}0101T000000\nTZOFFSETTO:+0900\nEND:STANDARD\n",
+                1000 + i % 900
+            ));
+        }
+        s.push_str(
+            "BEGIN:DAYLIGHT\nDTSTART:19810329T020000\nTZOFFSETTO:+0200\nRRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU\nEND:DAYLIGHT\n\
+BEGIN:STANDARD\nDTSTART:19961027T030000\nTZOFFSETTO:+0100\nRRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU\nEND:STANDARD\n\
+END:VTIMEZONE\n\
+BEGIN:VEVENT\nDTSTART;TZID=Custom/Paris:20260302T090000\nDTEND;TZID=Custom/Paris:20260302T100000\nEND:VEVENT\n\
+BEGIN:VEVENT\nDTSTART;TZID=Custom/Paris:20260315T090000\nDTEND;TZID=Custom/Paris:20260315T100000\nRRULE:FREQ=DAILY;COUNT=30\nEND:VEVENT\n",
+        );
+
+        let out = parse(&s);
+
+        assert_eq!(out[0].start, at(2026, 3, 2, 8), "winter: +01:00");
+        assert!(
+            out.iter().any(|i| i.start == at(2026, 3, 30, 7)),
+            "summer: +02:00"
+        );
+    }
+
+    #[test]
+    fn a_feed_naming_too_many_zones_reads_the_rest_in_its_default() {
+        let mut s = String::from("X-WR-TIMEZONE:America/New_York\n");
+        for i in 0..MAX_ZONES_PER_FEED {
+            s.push_str(&format!(
+                "BEGIN:VEVENT\nDTSTART;TZID=\"(UTC+01:00) Nowhere{i}, Elsewhere\":20260302T090000\nDTEND;TZID=\"(UTC+01:00) Nowhere{i}, Elsewhere\":20260302T100000\nEND:VEVENT\n"
+            ));
+        }
+        s.push_str("BEGIN:VEVENT\nDTSTART;TZID=Europe/Paris:20260302T090000\nDTEND;TZID=Europe/Paris:20260302T100000\nEND:VEVENT\n");
+
+        let out = parse(&s);
+
+        assert_eq!(out.len(), MAX_ZONES_PER_FEED + 1);
+        assert_eq!(out[0].start, at(2026, 3, 2, 8), "resolved before the cap");
+        assert_eq!(
+            out.last().unwrap().start,
+            at(2026, 3, 2, 14),
+            "past the cap: read in X-WR-TIMEZONE"
+        );
+    }
+
+    #[test]
+    fn log_text_from_a_feed_is_truncated_on_a_char_boundary() {
+        assert_eq!(for_log("Europe/Paris"), "Europe/Paris");
+        let long = "é".repeat(1_000);
+        assert_eq!(for_log(&long).chars().count(), 64);
+    }
+
     // A real Google public feed, fetched live. All-day by nature, so it is
     // parsed with `include_all_day` on. Run with `--ignored`.
     #[test]
@@ -2624,6 +2828,26 @@ END:VTIMEZONE\r\n",
             out.len() * 3 / 2 < MAX_INTERVALS_PER_FEED,
             "{} intervals leaves under 1.5x headroom",
             out.len()
+        );
+    }
+
+    #[test]
+    fn a_heavy_real_work_calendar_spends_a_small_share_of_the_work_budget() {
+        let now = Utc.with_ymd_and_hms(2026, 3, 20, 12, 0, 0).unwrap();
+        let feed = heavy_work_calendar(now);
+
+        let (_, work) = busy_intervals_with_work(
+            &feed,
+            now - Duration::days(42),
+            now + Duration::days(183),
+            false,
+        )
+        .unwrap();
+
+        eprintln!("heavy calendar spent {work} of {MAX_WORK_PER_FEED} work units");
+        assert!(
+            work * 5 < MAX_WORK_PER_FEED,
+            "{work} work units leaves under 5x headroom"
         );
     }
 
