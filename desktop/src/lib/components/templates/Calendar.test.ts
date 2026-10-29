@@ -204,15 +204,26 @@ describe('Calendar', () => {
 
     await waitFor(() => expect(screen.getByText('1 invited')).toBeInTheDocument());
   });
+  /** Local YYYY-MM-DD, as month cells carry it in `data-date`. */
+  function localDay(d: Date): string {
+    return [
+      d.getFullYear(),
+      String(d.getMonth() + 1).padStart(2, '0'),
+      String(d.getDate()).padStart(2, '0')
+    ].join('-');
+  }
+
   describe('tapping a day', () => {
-    /** The cell for today, which `makeEvent` puts its events on. */
+    /**
+     * The cell for today, which `makeEvent` puts its events on.
+     *
+     * Found by its local date, not its visible number: the grid starts with
+     * the tail of the previous month, so on the 29th the first "29" is last
+     * month's - and on the 1st, "1" also prefixes 10-19. Both made these tests
+     * fail on some days of the month and pass on others.
+     */
     function todayCell() {
-      const label = String(new Date().getDate());
-      return screen
-        .getAllByRole('button')
-        .find(
-          (el) => el.getAttribute('aria-pressed') !== null && el.textContent?.startsWith(label)
-        );
+      return document.querySelector<HTMLElement>(`[data-date="${localDay(new Date())}"]`);
     }
 
     it("lists that day's events under the grid", async () => {
@@ -273,28 +284,18 @@ describe('Calendar', () => {
     it('double-click opens the create form prefilled with that date', async () => {
       render(Calendar, { props: { events: [] } });
 
-      const label = String(new Date().getDate());
-      const cell = screen
-        .getAllByRole('button')
-        .find(
-          (el) => el.getAttribute('aria-pressed') !== null && el.textContent?.startsWith(label)
-        );
+      const cell = document.querySelector<HTMLElement>(`[data-date="${localDay(new Date())}"]`);
       await fireEvent.dblClick(cell!);
 
       // Assert the value in the field, not that a prop was passed.
       // The value in the field, not that a prop was passed.
       const start = (await screen.findByLabelText(/Start Time/i)) as HTMLInputElement;
-      const now = new Date();
-      const localDay = [
-        now.getFullYear(),
-        String(now.getMonth() + 1).padStart(2, '0'),
-        String(now.getDate()).padStart(2, '0')
-      ].join('-');
-      expect(start.value).toBe(`${localDay}T19:00`);
+      const today = localDay(new Date());
+      expect(start.value).toBe(`${today}T19:00`);
 
       // And an end time, so the form is submittable without inventing one.
       const end = screen.getByLabelText(/End Time/i) as HTMLInputElement;
-      expect(end.value).toBe(`${localDay}T21:00`);
+      expect(end.value).toBe(`${today}T21:00`);
     });
   });
   describe('the best-overlap suggestion', () => {
