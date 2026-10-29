@@ -496,7 +496,11 @@ destination is ever wanted, adding a column back is trivial.
     `services::calendar::create_event`'s per-request auto-announce now
     resolves the channel via `services::discord_config::resolve_announcement_channel_id`
     (DB config first, env var as fallback if nothing's configured), so a
-    change here takes effect on the very next event created. `bot.rs`'s
+    change here takes effect on the very next event created. ⚠️ Any new
+    path that posts to "the announcement channel" must resolve it the same
+    way: `POST /api/friend-requests/post-invite` read the env var directly
+    until 2026-10-29, so it posted wherever `.env` pointed (or 400'd with
+    no env var) regardless of what `/server` said. `bot.rs`'s
     gateway `Handler`, however, still reads `announcement_channel_id` once
     at process startup from the env var and is **not** hot-reloaded — a
     change made on this page won't reach the long-lived gateway connection

@@ -153,11 +153,16 @@ pub async fn post_invite(
             ));
         }
     };
-    let Some(channel_id) = state.discord_announcement_channel_id else {
-        return Err(AppError::ValidationError(
-            "No announcement channel configured".to_string(),
-        ));
-    };
+    // Same resolution as every other announce path: the channel picked on
+    // /server first, the env var only as a fallback.
+    let channel_id = crate::services::discord_config::resolve_announcement_channel_id(
+        &state.db,
+        guild_id,
+        state.discord_announcement_channel_id,
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?
+    .ok_or_else(|| AppError::ValidationError("No announcement channel configured".to_string()))?;
 
     let count = friend_requests::count_guild_members_without_accounts(
         &state.db,
