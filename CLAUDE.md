@@ -1193,13 +1193,40 @@ sync) is in place for them.
   fetches this URL, so `file://` would make it a file-read primitive.
   `webcal://` is *rewritten* rather than refused, because that is what Apple
   Calendar hands you.
-- The parser handles unfolding, `TZID` via `chrono-tz` (treating a zoned time
-  as UTC would put blocks up to 12 hours out), `VALUE=DATE`, `DURATION`,
-  `RRULE` (DAILY/WEEKLY/MONTHLY + INTERVAL/COUNT/UNTIL/BYDAY) expanded **only
-  inside the window** so an endless rule stays bounded, `EXDATE`, and
-  `STATUS:CANCELLED` / `TRANSP:TRANSPARENT`. Unfolding, TZID and EXDATE are
-  each mutation-tested. Not handled, knowingly: `RDATE`, `BYSETPOS`,
-  `BYMONTHDAY`, `RECURRENCE-ID` overrides.
+- **Cached window: six weeks back to six months ahead** of each sync
+  (`SYNC_LOOKBACK_DAYS`/`SYNC_LOOKAHEAD_DAYS`). ⚠️ It used to be
+  `[now, now+30d)` - the window *availability* needs - but the calendar draws
+  the same rows, and its month grid starts before today: earlier days of the
+  month, today's finished meetings and next month were all blank (reported
+  2026-10-29 as "Google / Teams events aren't shown"). Availability's queries
+  are windowed, so the extra rows cost it nothing.
+- The parser handles unfolding, quoted parameter values (Outlook's
+  `TZID="(UTC+01:00) Amsterdam, …"` contains a colon and used to drop the
+  event), `VALUE=DATE`, `DURATION`, `EXDATE`, `STATUS:CANCELLED` /
+  `TRANSP:TRANSPARENT`, and `VALARM` blocks (their `DURATION` used to
+  overwrite the event's).
+- ⚠️ **`TZID` is resolved in order**: IANA, Windows ids
+  (`services::windows_zones`, a static CLDR "001" table - what Outlook and
+  every Teams meeting write; they used to silently become UTC), Mozilla
+  paths, Outlook display names by city, the feed's own `VTIMEZONE`, the
+  `(UTC±hh:mm)` prefix as a fixed offset, `X-WR-TIMEZONE`, then UTC **with a
+  warning**. `X-WR-TIMEZONE` also covers floating times.
+- ⚠️ **`RRULE` is expanded on DTSTART's wall clock, in its zone**, then
+  converted - stepping the UTC instant moved every recurring meeting by an
+  hour after DST. DAILY/WEEKLY/MONTHLY/YEARLY with INTERVAL (also with
+  BYDAY - a fortnightly 1:1 used to show weekly), COUNT, UNTIL, WKST, BYDAY
+  (ordinals like `2TU`/`-1FR` on monthly rules) and BYMONTHDAY; a 31st in a
+  30-day month is skipped, per RFC. Endless rules **jump to the window**
+  arithmetically: the old walk-from-DTSTART had a 1000-step cap, so a
+  weekday stand-up older than ~2.7 years produced nothing at all. A COUNT
+  rule is still walked from DTSTART, because that's where it counts from.
+- **`RECURRENCE-ID` overrides** (paired by `UID`, which is read for that
+  alone) free the series' original slot; a cancelled override frees it and
+  blocks nothing.
+- Not handled, knowingly: `RDATE`, `BYSETPOS`, `BYMONTH`/`BYWEEKNO`/
+  `BYYEARDAY` on events, sub-daily frequencies, `RANGE=THISANDFUTURE`.
+- Feed fetches send a `User-Agent` (per request, not on the shared client
+  the Discord calls also use); some providers refuse requests without one.
 - **All-day blocks are excluded** from busy time - a day-long "Annual leave"
   should not rule out a 19:00 slot. The parser takes a flag so the decision
   sits with the caller.
@@ -1249,7 +1276,10 @@ It now also renders, as anonymous bands.
   at three. **The agenda/list view is deliberately left out**: 30 days of
   anonymous "Busy" rows would bury the events it exists to list.
 - Empty states had to learn about them: a day with a full work calendar and
-  no app events is not "No events today".
+  no app events is not "No events today". ⚠️ The month grid's tapped-day
+  list was missed the first time and still said "Nothing on this day" - on
+  a phone that list is the only way to read a day. It now lists the merged
+  blocks as anonymous time ranges (`data-testid="selected-day-busy"`).
 - ⚠️ Fixed a **pre-existing date-dependent flake** found by this work, not
   caused by it: `best_slots_avoids_imported_meetings` blocked 18:00-23:00,
   but `candidate_local_hours` offers weekend *afternoons* (12/14/16), so it
