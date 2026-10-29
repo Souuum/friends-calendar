@@ -1626,4 +1626,252 @@ BEGIN:VEVENT\nDTSTART:20260130T170000Z\nDTEND:20260130T180000Z\nRRULE:FREQ=MONTH
             ]
         );
     }
+
+    // --- Verifier: recurrence edge cases ---------------------------------
+
+    fn starts(out: &[BusyInterval]) -> Vec<DateTime<Utc>> {
+        let mut s: Vec<_> = out.iter().map(|i| i.start).collect();
+        s.sort();
+        s
+    }
+
+    // COUNT with several BYDAYs: twenty occurrences from Mon 2 Feb on
+    // Mon/Wed/Fri are twelve in February and the first eight in March.
+    #[test]
+    fn count_with_byday_is_counted_per_occurrence_not_per_week() {
+        let out = parse(
+            "BEGIN:VEVENT\nDTSTART:20260202T090000Z\nDTEND:20260202T100000Z\nRRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=20\nEND:VEVENT",
+        );
+        let s = starts(&out);
+        assert_eq!(s.len(), 8, "{s:?}");
+        assert_eq!(*s.last().unwrap(), at(2026, 3, 18, 9));
+    }
+
+    // A BYDAY day earlier in DTSTART's own week is not an occurrence and must
+    // not use up the COUNT.
+    #[test]
+    fn byday_before_dtstart_in_its_first_week_does_not_consume_count() {
+        // Wed 25 Feb; BYDAY=MO,WE; COUNT=4 -> Feb 25, Mar 2, Mar 4, Mar 9.
+        let out = parse(
+            "BEGIN:VEVENT\nDTSTART:20260225T090000Z\nDTEND:20260225T100000Z\nRRULE:FREQ=WEEKLY;BYDAY=MO,WE;COUNT=4\nEND:VEVENT",
+        );
+        assert_eq!(
+            starts(&out),
+            vec![at(2026, 3, 2, 9), at(2026, 3, 4, 9), at(2026, 3, 9, 9)]
+        );
+    }
+
+    // A date-only UNTIL (common in hand-made and older feeds) includes its
+    // whole day.
+    #[test]
+    fn a_date_only_until_includes_its_last_day() {
+        let out = parse(
+            "BEGIN:VEVENT\nDTSTART:20260302T090000Z\nDTEND:20260302T100000Z\nRRULE:FREQ=DAILY;UNTIL=20260305\nEND:VEVENT",
+        );
+        assert_eq!(
+            starts(&out),
+            vec![
+                at(2026, 3, 2, 9),
+                at(2026, 3, 3, 9),
+                at(2026, 3, 4, 9),
+                at(2026, 3, 5, 9)
+            ]
+        );
+    }
+
+    // What Google writes: a zoned DTSTART with UNTIL in UTC. Inclusive.
+    #[test]
+    fn a_utc_until_on_a_zoned_series_is_inclusive_and_dst_correct() {
+        // 23 March 09:00 Paris is 08:00Z (before DST).
+        let inclusive = parse(
+            "BEGIN:VEVENT\nDTSTART;TZID=Europe/Paris:20260302T090000\nDTEND;TZID=Europe/Paris:20260302T100000\nRRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20260323T080000Z\nEND:VEVENT",
+        );
+        assert_eq!(inclusive.len(), 4, "{inclusive:?}");
+        let exclusive = parse(
+            "BEGIN:VEVENT\nDTSTART;TZID=Europe/Paris:20260302T090000\nDTEND;TZID=Europe/Paris:20260302T100000\nRRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20260323T075959Z\nEND:VEVENT",
+        );
+        assert_eq!(exclusive.len(), 3, "{exclusive:?}");
+    }
+
+    // EXDATE in UTC on a zoned series, after DST: 30 March 09:00 Paris is
+    // 07:00Z, not 08:00Z.
+    #[test]
+    fn a_utc_exdate_on_a_zoned_series_after_dst_matches() {
+        let out = parse(
+            "BEGIN:VEVENT\nDTSTART;TZID=Europe/Paris:20260302T090000\nDTEND;TZID=Europe/Paris:20260302T100000\nRRULE:FREQ=WEEKLY;BYDAY=MO\nEXDATE:20260330T070000Z\nEND:VEVENT",
+        );
+        assert_eq!(out.len(), 4, "{out:?}");
+        assert!(!out.iter().any(|i| i.start == at(2026, 3, 30, 7)));
+    }
+
+    // Skip-ahead must stay aligned to INTERVAL from DTSTART, not from the
+    // window.
+    #[test]
+    fn skip_ahead_keeps_weekly_and_monthly_intervals_aligned() {
+        // Every third Monday from 6 Jan 2025: 60 weeks to 2 Mar 2026.
+        let weekly = parse(
+            "BEGIN:VEVENT\nDTSTART:20250106T090000Z\nDTEND:20250106T100000Z\nRRULE:FREQ=WEEKLY;INTERVAL=3;BYDAY=MO\nEND:VEVENT",
+        );
+        assert_eq!(starts(&weekly), vec![at(2026, 3, 2, 9), at(2026, 3, 23, 9)]);
+
+        // Every fifth month from 15 Jan 2020: 75 months later is April 2026.
+        let monthly = busy_intervals(
+            &cal(
+                "BEGIN:VEVENT\nDTSTART:20200115T090000Z\nDTEND:20200115T100000Z\nRRULE:FREQ=MONTHLY;INTERVAL=5\nEND:VEVENT",
+            ),
+            at(2026, 3, 1, 0),
+            at(2026, 5, 1, 0),
+            false,
+        )
+        .unwrap();
+        assert_eq!(starts(&monthly), vec![at(2026, 4, 15, 9)]);
+    }
+
+    // The bound, timed: endless rules from 1970 at every frequency, over the
+    // production window (6 weeks back, 6 months ahead).
+    #[test]
+    fn endless_rules_from_1970_are_fast_over_the_production_window() {
+        let feed = cal(
+            "BEGIN:VEVENT\nDTSTART:19700101T090000Z\nDTEND:19700101T091500Z\nRRULE:FREQ=DAILY\nEND:VEVENT\n\
+BEGIN:VEVENT\nDTSTART:19700105T090000Z\nDTEND:19700105T091500Z\nRRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR\nEND:VEVENT\n\
+BEGIN:VEVENT\nDTSTART:19700113T090000Z\nDTEND:19700113T091500Z\nRRULE:FREQ=MONTHLY;BYDAY=2TU\nEND:VEVENT\n\
+BEGIN:VEVENT\nDTSTART:19700301T090000Z\nDTEND:19700301T091500Z\nRRULE:FREQ=YEARLY\nEND:VEVENT\n\
+BEGIN:VEVENT\nDTSTART;TZID=Europe/Paris:19700101T090000\nDTEND;TZID=Europe/Paris:19700101T091500\nRRULE:FREQ=DAILY\nEND:VEVENT",
+        );
+        let from = at(2026, 3, 1, 0) - Duration::days(42);
+        let to = at(2026, 3, 1, 0) + Duration::days(183);
+        let started = std::time::Instant::now();
+        let out = busy_intervals(&feed, from, to, false).unwrap();
+        let took = started.elapsed();
+        // 225 days: 225 + ~161 weekdays + ~7 + 1 + 225.
+        assert!(out.len() > 600 && out.len() < 650, "{}", out.len());
+        assert!(took < std::time::Duration::from_millis(500), "{took:?}");
+        // Paris daily keeps 09:00 local across the March DST change.
+        assert!(out.iter().any(|i| i.start == at(2026, 3, 28, 8)));
+        assert!(out.iter().any(|i| i.start == at(2026, 3, 30, 7)));
+    }
+
+    // An override whose RECURRENCE-ID is written in a different zone than the
+    // master still names the same instant. 9 March 09:00 Paris (08:00Z) is
+    // 04:00 in New York, which is already on DST that day.
+    #[test]
+    fn an_override_with_a_different_tzid_still_replaces_its_slot() {
+        let out = parse(
+            "BEGIN:VEVENT\nUID:x\nDTSTART;TZID=Europe/Paris:20260302T090000\nDTEND;TZID=Europe/Paris:20260302T100000\nRRULE:FREQ=WEEKLY;BYDAY=MO\nEND:VEVENT\n\
+BEGIN:VEVENT\nUID:x\nRECURRENCE-ID;TZID=America/New_York:20260309T040000\nDTSTART:20260309T140000Z\nDTEND:20260309T150000Z\nEND:VEVENT",
+        );
+        let s = starts(&out);
+        assert!(!s.contains(&at(2026, 3, 9, 8)), "{s:?}");
+        assert!(s.contains(&at(2026, 3, 9, 14)), "{s:?}");
+        assert_eq!(s.len(), 5);
+    }
+
+    // An all-day series with an all-day override (a day off moved by one).
+    #[test]
+    fn an_all_day_override_moves_its_day() {
+        let out = busy_intervals(
+            &cal(
+                "BEGIN:VEVENT\nUID:off\nDTSTART;VALUE=DATE:20260302\nDTEND;VALUE=DATE:20260303\nRRULE:FREQ=WEEKLY;BYDAY=MO\nEND:VEVENT\n\
+BEGIN:VEVENT\nUID:off\nRECURRENCE-ID;VALUE=DATE:20260309\nDTSTART;VALUE=DATE:20260310\nDTEND;VALUE=DATE:20260311\nEND:VEVENT",
+            ),
+            at(2026, 3, 1, 0),
+            at(2026, 4, 1, 0),
+            true,
+        )
+        .unwrap();
+        let s = starts(&out);
+        assert!(!s.contains(&at(2026, 3, 9, 0)), "{s:?}");
+        assert!(s.contains(&at(2026, 3, 10, 0)), "{s:?}");
+        assert_eq!(s.len(), 5);
+    }
+
+    // --- Verifier: hostile feed data must not panic ----------------------
+    //
+    // The feed is whatever URL a user pasted. `sync_all` runs every user's
+    // feed inside the one spawned hourly task, so a panic here stops
+    // *everyone's* sync until the process restarts, and the connect handler
+    // calls `sync_one` inline.
+
+    fn does_not_panic(body: &str) {
+        let feed = cal(body);
+        let result = std::panic::catch_unwind(|| {
+            busy_intervals(&feed, at(2026, 3, 1, 0), at(2026, 4, 1, 0), true)
+        });
+        assert!(result.is_ok(), "the parser panicked on: {body}");
+    }
+
+    // `parse_byday` uses `split_at(len - 2)` on bytes.
+    #[test]
+    fn a_non_ascii_byday_does_not_panic() {
+        does_not_panic(
+            "BEGIN:VEVENT\nDTSTART:20260302T090000Z\nDTEND:20260302T100000Z\nRRULE:FREQ=WEEKLY;BYDAY=éa\nEND:VEVENT",
+        );
+    }
+
+    // `nth_weekday` computes `last - 7 * (-n - 1)` days unchecked.
+    #[test]
+    fn a_huge_negative_byday_ordinal_does_not_panic() {
+        does_not_panic(
+            "BEGIN:VEVENT\nDTSTART:20260302T090000Z\nDTEND:20260302T100000Z\nRRULE:FREQ=MONTHLY;BYDAY=-100000000MO\nEND:VEVENT",
+        );
+    }
+
+    #[test]
+    fn a_huge_negative_ordinal_in_a_vtimezone_does_not_panic() {
+        does_not_panic(
+            "BEGIN:VTIMEZONE\nTZID:Odd\nBEGIN:STANDARD\nDTSTART:16010101T030000\nTZOFFSETTO:+0100\nRRULE:FREQ=YEARLY;BYDAY=-2147483648SU;BYMONTH=10\nEND:STANDARD\nEND:VTIMEZONE\n\
+BEGIN:VEVENT\nDTSTART;TZID=Odd:20260302T090000\nDTEND;TZID=Odd:20260302T100000\nEND:VEVENT",
+        );
+    }
+
+    // `Duration::weeks`/`days` panic out of range, and `from - length`
+    // overflows chrono's date range for a merely large one.
+    #[test]
+    fn a_huge_duration_does_not_panic() {
+        does_not_panic(
+            "BEGIN:VEVENT\nDTSTART:20260302T090000Z\nDURATION:P99999999999999W\nEND:VEVENT",
+        );
+        does_not_panic("BEGIN:VEVENT\nDTSTART:20260302T090000Z\nDURATION:P100000000D\nEND:VEVENT");
+    }
+
+    // `display_name_offset` multiplies the hours in i32 unchecked.
+    #[test]
+    fn a_huge_display_name_offset_does_not_panic() {
+        does_not_panic(
+            "BEGIN:VEVENT\nDTSTART;TZID=\"(UTC+999999:00) Nowhere\":20260302T090000\nDTEND;TZID=\"(UTC+999999:00) Nowhere\":20260302T100000\nEND:VEVENT",
+        );
+    }
+
+    // A real Google public feed, fetched live. All-day by nature, so it is
+    // parsed with `include_all_day` on. Run with `--ignored`.
+    #[test]
+    #[ignore = "needs network"]
+    fn a_real_google_public_feed_parses() {
+        let url = "https://calendar.google.com/calendar/ical/en.french%23holiday%40group.v.calendar.google.com/public/basic.ics";
+        let body = std::process::Command::new("curl")
+            .args(["-sSfL", "-m", "30", url])
+            .output()
+            .expect("curl");
+        assert!(body.status.success(), "fetch failed");
+        let body = String::from_utf8(body.stdout).unwrap();
+        let from = Utc::now() - Duration::days(42);
+        let to = Utc::now() + Duration::days(365);
+        // Google marks every holiday TRANSP:TRANSPARENT, so as served the
+        // feed blocks nothing, all-day or not - which is right.
+        let as_served = busy_intervals(&body, from, to, true).unwrap();
+        assert!(as_served.is_empty(), "{as_served:?}");
+        // Made opaque, the same events must parse as all-day days.
+        let opaque = body.replace("TRANSP:TRANSPARENT", "TRANSP:OPAQUE");
+        let all = busy_intervals(&opaque, from, to, true).unwrap();
+        let timed = busy_intervals(&opaque, from, to, false).unwrap();
+        eprintln!(
+            "{} bytes, {} all-day intervals in the window, {} timed",
+            body.len(),
+            all.len(),
+            timed.len()
+        );
+        assert!(!all.is_empty());
+        assert!(all.iter().all(|i| i.end - i.start == Duration::days(1)));
+        assert!(timed.is_empty(), "holidays are all-day");
+    }
 }
