@@ -639,4 +639,186 @@ mod tests {
         // which is the point.
         let BusyInterval { start: _, end: _ } = out[0];
     }
+
+    // --- Repros: real provider feeds (fix-external-busy-display) ---------
+    //
+    // "External events from Google or Teams are not shown." Each test below
+    // feeds the parser what a real provider writes, rather than the minimal
+    // UTC events above, and asserts where the meeting actually is.
+
+    fn parse_window(input: &str, from: DateTime<Utc>, to: DateTime<Utc>) -> Vec<BusyInterval> {
+        busy_intervals(input, from, to, false).unwrap()
+    }
+
+    /// What Outlook.com / Microsoft 365 publishes ("Publish calendar" ->
+    /// ICS link), which is also where Teams meetings live: Windows zone
+    /// names in TZID and a VTIMEZONE block describing them.
+    const OUTLOOK_FEED: &str = "BEGIN:VCALENDAR\r
+METHOD:PUBLISH\r
+PRODID:Microsoft Exchange Server 2010\r
+VERSION:2.0\r
+X-WR-CALNAME:Calendar\r
+BEGIN:VTIMEZONE\r
+TZID:Romance Standard Time\r
+BEGIN:STANDARD\r
+DTSTART:16010101T030000\r
+TZOFFSETFROM:+0200\r
+TZOFFSETTO:+0100\r
+RRULE:FREQ=YEARLY;INTERVAL=1;BYDAY=-1SU;BYMONTH=10\r
+END:STANDARD\r
+BEGIN:DAYLIGHT\r
+DTSTART:16010101T020000\r
+TZOFFSETFROM:+0100\r
+TZOFFSETTO:+0200\r
+RRULE:FREQ=YEARLY;INTERVAL=1;BYDAY=-1SU;BYMONTH=3\r
+END:DAYLIGHT\r
+END:VTIMEZONE\r
+BEGIN:VTIMEZONE\r
+TZID:Pacific Standard Time\r
+BEGIN:STANDARD\r
+DTSTART:16010101T020000\r
+TZOFFSETFROM:-0700\r
+TZOFFSETTO:-0800\r
+RRULE:FREQ=YEARLY;INTERVAL=1;BYDAY=1SU;BYMONTH=11\r
+END:STANDARD\r
+BEGIN:DAYLIGHT\r
+DTSTART:16010101T020000\r
+TZOFFSETFROM:-0800\r
+TZOFFSETTO:-0700\r
+RRULE:FREQ=YEARLY;INTERVAL=1;BYDAY=2SU;BYMONTH=3\r
+END:DAYLIGHT\r
+END:VTIMEZONE\r
+BEGIN:VEVENT\r
+UID:040000008200E00074C5B7101A82E00800000000A0B1C2D3E4F5\r
+SUMMARY:Weekly sync (Microsoft Teams Meeting)\r
+DTSTART;TZID=Romance Standard Time:20261102T090000\r
+DTEND;TZID=Romance Standard Time:20261102T093000\r
+CLASS:PUBLIC\r
+PRIORITY:5\r
+DTSTAMP:20261028T101500Z\r
+TRANSP:OPAQUE\r
+STATUS:CONFIRMED\r
+SEQUENCE:0\r
+LOCATION:Microsoft Teams Meeting\r
+X-MICROSOFT-CDO-BUSYSTATUS:BUSY\r
+X-MICROSOFT-CDO-INTENDEDSTATUS:BUSY\r
+END:VEVENT\r
+BEGIN:VEVENT\r
+UID:040000008200E00074C5B7101A82E00800000000F0E1D2C3B4A5\r
+SUMMARY:Call with the Seattle office\r
+DTSTART;TZID=Pacific Standard Time:20261103T090000\r
+DTEND;TZID=Pacific Standard Time:20261103T100000\r
+TRANSP:OPAQUE\r
+STATUS:CONFIRMED\r
+X-MICROSOFT-CDO-BUSYSTATUS:BUSY\r
+END:VEVENT\r
+END:VCALENDAR\r
+";
+
+    // ⚠️ `"Romance Standard Time".parse::<Tz>()` fails, so the TZID is
+    // silently dropped and 09:00 Paris is read as 09:00 UTC - an hour late.
+    // For the Pacific meeting it is eight hours out: a 09:00 call lands at
+    // 02:00 the next morning in Paris instead of 18:00 - on the wrong day.
+    #[test]
+    fn outlook_windows_timezone_names_are_resolved() {
+        let out = parse_window(OUTLOOK_FEED, at(2026, 11, 1, 0), at(2026, 11, 8, 0));
+
+        assert_eq!(out.len(), 2, "both Outlook meetings are busy: {out:?}");
+        // Paris is UTC+1 in November.
+        assert_eq!(out[0].start, at(2026, 11, 2, 8), "Romance Standard Time");
+        // Los Angeles is UTC-8 after the first Sunday of November.
+        assert_eq!(out[1].start, at(2026, 11, 3, 17), "Pacific Standard Time");
+    }
+
+    // ⚠️ Outlook desktop / Exchange on-premises exports name the zone by its
+    // display string, which contains a colon and so is quoted (RFC 5545
+    // §3.1: a param value containing ':' MUST be quoted). The property is
+    // split on the *first* colon, which is inside the quotes, so DTSTART's
+    // value becomes `00) Amsterdam, ...":20261102T090000`, fails to parse,
+    // and the event is dropped outright.
+    #[test]
+    fn a_quoted_tzid_containing_a_colon_does_not_drop_the_event() {
+        let feed = cal("BEGIN:VEVENT\n\
+DTSTART;TZID=\"(UTC+01:00) Amsterdam, Berlin, Bern, Rome, Stockholm, Vienna\":20261102T090000\n\
+DTEND;TZID=\"(UTC+01:00) Amsterdam, Berlin, Bern, Rome, Stockholm, Vienna\":20261102T100000\n\
+END:VEVENT");
+
+        let out = parse_window(&feed, at(2026, 11, 1, 0), at(2026, 11, 8, 0));
+
+        assert_eq!(out.len(), 1, "the meeting was dropped: {out:?}");
+    }
+
+    // ⚠️ `expand` walks from DTSTART with a hard cap of 1000 steps, and a
+    // weekly rule with BYDAY steps one *day* at a time. Both Google and
+    // Outlook write BYDAY on weekly rules, so a stand-up that has existed
+    // since 2 Jan 2023 runs out of steps on 29 Sep 2025 and contributes
+    // nothing to any later window - the longest-standing meetings, which are
+    // most of a work calendar, vanish completely.
+    #[test]
+    fn a_recurring_meeting_that_started_years_ago_still_blocks_this_month() {
+        let out = parse(
+            "BEGIN:VEVENT\nDTSTART:20230102T090000Z\nDTEND:20230102T091500Z\nRRULE:FREQ=WEEKLY;WKST=MO;BYDAY=MO,TU,WE,TH,FR\nEND:VEVENT",
+        );
+
+        assert_eq!(out.len(), 22, "every weekday of March 2026: {out:?}");
+    }
+
+    #[test]
+    fn a_daily_rule_that_started_years_ago_still_blocks_this_month() {
+        let out = parse(
+            "BEGIN:VEVENT\nDTSTART:20230102T090000Z\nDTEND:20230102T091500Z\nRRULE:FREQ=DAILY\nEND:VEVENT",
+        );
+
+        assert_eq!(out.len(), 31, "every day of March 2026");
+    }
+
+    // With BYDAY, the WEEKLY branch steps a day at a time and never looks at
+    // INTERVAL, so a fortnightly 1:1 shows every week.
+    #[test]
+    fn a_fortnightly_rule_with_byday_skips_alternate_weeks() {
+        let out = parse(
+            "BEGIN:VEVENT\nDTSTART:20260303T090000Z\nDTEND:20260303T100000Z\nRRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU\nEND:VEVENT",
+        );
+
+        let starts: Vec<_> = out.iter().map(|i| i.start).collect();
+        assert_eq!(
+            starts,
+            vec![at(2026, 3, 3, 9), at(2026, 3, 17, 9), at(2026, 3, 31, 9)]
+        );
+    }
+
+    // ⚠️ Occurrences are generated by adding whole days to the *UTC* start,
+    // so a 09:00 Paris meeting stays at 08:00 UTC after the clocks change on
+    // 29 March and is drawn at 10:00 local from then on. Google writes
+    // `TZID=Europe/Paris` on every recurring event, so this shifts every
+    // recurring meeting by an hour for the half of the year after DST flips.
+    #[test]
+    fn a_zoned_recurring_meeting_keeps_its_local_time_across_dst() {
+        let out = parse(
+            "BEGIN:VEVENT\nDTSTART;TZID=Europe/Paris:20260302T090000\nDTEND;TZID=Europe/Paris:20260302T100000\nRRULE:FREQ=WEEKLY;BYDAY=MO\nEND:VEVENT",
+        );
+
+        assert_eq!(out.len(), 5);
+        assert_eq!(out[3].start, at(2026, 3, 23, 8), "before DST: UTC+1");
+        assert_eq!(out[4].start, at(2026, 3, 30, 7), "after DST: UTC+2");
+    }
+
+    // Google and Outlook both express "this one occurrence moved" as a second
+    // VEVENT with the same UID and a RECURRENCE-ID naming the slot it
+    // replaces. Unhandled, the master rule still blocks the old slot, so the
+    // moved meeting shows twice.
+    #[test]
+    fn a_moved_occurrence_no_longer_blocks_its_original_slot() {
+        let out = parse(
+            "BEGIN:VEVENT\nUID:standup@google.com\nDTSTART:20260302T090000Z\nDTEND:20260302T100000Z\nRRULE:FREQ=WEEKLY;BYDAY=MO\nEND:VEVENT\n\
+BEGIN:VEVENT\nUID:standup@google.com\nRECURRENCE-ID:20260309T090000Z\nDTSTART:20260309T140000Z\nDTEND:20260309T150000Z\nEND:VEVENT",
+        );
+
+        let on_the_ninth: Vec<_> = out
+            .iter()
+            .filter(|i| i.start.date_naive() == at(2026, 3, 9, 0).date_naive())
+            .map(|i| i.start)
+            .collect();
+        assert_eq!(on_the_ninth, vec![at(2026, 3, 9, 14)]);
+    }
 }

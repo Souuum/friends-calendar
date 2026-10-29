@@ -422,6 +422,28 @@ describe('Calendar busy blocks', () => {
     expect(screen.getByTestId('busy-summary')).toBeInTheDocument();
   });
 
+  // Repro (fix-external-busy-display): the month cell is ~52px wide on a
+  // phone, so tapping the day is how you read what is on it - and the list
+  // under the grid knows only about app events. A day full of imported
+  // meetings is announced as empty, which reads exactly as "my Google/Teams
+  // events aren't shown". CLAUDE.md says the empty states learned about
+  // busy blocks; this one didn't.
+  it('does not call a day with imported busy time empty when it is tapped', async () => {
+    getExternalBusy.mockResolvedValue([busyToday(9, 10), busyToday(14, 15)]);
+    render(Calendar, { props: { events: [] } });
+    await waitFor(() => expect(screen.getByTestId('busy-summary')).toBeInTheDocument());
+
+    const now = new Date();
+    const today = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, '0'),
+      String(now.getDate()).padStart(2, '0')
+    ].join('-');
+    await fireEvent.click(document.querySelector<HTMLElement>(`[data-date="${today}"]`)!);
+
+    expect(screen.queryByText(/Nothing on this day/)).not.toBeInTheDocument();
+  });
+
   // A connected calendar is the exception, not the rule, and a failure here
   // must not take the calendar down with it.
   it('renders the calendar anyway when the busy fetch fails', async () => {

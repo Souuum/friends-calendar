@@ -656,4 +656,84 @@ mod tests {
         assert_eq!(calendars.len(), 1);
         assert_eq!(calendars[0].label.as_deref(), Some("Personal"));
     }
+
+    // --- Repros: the cached window vs. what the calendar shows -----------
+    //
+    // `sync_one` caches `[now, now + 30 days)` - the window availability
+    // needs. But `GET /api/calendar/external/busy` serves the *calendar*,
+    // whose default month view opens on a six-week grid that starts before
+    // today, and whose "next month" arrow reaches well past 30 days. Anything
+    // outside the cached window is simply not in `external_busy`, so it can
+    // never be drawn: earlier this month (including this morning's meetings
+    // once they've ended) is always blank, and so is most of next month.
+
+    const MID_MONTH_FEED: &str = "BEGIN:VCALENDAR\r\n\
+BEGIN:VEVENT\r\nDTSTART:20260302T090000Z\r\nDTEND:20260302T100000Z\r\nEND:VEVENT\r\n\
+BEGIN:VEVENT\r\nDTSTART:20260315T080000Z\r\nDTEND:20260315T083000Z\r\nEND:VEVENT\r\n\
+BEGIN:VEVENT\r\nDTSTART:20260420T090000Z\r\nDTEND:20260420T100000Z\r\nEND:VEVENT\r\n\
+END:VCALENDAR\r\n";
+
+    /// Synced at 10:00 on the 15th, as the hourly loop would be.
+    fn mid_month() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 3, 15, 10, 0, 0).unwrap()
+    }
+
+    #[sqlx::test]
+    async fn earlier_this_month_is_still_drawn_after_a_sync(db: PgPool) {
+        let user = a_user(&db, "alice").await;
+        let server = serving(MID_MONTH_FEED).await;
+        let url = format!("{}/cal.ics", server.uri());
+        let id = connect_ics(&db, user, &url, Some("Work")).await.unwrap();
+        sync_one(&db, &Client::new(), id, &url, mid_month())
+            .await
+            .unwrap();
+
+        // March's month grid: Mon 23 Feb to Sun 5 Apr.
+        let busy = busy_for_user(
+            &db,
+            user,
+            Utc.with_ymd_and_hms(2026, 2, 23, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2026, 4, 6, 0, 0, 0).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let starts: Vec<_> = busy.iter().map(|b| b.starts_at).collect();
+        assert!(
+            starts.contains(&Utc.with_ymd_and_hms(2026, 3, 2, 9, 0, 0).unwrap()),
+            "the 2 March meeting is missing from March's grid: {starts:?}"
+        );
+        assert!(
+            starts.contains(&Utc.with_ymd_and_hms(2026, 3, 15, 8, 0, 0).unwrap()),
+            "this morning's meeting vanished once it ended: {starts:?}"
+        );
+    }
+
+    #[sqlx::test]
+    async fn next_month_is_drawn_after_a_sync(db: PgPool) {
+        let user = a_user(&db, "alice").await;
+        let server = serving(MID_MONTH_FEED).await;
+        let url = format!("{}/cal.ics", server.uri());
+        let id = connect_ics(&db, user, &url, Some("Work")).await.unwrap();
+        sync_one(&db, &Client::new(), id, &url, mid_month())
+            .await
+            .unwrap();
+
+        // April's month grid, one click of the "next" arrow away: Mon 30 Mar
+        // to Sun 10 May. 20 April is 36 days after the sync.
+        let busy = busy_for_user(
+            &db,
+            user,
+            Utc.with_ymd_and_hms(2026, 3, 30, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2026, 5, 11, 0, 0, 0).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let starts: Vec<_> = busy.iter().map(|b| b.starts_at).collect();
+        assert!(
+            starts.contains(&Utc.with_ymd_and_hms(2026, 4, 20, 9, 0, 0).unwrap()),
+            "the 20 April meeting is missing from April's grid: {starts:?}"
+        );
+    }
 }
