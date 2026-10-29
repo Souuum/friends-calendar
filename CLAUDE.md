@@ -1206,8 +1206,9 @@ sync) is in place for them.
   `TRANSP:TRANSPARENT`, and `VALARM` blocks (their `DURATION` used to
   overwrite the event's).
 - ⚠️ **`TZID` is resolved in order**: IANA, Windows ids
-  (`services::windows_zones`, a static CLDR "001" table - what Outlook and
-  every Teams meeting write; they used to silently become UTC), Mozilla
+  (`services::windows_zones`, derived from CLDR windowsZones "001" plus a
+  few legacy ids, with current IANA spellings - what Outlook and every Teams
+  meeting write; they used to silently become UTC), Mozilla
   paths, Outlook display names by city, the feed's own `VTIMEZONE`, the
   `(UTC±hh:mm)` prefix as a fixed offset, `X-WR-TIMEZONE`, then UTC **with a
   warning**. `X-WR-TIMEZONE` also covers floating times.
@@ -1224,7 +1225,28 @@ sync) is in place for them.
   alone) free the series' original slot; a cancelled override frees it and
   blocks nothing.
 - Not handled, knowingly: `RDATE`, `BYSETPOS`, `BYMONTH`/`BYWEEKNO`/
-  `BYYEARDAY` on events, sub-daily frequencies, `RANGE=THISANDFUTURE`.
+  `BYYEARDAY` on events, sub-daily frequencies, `RANGE=THISANDFUTURE`. An
+  Outlook display name naming no city IANA knows, with no `VTIMEZONE`,
+  becomes a **fixed** offset, so it is an hour out across DST.
+- ⚠️ **Feed content is hostile input, and it once could panic the parser** -
+  a non-ASCII `BYDAY` (byte-slicing), a `-100000000MO` ordinal, a
+  `DURATION:P99999999999999W`, a `(UTC+999999:00)` zone. Worse than one
+  failed feed: `sync_all` ran every feed in one task, so one pasted link
+  stopped *everyone's* sync until restart. Now every arithmetic step on
+  feed data is checked (invalid means "skip this property"), years are held
+  to four digits so nothing downstream can reach chrono's limits, the parse
+  runs in `spawn_blocking` (a panic becomes `last_error` "This calendar
+  couldn't be read", and a slow parse no longer stalls the runtime), and
+  `sync_all` gives each feed its own task. ⚠️ In **release** builds integer
+  overflow wraps instead of panicking - `(UTC+1193046:00)` silently became
+  UTC-00:28 - so "no panic in debug" is not the bar; a test pins the wrap.
+- **Caps, each failing the sync with a readable `last_error` and keeping the
+  cached window** rather than importing a prefix (which would show someone
+  free when they aren't): 5 MB per feed, counted while streaming so a
+  chunked or lying response can't get around it; 20,000 busy blocks per
+  feed in the window; and 5M recurrence periods walked per feed, since the
+  per-rule cap alone let thousands of `COUNT` rules from year 1 burn
+  minutes of CPU.
 - Feed fetches send a `User-Agent` (per request, not on the shared client
   the Discord calls also use); some providers refuse requests without one.
 - **All-day blocks are excluded** from busy time - a day-long "Annual leave"

@@ -5,9 +5,13 @@
 //! `Europe/Paris`. `chrono-tz` only knows IANA names, so without this table
 //! those times fell back to UTC and every Outlook meeting landed hours out.
 //!
-//! The mapping is CLDR's `windowsZones.xml`, "001" (default) territory only:
-//! one IANA zone per Windows id, which is all a time conversion needs. Kept as
-//! a static table rather than a dependency - it is ~140 rows that change a
+//! Derived from CLDR's `windowsZones.xml`, "001" (default) territory only:
+//! one IANA zone per Windows id, which is all a time conversion needs. Where
+//! CLDR still writes a deprecated IANA alias (`Asia/Calcutta`), the current
+//! name is used; a few legacy Windows ids CLDR has since dropped
+//! (`Mid-Atlantic Standard Time`, `Mexico Standard Time`, …) are kept,
+//! because old Exchange exports still carry them. Kept as
+//! a static table rather than a dependency - it is ~150 rows that change a
 //! few times a decade. `every_mapped_zone_is_a_real_iana_zone` fails if a row
 //! names a zone `chrono-tz` doesn't know.
 
@@ -22,12 +26,15 @@ const WINDOWS_TO_IANA: &[(&str, &str)] = &[
     ("Pacific Standard Time (Mexico)", "America/Tijuana"),
     ("UTC-08", "Etc/GMT+8"),
     ("Pacific Standard Time", "America/Los_Angeles"),
+    ("British Columbia Standard Time", "America/Vancouver"),
     ("US Mountain Standard Time", "America/Phoenix"),
     ("Mountain Standard Time (Mexico)", "America/Mazatlan"),
     ("Mountain Standard Time", "America/Denver"),
+    ("Alberta Standard Time", "America/Edmonton"),
     ("Yukon Standard Time", "America/Whitehorse"),
     ("Central America Standard Time", "America/Guatemala"),
     ("Central Standard Time", "America/Chicago"),
+    ("Manitoba Standard Time", "America/Winnipeg"),
     ("Easter Island Standard Time", "Pacific/Easter"),
     ("Central Standard Time (Mexico)", "America/Mexico_City"),
     ("Mexico Standard Time", "America/Mexico_City"),
@@ -198,6 +205,14 @@ mod tests {
             Some("America/Tijuana")
         );
         assert_eq!(to_iana("romance standard time"), Some("Europe/Paris"));
+        // The Canadian provincial ids CLDR added; missing them read every
+        // meeting from those zones as UTC.
+        assert_eq!(to_iana("Alberta Standard Time"), Some("America/Edmonton"));
+        assert_eq!(
+            to_iana("British Columbia Standard Time"),
+            Some("America/Vancouver")
+        );
+        assert_eq!(to_iana("Manitoba Standard Time"), Some("America/Winnipeg"));
         assert_eq!(to_iana("Not A Zone"), None);
     }
 }
