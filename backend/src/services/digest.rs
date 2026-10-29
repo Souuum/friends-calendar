@@ -142,23 +142,30 @@ mod tests {
 
     #[sqlx::test]
     async fn sends_and_stamps_when_due_and_enabled(db: PgPool) {
-        discord_config::upsert_config(&db, "g1", Some("chan1".to_string()), Some(true))
+        discord_config::upsert_config(&db, "g1", Some("222333444".to_string()), Some(true))
             .await
             .unwrap();
 
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/channels/chan1/messages"))
+            .and(path("/channels/222333444/messages"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "sent-1" })))
             .mount(&server)
             .await;
 
         let http = Client::new();
         let monday_9am = dt("2026-03-02T09:00:00Z");
-        let sent =
-            maybe_send_weekly_digest(&server.uri(), &db, &http, "test-token", "g1", monday_9am)
-                .await
-                .unwrap();
+        let sent = maybe_send_weekly_digest(
+            &server.uri(),
+            &db,
+            &http,
+            "test-token",
+            "g1",
+            None,
+            monday_9am,
+        )
+        .await
+        .unwrap();
         assert!(sent);
 
         let config = discord_config::get_config(&db, "g1")
@@ -173,7 +180,7 @@ mod tests {
 
     #[sqlx::test]
     async fn does_not_send_outside_the_due_window(db: PgPool) {
-        discord_config::upsert_config(&db, "g1", Some("chan1".to_string()), Some(true))
+        discord_config::upsert_config(&db, "g1", Some("222333444".to_string()), Some(true))
             .await
             .unwrap();
 
@@ -188,6 +195,7 @@ mod tests {
             &http,
             "test-token",
             "g1",
+            None,
             tuesday,
         )
         .await
@@ -197,7 +205,7 @@ mod tests {
 
     #[sqlx::test]
     async fn does_not_send_when_digest_is_disabled(db: PgPool) {
-        discord_config::upsert_config(&db, "g1", Some("chan1".to_string()), Some(false))
+        discord_config::upsert_config(&db, "g1", Some("222333444".to_string()), Some(false))
             .await
             .unwrap();
 
@@ -209,6 +217,7 @@ mod tests {
             &http,
             "test-token",
             "g1",
+            None,
             monday_9am,
         )
         .await
@@ -230,6 +239,7 @@ mod tests {
             &http,
             "test-token",
             "g1",
+            None,
             monday_9am,
         )
         .await
@@ -247,6 +257,115 @@ mod tests {
             &http,
             "test-token",
             "g1",
+            None,
+            monday_9am,
+        )
+        .await
+        .unwrap();
+        assert!(!sent);
+    }
+
+    // --- repro: the env-var announcement channel is never used -----------
+    //
+    // Every other announce path resolves the channel through
+    // `discord_config::resolve_announcement_channel_id` (DB config first,
+    // `DISCORD_ANNOUNCEMENT_CHANNEL_ID` as the fallback). The digest read
+    // only the DB column, so a deployment configured by env var alone, with
+    // the digest switched on at /server and the channel field left blank,
+    // never posted a digest. These tests pass the fallback the way the
+    // spawn loop must (`state.discord_announcement_channel_id`).
+
+    #[sqlx::test]
+    async fn falls_back_to_the_env_var_channel_when_none_is_configured(db: PgPool) {
+        discord_config::upsert_config(&db, "g1", None, Some(true))
+            .await
+            .unwrap();
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/channels/987654321/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "sent-1" })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let http = Client::new();
+        let monday_9am = dt("2026-03-02T09:00:00Z");
+        let sent = maybe_send_weekly_digest(
+            &server.uri(),
+            &db,
+            &http,
+            "test-token",
+            "g1",
+            Some(987654321),
+            monday_9am,
+        )
+        .await
+        .unwrap();
+        assert!(sent, "digest should post to the env-var fallback channel");
+
+        let config = discord_config::get_config(&db, "g1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            config.last_digest_sent_at.map(|t| t.timestamp()),
+            Some(monday_9am.timestamp()),
+            "a digest sent via the fallback must still stamp last_digest_sent_at"
+        );
+    }
+
+    #[sqlx::test]
+    async fn a_db_configured_channel_wins_over_the_env_var(db: PgPool) {
+        discord_config::upsert_config(&db, "g1", Some("111".to_string()), Some(true))
+            .await
+            .unwrap();
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/channels/111/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "sent-1" })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/channels/987654321/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "wrong" })))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let http = Client::new();
+        let monday_9am = dt("2026-03-02T09:00:00Z");
+        let sent = maybe_send_weekly_digest(
+            &server.uri(),
+            &db,
+            &http,
+            "test-token",
+            "g1",
+            Some(987654321),
+            monday_9am,
+        )
+        .await
+        .unwrap();
+        assert!(sent);
+    }
+
+    #[sqlx::test]
+    async fn the_env_var_fallback_does_not_override_digest_enabled(db: PgPool) {
+        discord_config::upsert_config(&db, "g1", None, Some(false))
+            .await
+            .unwrap();
+
+        let http = Client::new();
+        let monday_9am = dt("2026-03-02T09:00:00Z");
+        let sent = maybe_send_weekly_digest(
+            "http://unused.invalid",
+            &db,
+            &http,
+            "test-token",
+            "g1",
+            Some(987654321),
             monday_9am,
         )
         .await
