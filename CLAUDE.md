@@ -71,6 +71,9 @@ nothing else in the branch or its commit messages explains it.
     A bare `cargo build` at the root now also builds the `desktop/src-tauri`
     member, which needs GTK/WebKit system libraries that no server or CI
     container has.
+  - `backend/build.rs` emits `rerun-if-changed=migrations`: `sqlx::migrate!`
+    embeds the migrations at compile time, so without it a `.sql`-only change
+    doesn't rebuild and `cargo test` keeps running the old set.
   - The VPS is unaffected: provisioning copies `backend/` alone to
     `/opt/friends-calendar`, so it builds there as a standalone crate.
 - **JS/TS**: yarn at the root (`yarn.lock` present, no root `package-lock.json`).
@@ -878,8 +881,10 @@ question on its own. Status per skill:
   user in that server (`user_guilds` of `DISCORD_GUILD_ID`), actor = author,
   via `notifications::notify_announcement`; syncing never notifies. The row
   links to `/announcements`. ⚠️ Migration 019 flipped
-  `notify_announcements`' *default* to true (it was false since 008, when
-  nothing sent one); existing rows were left as stored.
+  `notify_announcements` to true, both the default (false since 008, when
+  nothing sent one) **and every existing row**: a stored false was the old
+  default, not an opt-out, since the toggle did nothing and `/settings` sent
+  every toggle on each save.
 - `.claude/skills/mockup-announcements-feed/SKILL.md` — **done.** The user
   confirmed "replace" over "keep alongside" for the scope question the
   skill flagged. See "Announcements page" above for the full picture:

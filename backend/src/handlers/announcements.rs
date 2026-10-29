@@ -1121,6 +1121,13 @@ mod tests {
         let server = mock_compose_discord().await;
         compose_as(&db, &server, &author).await;
 
+        // Positive control: without it this test also passes when the
+        // trigger is gone entirely, and proves nothing about scoping.
+        assert_eq!(
+            notifications_of(&db, mate.id).await.len(),
+            1,
+            "a member of the server it was posted to is notified"
+        );
         assert!(
             notifications_of(&db, stranger.id).await.is_empty(),
             "only members of the server it was posted to are notified"
