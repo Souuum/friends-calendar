@@ -961,4 +961,183 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
+
+    // --- Announcement notifications ------------------------------------
+    //
+    // `notify_announcements` is mapped in
+    // `services::notifications::preference_column_for`, but nothing ever
+    // created a notification of kind `announcement`, so the toggle on
+    // /settings switched off something that never happened. Decided
+    // behaviour: composing through the app notifies every *other* app user
+    // in the server it was posted to, with the author as actor. Syncing
+    // Discord messages notifies nobody.
+
+    /// The linked server (`AppState::for_test`'s `DISCORD_GUILD_ID`) with
+    /// exactly `members` in it.
+    async fn seed_server_members(db: &PgPool, members: &[uuid::Uuid]) -> uuid::Uuid {
+        let guild_id = crate::services::guilds::ensure_guild(db, "test-guild-id")
+            .await
+            .unwrap();
+        crate::services::guilds::set_guild_members(db, guild_id, members)
+            .await
+            .unwrap();
+        guild_id
+    }
+
+    /// Webhook lookup, webhook post and the follow-up sync, all succeeding.
+    async fn mock_compose_discord() -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/channels/123456789/webhooks"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(
+                    json!([{ "id": "w1", "token": "t1", "name": "Friends Calendar" }]),
+                ),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/webhooks/w1/t1"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/channels/123456789/messages"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(vec![discord_message("msg-new", "Ski trip is on")]),
+            )
+            .mount(&server)
+            .await;
+        server
+    }
+
+    async fn compose_as(db: &PgPool, server: &MockServer, author: &crate::models::User) {
+        let state = AppState::for_test(db.clone(), server.uri());
+        let token = generate_jwt(&author.discord_id, &state.jwt_secret).unwrap();
+        let response = crate::build_router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/announcements/compose")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"content":"Ski trip is on"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    /// `(kind, actor_user_id)` for every notification `user_id` has.
+    async fn notifications_of(
+        db: &PgPool,
+        user_id: uuid::Uuid,
+    ) -> Vec<(String, Option<uuid::Uuid>)> {
+        sqlx::query_as("SELECT kind, actor_user_id FROM notifications WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_all(db)
+            .await
+            .unwrap()
+    }
+
+    #[sqlx::test]
+    async fn composing_notifies_server_mates_but_not_the_author(db: PgPool) {
+        let author = seed_user(&db, "author-discord", "author").await;
+        let mate = seed_user(&db, "mate-discord", "mate").await;
+        seed_server_members(&db, &[author.id, mate.id]).await;
+
+        let server = mock_compose_discord().await;
+        compose_as(&db, &server, &author).await;
+
+        assert_eq!(
+            notifications_of(&db, mate.id).await,
+            vec![("announcement".to_string(), Some(author.id))],
+            "a server-mate should get exactly one announcement notification, from the author"
+        );
+        assert!(
+            notifications_of(&db, author.id).await.is_empty(),
+            "the author must not notify themselves"
+        );
+    }
+
+    #[sqlx::test]
+    async fn composing_respects_notify_announcements_off(db: PgPool) {
+        let author = seed_user(&db, "author-discord", "author").await;
+        let opted_out = seed_user(&db, "quiet-discord", "quiet").await;
+        let opted_in = seed_user(&db, "loud-discord", "loud").await;
+        seed_server_members(&db, &[author.id, opted_out.id, opted_in.id]).await;
+        sqlx::query("UPDATE users SET notify_announcements = false WHERE id = $1")
+            .bind(opted_out.id)
+            .execute(&db)
+            .await
+            .unwrap();
+
+        let server = mock_compose_discord().await;
+        compose_as(&db, &server, &author).await;
+
+        assert!(
+            notifications_of(&db, opted_out.id).await.is_empty(),
+            "notify_announcements = false must suppress the notification"
+        );
+        // Control: the same post does reach someone who left it on, so the
+        // assertion above can't pass merely because nothing is ever sent.
+        assert_eq!(
+            notifications_of(&db, opted_in.id).await,
+            vec![("announcement".to_string(), Some(author.id))]
+        );
+    }
+
+    #[sqlx::test]
+    async fn composing_does_not_notify_users_outside_the_server(db: PgPool) {
+        let author = seed_user(&db, "author-discord", "author").await;
+        let mate = seed_user(&db, "mate-discord", "mate").await;
+        let stranger = seed_user(&db, "stranger-discord", "stranger").await;
+        seed_server_members(&db, &[author.id, mate.id]).await;
+        // The stranger is in a different server entirely.
+        let other = crate::services::guilds::ensure_guild(&db, "other-guild-id")
+            .await
+            .unwrap();
+        crate::services::guilds::set_guild_members(&db, other, &[stranger.id])
+            .await
+            .unwrap();
+
+        let server = mock_compose_discord().await;
+        compose_as(&db, &server, &author).await;
+
+        assert!(
+            notifications_of(&db, stranger.id).await.is_empty(),
+            "only members of the server it was posted to are notified"
+        );
+    }
+
+    #[sqlx::test]
+    async fn syncing_the_feed_notifies_nobody(db: PgPool) {
+        let me = seed_user(&db, "me-discord", "me").await;
+        let mate = seed_user(&db, "mate-discord", "mate").await;
+        seed_server_members(&db, &[me.id, mate.id]).await;
+
+        let server = mock_compose_discord().await;
+        let state = AppState::for_test(db.clone(), server.uri());
+        let token = generate_jwt(&me.discord_id, &state.jwt_secret).unwrap();
+        let response = crate::build_router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/announcements/sync")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM notifications")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "a sync mirrors Discord; it must not notify");
+    }
 }
