@@ -26,9 +26,26 @@ use uuid::Uuid;
 
 use crate::services::ics_parse;
 
-/// How far ahead busy blocks are cached. Availability never looks further,
-/// and an unbounded window would expand recurring rules forever.
-pub const SYNC_WINDOW_DAYS: i64 = 30;
+/// How far back busy blocks are cached.
+///
+/// ⚠️ The cache serves two readers. Availability only looks forward, but the
+/// calendar draws these blocks too, and its month grid opens on a six-week
+/// view that starts before today. Caching from `now` left everything earlier
+/// in the visible month blank - including this morning's meetings once they
+/// ended. Six weeks back covers the whole grid on any day of the month.
+pub const SYNC_LOOKBACK_DAYS: i64 = 42;
+
+/// How far ahead busy blocks are cached: about six months, so paging the
+/// calendar forward a few months still shows them. Bounded on purpose - an
+/// endless recurring rule would otherwise expand forever - and availability
+/// never looks further than a week or two, so past and far-future rows cost
+/// it nothing (its queries are windowed).
+pub const SYNC_LOOKAHEAD_DAYS: i64 = 183;
+
+/// Sent with every feed fetch. Some providers (Microsoft's among them)
+/// refuse or throttle requests with no User-Agent at all, and reqwest sends
+/// none by default.
+const FEED_USER_AGENT: &str = concat!("friends-calendar/", env!("CARGO_PKG_VERSION"));
 
 /// How often the loop runs. Hourly is plenty: a calendar changing between
 /// polls costs at most an hour of staleness, against a request per user per
@@ -177,9 +194,14 @@ pub async fn sync_one(
     credential: &str,
     now: DateTime<Utc>,
 ) -> Result<usize> {
-    let to = now + Duration::days(SYNC_WINDOW_DAYS);
+    let from = now - Duration::days(SYNC_LOOKBACK_DAYS);
+    let to = now + Duration::days(SYNC_LOOKAHEAD_DAYS);
 
-    let response = http.get(credential).send().await?;
+    let response = http
+        .get(credential)
+        .header(reqwest::header::USER_AGENT, FEED_USER_AGENT)
+        .send()
+        .await?;
     if !response.status().is_success() {
         return Err(anyhow!("Calendar returned {}", response.status()));
     }
@@ -188,7 +210,7 @@ pub async fn sync_one(
     // All-day blocks are excluded: a day-long "Annual leave" should not rule
     // out a 19:00 slot, and treating it as busy would make whole weeks
     // disappear from the suggestions.
-    let intervals = ics_parse::busy_intervals(&body, now, to, false)?;
+    let intervals = ics_parse::busy_intervals(&body, from, to, false)?;
 
     let mut tx = db.begin().await?;
     sqlx::query("DELETE FROM external_busy WHERE calendar_id = $1")
@@ -196,17 +218,19 @@ pub async fn sync_one(
         .execute(&mut *tx)
         .await?;
 
-    for interval in &intervals {
-        sqlx::query(
-            "INSERT INTO external_busy (id, calendar_id, starts_at, ends_at)
-             VALUES (gen_random_uuid(), $1, $2, $3)",
-        )
-        .bind(calendar_id)
-        .bind(interval.start)
-        .bind(interval.end)
-        .execute(&mut *tx)
-        .await?;
-    }
+    // One statement for the whole window: a busy work calendar is a few
+    // thousand rows over seven months, and a round-trip each adds up.
+    let starts: Vec<DateTime<Utc>> = intervals.iter().map(|i| i.start).collect();
+    let ends: Vec<DateTime<Utc>> = intervals.iter().map(|i| i.end).collect();
+    sqlx::query(
+        "INSERT INTO external_busy (id, calendar_id, starts_at, ends_at)
+         SELECT gen_random_uuid(), $1, s, e FROM UNNEST($2::timestamptz[], $3::timestamptz[]) AS t(s, e)",
+    )
+    .bind(calendar_id)
+    .bind(&starts)
+    .bind(&ends)
+    .execute(&mut *tx)
+    .await?;
 
     sqlx::query(
         "UPDATE external_calendars SET last_synced_at = $1, last_error = NULL WHERE id = $2",
@@ -507,6 +531,26 @@ mod tests {
                 "{secret:?} leaked into the database"
             );
         }
+    }
+
+    // Some providers refuse a request with no User-Agent, and reqwest sends
+    // none unless told to.
+    #[sqlx::test]
+    async fn feed_fetches_identify_themselves(db: PgPool) {
+        let user = a_user(&db, "me").await;
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/cal.ics"))
+            .and(wiremock::matchers::header_exists("user-agent"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(FEED))
+            .mount(&server)
+            .await;
+        let url = format!("{}/cal.ics", server.uri());
+        let id = connect_ics(&db, user, &url, None).await.unwrap();
+
+        let count = sync_one(&db, &Client::new(), id, &url, now()).await;
+
+        assert_eq!(count.unwrap(), 1);
     }
 
     #[sqlx::test]
