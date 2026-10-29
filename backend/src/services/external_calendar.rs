@@ -18,7 +18,7 @@
 //! titles are not read, not merely discarded. Importing a work calendar into
 //! a social app is a privacy problem the moment you keep "Interview with…".
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use chrono::{DateTime, Duration, Utc};
 use reqwest::Client;
 use sqlx::PgPool;
@@ -51,6 +51,75 @@ const FEED_USER_AGENT: &str = concat!("friends-calendar/", env!("CARGO_PKG_VERSI
 /// polls costs at most an hour of staleness, against a request per user per
 /// tick.
 pub const SYNC_INTERVAL_MINUTES: u64 = 60;
+
+/// The largest feed fetched. A packed work calendar with years of history is
+/// well under a megabyte; the URL is whatever somebody pasted, and reading
+/// an unbounded body would let one link exhaust the server's memory.
+pub const MAX_FEED_BYTES: usize = 5 * 1024 * 1024;
+
+/// Reads a feed's body, refusing it once it passes [`MAX_FEED_BYTES`].
+///
+/// ⚠️ Streamed and counted, not `text()` then measured: the point is to stop
+/// reading, and a missing or lying `Content-Length` must not get around it.
+async fn read_capped(mut response: reqwest::Response) -> Result<String> {
+    let too_big = || {
+        anyhow!(
+            "This calendar is larger than {} MB, too big to import",
+            MAX_FEED_BYTES / (1024 * 1024)
+        )
+    };
+    if response
+        .content_length()
+        .is_some_and(|n| n > MAX_FEED_BYTES as u64)
+    {
+        return Err(too_big());
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if body.len() + chunk.len() > MAX_FEED_BYTES {
+            return Err(too_big());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    // Lossy is safe here: the parser reads only ASCII property names and
+    // values, never the text a non-UTF-8 charset would garble.
+    Ok(String::from_utf8_lossy(&body).into_owned())
+}
+
+/// What turns a feed into busy intervals. A parameter so tests can stand in
+/// a parser that panics - the real one no longer does on any input known.
+type Parser = fn(&str, DateTime<Utc>, DateTime<Utc>) -> Result<Vec<ics_parse::BusyInterval>>;
+
+/// All-day blocks are excluded: a day-long "Annual leave" should not rule
+/// out a 19:00 slot, and treating it as busy would make whole weeks
+/// disappear from the suggestions.
+fn parse_feed(
+    body: &str,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> Result<Vec<ics_parse::BusyInterval>> {
+    ics_parse::busy_intervals(body, from, to, false)
+}
+
+/// Runs CPU-bound work off the async runtime, turning a panic into an error.
+///
+/// ⚠️ Defence in depth. The feed is any URL a user pastes, the parser is
+/// several hundred lines of date arithmetic over it, and `sync_all` runs
+/// every user's feed in one task: before this, one feed that panicked the
+/// parser stopped *everyone's* sync until restart. `spawn_blocking` also
+/// keeps a slow parse from stalling the request-serving threads.
+async fn run_isolated<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T> {
+    match tokio::task::spawn_blocking(work).await {
+        Ok(result) => result,
+        Err(e) if e.is_panic() => {
+            tracing::error!("Parsing an imported calendar panicked: {e:?}");
+            bail!("This calendar couldn't be read")
+        }
+        Err(e) => bail!("Calendar sync was interrupted: {e}"),
+    }
+}
 
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct ExternalCalendar {
@@ -194,6 +263,17 @@ pub async fn sync_one(
     credential: &str,
     now: DateTime<Utc>,
 ) -> Result<usize> {
+    sync_one_with(db, http, calendar_id, credential, now, parse_feed).await
+}
+
+async fn sync_one_with(
+    db: &PgPool,
+    http: &Client,
+    calendar_id: Uuid,
+    credential: &str,
+    now: DateTime<Utc>,
+    parse: Parser,
+) -> Result<usize> {
     let from = now - Duration::days(SYNC_LOOKBACK_DAYS);
     let to = now + Duration::days(SYNC_LOOKAHEAD_DAYS);
 
@@ -205,12 +285,9 @@ pub async fn sync_one(
     if !response.status().is_success() {
         return Err(anyhow!("Calendar returned {}", response.status()));
     }
-    let body = response.text().await?;
+    let body = read_capped(response).await?;
 
-    // All-day blocks are excluded: a day-long "Annual leave" should not rule
-    // out a 19:00 slot, and treating it as busy would make whole weeks
-    // disappear from the suggestions.
-    let intervals = ics_parse::busy_intervals(&body, from, to, false)?;
+    let intervals = run_isolated(move || parse(&body, from, to)).await?;
 
     let mut tx = db.begin().await?;
     sqlx::query("DELETE FROM external_busy WHERE calendar_id = $1")
@@ -260,6 +337,15 @@ async fn record_failure(db: &PgPool, calendar_id: Uuid, message: &str) -> Result
 
 /// Syncs every connected calendar. One failure is logged and skipped.
 pub async fn sync_all(db: &PgPool, http: &Client, now: DateTime<Utc>) -> Result<usize> {
+    sync_all_with(db, http, now, parse_feed).await
+}
+
+async fn sync_all_with(
+    db: &PgPool,
+    http: &Client,
+    now: DateTime<Utc>,
+    parse: Parser,
+) -> Result<usize> {
     let calendars: Vec<(Uuid, String)> =
         sqlx::query_as("SELECT id, credential FROM external_calendars")
             .fetch_all(db)
@@ -267,7 +353,16 @@ pub async fn sync_all(db: &PgPool, http: &Client, now: DateTime<Utc>) -> Result<
 
     let mut synced = 0;
     for (id, credential) in calendars {
-        match sync_one(db, http, id, &credential, now).await {
+        // Each feed in its own task, so a panic anywhere in its sync - not
+        // only the parse, which `run_isolated` already covers - is a
+        // `JoinError` for this feed rather than the end of the loop.
+        let (task_db, task_http) = (db.clone(), http.clone());
+        let outcome = tokio::spawn(async move {
+            sync_one_with(&task_db, &task_http, id, &credential, now, parse).await
+        })
+        .await
+        .unwrap_or_else(|e| Err(anyhow!("Calendar sync was interrupted: {e}")));
+        match outcome {
             Ok(_) => synced += 1,
             Err(e) => {
                 // A revoked link must not stop everyone else's sync - the
@@ -651,6 +746,177 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(count, 1);
+    }
+
+    // --- Hostile feeds ----------------------------------------------------
+
+    async fn last_error(db: &PgPool, id: Uuid) -> Option<String> {
+        sqlx::query_scalar("SELECT last_error FROM external_calendars WHERE id = $1")
+            .bind(id)
+            .fetch_one(db)
+            .await
+            .unwrap()
+    }
+
+    async fn cached(db: &PgPool, id: Uuid) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM external_busy WHERE calendar_id = $1")
+            .bind(id)
+            .fetch_one(db)
+            .await
+            .unwrap()
+    }
+
+    /// The real parser, except that it panics on a marker - standing in for
+    /// whatever input the next parser bug turns out to need.
+    fn panics_on_marker(
+        body: &str,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<Vec<ics_parse::BusyInterval>> {
+        if body.contains("PANIC-ME") {
+            panic!("parser bug");
+        }
+        parse_feed(body, from, to)
+    }
+
+    // ⚠️ `sync_all` runs every user's feed in one spawned task. Before each
+    // feed was isolated, one panic in one parse ended that task, and every
+    // other user's calendar stopped syncing until the process restarted.
+    #[sqlx::test]
+    async fn a_feed_that_panics_the_parser_does_not_stop_the_others(db: PgPool) {
+        let alice = a_user(&db, "alice").await;
+        let bob = a_user(&db, "bob").await;
+        let hostile = serving("BEGIN:VCALENDAR\r\nX-PANIC-ME:1\r\nEND:VCALENDAR\r\n").await;
+        let good = serving(FEED).await;
+        // The hostile one first, so a panic that escaped would stop the loop
+        // before it reached the good one.
+        let bad_id = connect_ics(&db, alice, &format!("{}/cal.ics", hostile.uri()), None)
+            .await
+            .unwrap();
+        let ok_id = connect_ics(&db, bob, &format!("{}/cal.ics", good.uri()), None)
+            .await
+            .unwrap();
+
+        let synced = sync_all_with(&db, &Client::new(), now(), panics_on_marker)
+            .await
+            .unwrap();
+
+        assert_eq!(synced, 1);
+        assert_eq!(cached(&db, ok_id).await, 1);
+        assert_eq!(
+            last_error(&db, bad_id).await.as_deref(),
+            Some("This calendar couldn't be read")
+        );
+    }
+
+    // The connect handler's inline first sync goes through `sync_one`, so
+    // the same isolation has to hold there: an error, not a panic.
+    #[sqlx::test]
+    async fn sync_one_turns_a_parser_panic_into_an_error(db: PgPool) {
+        let user = a_user(&db, "me").await;
+        let hostile = serving("BEGIN:VCALENDAR\r\nX-PANIC-ME:1\r\nEND:VCALENDAR\r\n").await;
+        let url = format!("{}/cal.ics", hostile.uri());
+        let id = connect_ics(&db, user, &url, None).await.unwrap();
+
+        let err = sync_one_with(&db, &Client::new(), id, &url, now(), panics_on_marker)
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.to_string(), "This calendar couldn't be read");
+    }
+
+    #[sqlx::test]
+    async fn an_oversized_feed_is_refused_and_keeps_the_cached_window(db: PgPool) {
+        let user = a_user(&db, "me").await;
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/cal.ics"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(FEED))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/cal.ics"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string("X".repeat(MAX_FEED_BYTES + 1)),
+            )
+            .mount(&server)
+            .await;
+        let url = format!("{}/cal.ics", server.uri());
+        let id = connect_ics(&db, user, &url, None).await.unwrap();
+        sync_one(&db, &Client::new(), id, &url, now())
+            .await
+            .unwrap();
+
+        sync_all(&db, &Client::new(), now()).await.unwrap();
+
+        assert_eq!(cached(&db, id).await, 1);
+        let error = last_error(&db, id).await.unwrap();
+        assert!(error.contains("too big to import"), "{error}");
+    }
+
+    // ⚠️ The cap must hold without a Content-Length too - a chunked response
+    // has none, and a server could simply omit or understate it. This
+    // serves one by hand, since wiremock always sets the header.
+    #[sqlx::test]
+    async fn a_chunked_feed_is_cut_off_at_the_cap(db: PgPool) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 4096];
+            let _ = socket.read(&mut request).await;
+            let _ = socket
+                .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+                .await;
+            // Endless 64 KiB chunks: the client has to be the one to stop.
+            let chunk = format!("{:x}\r\n{}\r\n", 65536, "X".repeat(65536));
+            for _ in 0..(MAX_FEED_BYTES / 65536 + 64) {
+                if socket.write_all(chunk.as_bytes()).await.is_err() {
+                    return;
+                }
+            }
+            let _ = socket.write_all(b"0\r\n\r\n").await;
+        });
+        let user = a_user(&db, "me").await;
+        let url = format!("http://{addr}/cal.ics");
+        let id = connect_ics(&db, user, &url, None).await.unwrap();
+
+        let err = sync_one(&db, &Client::new(), id, &url, now())
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("too big to import"), "{err}");
+    }
+
+    // ⚠️ A cap, not a truncation: storing the first N blocks would make
+    // somebody look free at times they aren't.
+    #[sqlx::test]
+    async fn a_feed_with_too_many_blocks_is_refused_with_a_readable_error(db: PgPool) {
+        let user = a_user(&db, "me").await;
+        let events: String = (0..=ics_parse::MAX_INTERVALS_PER_FEED)
+            .map(|_| {
+                "BEGIN:VEVENT\r\nDTSTART:20260302T090000Z\r\nDTEND:20260302T100000Z\r\nEND:VEVENT\r\n"
+            })
+            .collect();
+        let body: &'static str =
+            Box::leak(format!("BEGIN:VCALENDAR\r\n{events}END:VCALENDAR\r\n").into_boxed_str());
+        assert!(
+            body.len() < MAX_FEED_BYTES,
+            "must trip the interval cap, not the size cap"
+        );
+        let server = serving(body).await;
+        let id = connect_ics(&db, user, &format!("{}/cal.ics", server.uri()), None)
+            .await
+            .unwrap();
+
+        sync_all(&db, &Client::new(), now()).await.unwrap();
+
+        assert_eq!(cached(&db, id).await, 0, "nothing partial is stored");
+        let error = last_error(&db, id).await.unwrap();
+        assert!(error.contains("too many to import"), "{error}");
     }
 
     #[sqlx::test]

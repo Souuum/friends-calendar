@@ -37,7 +37,14 @@
 //! arithmetically to the requested window rather than walking from
 //! `DTSTART`, so a stand-up created years ago costs the same as one created
 //! last week; only a `COUNT` rule is walked from the start, because `COUNT`
-//! is counted from there. A hard cap on periods walked is a second belt.
+//! is counted from there. A hard cap on periods walked, per rule and per
+//! feed, is a second belt, and a feed producing more than
+//! `MAX_INTERVALS_PER_FEED` blocks is refused rather than truncated.
+//!
+//! ⚠️ The feed is any URL somebody pasted. Every piece of arithmetic on its
+//! values is checked, and an invalid value skips that property or event -
+//! it never panics, and (in release builds, where overflow wraps) never
+//! silently becomes a different, plausible value.
 //!
 //! ## What it does not
 //!
@@ -50,7 +57,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow, bail};
 use chrono::{
     DateTime, Datelike, Duration, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Utc, Weekday,
 };
@@ -153,9 +160,9 @@ impl Zone {
             Zone::Utc => Some(Utc.from_utc_datetime(&local)),
             Zone::Named(tz) => local_to_utc(tz, local),
             Zone::Fixed(offset) => local_to_utc(offset, local),
-            Zone::Custom(vtz) => Some(
-                Utc.from_utc_datetime(&(local - Duration::seconds(vtz.offset_at(local) as i64))),
-            ),
+            Zone::Custom(vtz) => local
+                .checked_sub_signed(Duration::seconds(vtz.offset_at(local) as i64))
+                .map(|utc| Utc.from_utc_datetime(&utc)),
         }
     }
 }
@@ -167,7 +174,7 @@ fn local_to_utc<Z: TimeZone>(zone: &Z, local: NaiveDateTime) -> Option<DateTime<
     zone.from_local_datetime(&local)
         .earliest()
         .or_else(|| {
-            zone.from_local_datetime(&(local + Duration::hours(1)))
+            zone.from_local_datetime(&local.checked_add_signed(Duration::hours(1))?)
                 .earliest()
         })
         .map(|dt| dt.with_timezone(&Utc))
@@ -198,12 +205,15 @@ impl VTimezone {
         let mut best: Option<(NaiveDateTime, i32)> = None;
         for obs in &self.observances {
             let onsets: Vec<NaiveDateTime> = match obs.rule {
-                Some((month, ordinal, weekday)) => [local.year() - 1, local.year()]
-                    .into_iter()
-                    .filter_map(|y| nth_weekday(y, month, weekday, ordinal))
-                    .map(|d| d.and_time(obs.start.time()))
-                    .filter(|onset| *onset >= obs.start)
-                    .collect(),
+                Some((month, ordinal, weekday)) => {
+                    [local.year().checked_sub(1), Some(local.year())]
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|y| nth_weekday(y, month, weekday, ordinal))
+                        .map(|d| d.and_time(obs.start.time()))
+                        .filter(|onset| *onset >= obs.start)
+                        .collect()
+                }
                 None => vec![obs.start],
             };
             for onset in onsets {
@@ -243,19 +253,30 @@ fn display_name_offset(name: &str) -> Option<FixedOffset> {
     if rest.is_empty() {
         return FixedOffset::east_opt(0);
     }
-    let sign = match rest.as_bytes()[0] {
-        b'+' => 1,
-        b'-' => -1,
+    let (sign, rest) = match rest.as_bytes().first()? {
+        b'+' => (1, &rest[1..]),
+        b'-' => (-1, &rest[1..]),
         _ => return None,
     };
-    let (h, m) = rest[1..].split_once(':').unwrap_or((&rest[1..], "0"));
-    let secs = sign * (h.parse::<i32>().ok()? * 3600 + m.parse::<i32>().ok()? * 60);
-    FixedOffset::east_opt(secs)
+    let (h, m) = rest.split_once(':').unwrap_or((rest, "0"));
+    // ⚠️ Feed-supplied, so bounded before any arithmetic: `(UTC+999999:00)`
+    // overflowed the multiply (a panic in debug, a wrapped offset in
+    // release). Real offsets stay within ±14h.
+    let (h, m) = (h.parse::<u32>().ok()?, m.parse::<u32>().ok()?);
+    if h > 14 || m > 59 {
+        return None;
+    }
+    FixedOffset::east_opt(sign * (h * 3600 + m * 60) as i32)
 }
 
 /// The IANA zone a `TZID` means, by every naming scheme real exports use.
 fn resolve_named(name: &str) -> Option<Tz> {
     let name = name.trim();
+    // Every scheme below is tried per `/` or per city, so a hostile name
+    // costs time quadratic in its length. No real zone name is this long.
+    if name.len() > 256 {
+        return None;
+    }
     if let Ok(tz) = name.parse::<Tz>() {
         return Some(tz);
     }
@@ -349,9 +370,7 @@ impl TzContext {
             if in_vtz {
                 match (&mut current, name.as_str()) {
                     (None, "TZID") => tzid = Some(value),
-                    (Some(obs), "DTSTART") => {
-                        obs.0 = NaiveDateTime::parse_from_str(&value, "%Y%m%dT%H%M%S").ok()
-                    }
+                    (Some(obs), "DTSTART") => obs.0 = parse_naive(&value),
                     (Some(obs), "TZOFFSETTO") => obs.1 = parse_offset(&value),
                     (Some(obs), "RRULE") => obs.2 = parse_observance_rule(&value),
                     _ => {}
@@ -405,7 +424,7 @@ fn parse_observance_rule(value: &str) -> Option<ObservanceRule> {
     for part in value.split(';') {
         let (k, v) = part.split_once('=')?;
         match k.to_ascii_uppercase().as_str() {
-            "BYMONTH" => month = v.parse().ok(),
+            "BYMONTH" => month = v.parse().ok().filter(|m| (1..=12).contains(m)),
             "BYDAY" => day = parse_byday(v),
             _ => {}
         }
@@ -441,13 +460,30 @@ impl IcsTime {
     }
 }
 
+/// Years a feed may name. RFC 5545 dates are four digits; anything outside
+/// is either garbage or hostile, and keeping every date well inside chrono's
+/// range means no later step of a date's arithmetic can overflow.
+const YEARS: std::ops::RangeInclusive<i32> = 1..=9999;
+
+fn parse_date(value: &str) -> Option<NaiveDate> {
+    NaiveDate::parse_from_str(value, "%Y%m%d")
+        .ok()
+        .filter(|d| YEARS.contains(&d.year()))
+}
+
+fn parse_naive(value: &str) -> Option<NaiveDateTime> {
+    NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S")
+        .ok()
+        .filter(|d| YEARS.contains(&d.year()))
+}
+
 fn parse_time(params: &[(String, String)], value: &str, ctx: &mut TzContext) -> Option<IcsTime> {
     let is_date = params
         .iter()
         .any(|(k, v)| k == "VALUE" && v.eq_ignore_ascii_case("DATE"));
 
     if is_date || value.len() == 8 {
-        let date = NaiveDate::parse_from_str(value, "%Y%m%d").ok()?;
+        let date = parse_date(value)?;
         return Some(IcsTime {
             local: date.and_hms_opt(0, 0, 0)?,
             zone: Zone::Utc,
@@ -457,13 +493,13 @@ fn parse_time(params: &[(String, String)], value: &str, ctx: &mut TzContext) -> 
 
     if let Some(stripped) = value.strip_suffix('Z') {
         return Some(IcsTime {
-            local: NaiveDateTime::parse_from_str(stripped, "%Y%m%dT%H%M%S").ok()?,
+            local: parse_naive(stripped)?,
             zone: Zone::Utc,
             all_day: false,
         });
     }
 
-    let local = NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S").ok()?;
+    let local = parse_naive(value)?;
 
     // ⚠️ A local time with a TZID. Resolving it in the wrong zone puts the
     // block up to 12 hours out, which in this feature means confidently
@@ -483,6 +519,10 @@ fn parse_time(params: &[(String, String)], value: &str, ctx: &mut TzContext) -> 
 }
 
 /// `PT1H30M`, `P1D` and friends.
+///
+/// ⚠️ Every step is checked: `P99999999999999W` is out of `Duration`'s range
+/// and the unchecked constructors panic on it. An unrepresentable duration
+/// is no duration, and the event falls back to having none.
 fn parse_duration(value: &str) -> Option<Duration> {
     let value = value.strip_prefix('P')?;
     let (date_part, time_part) = match value.split_once('T') {
@@ -498,11 +538,11 @@ fn parse_duration(value: &str) -> Option<Duration> {
         } else {
             let n: i64 = number.parse().ok()?;
             number.clear();
-            total += match c {
-                'W' => Duration::weeks(n),
-                'D' => Duration::days(n),
+            total = total.checked_add(&match c {
+                'W' => Duration::try_weeks(n)?,
+                'D' => Duration::try_days(n)?,
                 _ => return None,
-            };
+            })?;
         }
     }
     if let Some(time_part) = time_part {
@@ -512,12 +552,12 @@ fn parse_duration(value: &str) -> Option<Duration> {
             } else {
                 let n: i64 = number.parse().ok()?;
                 number.clear();
-                total += match c {
-                    'H' => Duration::hours(n),
-                    'M' => Duration::minutes(n),
-                    'S' => Duration::seconds(n),
+                total = total.checked_add(&match c {
+                    'H' => Duration::try_hours(n)?,
+                    'M' => Duration::try_minutes(n)?,
+                    'S' => Duration::try_seconds(n)?,
                     _ => return None,
-                };
+                })?;
             }
         }
     }
@@ -542,10 +582,10 @@ fn weekday_from_code(code: &str) -> Option<Weekday> {
 /// One `BYDAY` entry: `TU`, `2TU`, `-1SU`.
 fn parse_byday(entry: &str) -> Option<(Option<i32>, Weekday)> {
     let entry = entry.trim();
-    if entry.len() < 2 {
-        return None;
-    }
-    let (ordinal, code) = entry.split_at(entry.len() - 2);
+    // ⚠️ `get`, not `split_at`: the cut is in bytes, and a feed's `BYDAY=éa`
+    // put it inside a character, which panicked.
+    let cut = entry.len().checked_sub(2)?;
+    let (ordinal, code) = (entry.get(..cut)?, entry.get(cut..)?);
     let weekday = weekday_from_code(code)?;
     let ordinal = match ordinal {
         "" => None,
@@ -618,23 +658,30 @@ fn parse_rrule(value: &str) -> Option<Rrule> {
 }
 
 fn last_day_of_month(year: i32, month: u32) -> Option<NaiveDate> {
-    let (ny, nm) = if month == 12 {
-        (year + 1, 1)
-    } else {
-        (year, month + 1)
+    let (ny, nm) = match month {
+        12 => (year.checked_add(1)?, 1),
+        1..=11 => (year, month + 1),
+        _ => return None,
     };
     NaiveDate::from_ymd_opt(ny, nm, 1)?.pred_opt()
 }
 
 /// The `n`th `weekday` of a month; negative counts from the end (`-1SU` is
 /// the last Sunday).
+///
+/// ⚠️ No month has more than five of any weekday, so anything beyond ±5 is
+/// rejected up front - `-100000000MO` used to reach unchecked date
+/// arithmetic, and `i32::MIN` overflowed negating it.
 fn nth_weekday(year: i32, month: u32, weekday: Weekday, n: i32) -> Option<NaiveDate> {
+    if !(-5..=5).contains(&n) {
+        return None;
+    }
     if n > 0 {
         NaiveDate::from_weekday_of_month_opt(year, month, weekday, u8::try_from(n).ok()?)
     } else if n < 0 {
         let last = last_day_of_month(year, month)?;
         let back = (last.weekday().num_days_from_monday() + 7 - weekday.num_days_from_monday()) % 7;
-        let date = last - Duration::days(back as i64 + 7 * (-n as i64 - 1));
+        let date = last.checked_sub_signed(Duration::days(back as i64 + 7 * (-(n as i64) - 1)))?;
         (date.month() == month).then_some(date)
     } else {
         None
@@ -690,7 +737,7 @@ fn dates_in_month(rule: &Rrule, year: i32, month: u32, default_day: u32) -> Vec<
 }
 
 fn add_months_to_first(year: i32, month: u32, months: i64) -> Option<(i32, u32)> {
-    let total = year as i64 * 12 + (month as i64 - 1) + months;
+    let total = (year as i64 * 12 + (month as i64 - 1)).checked_add(months)?;
     Some((
         i32::try_from(total.div_euclid(12)).ok()?,
         (total.rem_euclid(12) + 1) as u32,
@@ -717,13 +764,13 @@ fn period(
             // ⚠️ Week by week, honouring INTERVAL: a fortnightly 1:1 is every
             // *other* week, whichever days it lists.
             let start = week0.checked_add_signed(Duration::try_weeks(step)?)?;
+            let offset = |w: Weekday| {
+                start.checked_add_signed(Duration::days(days_after_wkst(w, rule.wkst)))
+            };
             let mut dates: Vec<NaiveDate> = if rule.byday.is_empty() {
-                vec![start + Duration::days(days_after_wkst(d0.weekday(), rule.wkst))]
+                offset(d0.weekday()).into_iter().collect()
             } else {
-                rule.byday
-                    .iter()
-                    .map(|(_, w)| start + Duration::days(days_after_wkst(*w, rule.wkst)))
-                    .collect()
+                rule.byday.iter().filter_map(|(_, w)| offset(*w)).collect()
             };
             dates.sort();
             dates.dedup();
@@ -766,14 +813,12 @@ fn periods_before(rule: &Rrule, d0: NaiveDate, week0: NaiveDate, target: NaiveDa
 /// `UNTIL` as an inclusive instant. A date-only UNTIL includes that whole day.
 fn until_instant(raw: &str, zone: &Zone) -> Option<DateTime<Utc>> {
     if let Some(stripped) = raw.strip_suffix('Z') {
-        let naive = NaiveDateTime::parse_from_str(stripped, "%Y%m%dT%H%M%S").ok()?;
-        return Some(Utc.from_utc_datetime(&naive));
+        return Some(Utc.from_utc_datetime(&parse_naive(stripped)?));
     }
     if raw.len() == 8 {
-        let date = NaiveDate::parse_from_str(raw, "%Y%m%d").ok()?;
-        return zone.to_utc(date.and_hms_opt(23, 59, 59)?);
+        return zone.to_utc(parse_date(raw)?.and_hms_opt(23, 59, 59)?);
     }
-    zone.to_utc(NaiveDateTime::parse_from_str(raw, "%Y%m%dT%H%M%S").ok()?)
+    zone.to_utc(parse_naive(raw)?)
 }
 
 /// Expands a recurring event's starts **within `[from, to)`**, as
@@ -788,45 +833,58 @@ fn until_instant(raw: &str, zone: &Zone) -> Option<DateTime<Utc>> {
 /// older than ~2.7 years produced nothing at all). A `COUNT` rule has to be
 /// walked from the start, since that's where it counts from - it ends by
 /// itself. `MAX_PERIODS` is a last belt for a pathological rule.
+///
+/// `budget` is shared by every rule in the feed and counts periods walked.
+/// The per-rule cap alone still let a feed of tens of thousands of
+/// `COUNT` rules starting in year 1 walk billions of periods; running out
+/// of budget fails the whole feed with [`TooComplex`] rather than quietly
+/// importing part of it.
 fn expand(
     rule: &Rrule,
     start: &IcsTime,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
-) -> Vec<(NaiveDateTime, DateTime<Utc>)> {
+    budget: &mut u64,
+) -> Result<Vec<(NaiveDateTime, DateTime<Utc>)>, TooComplex> {
     const MAX_PERIODS: i64 = 100_000;
 
     if rule.freq == Freq::Other {
-        return start
+        return Ok(start
             .utc()
             .filter(|utc| *utc >= from && *utc < to)
             .map(|utc| vec![(start.local, utc)])
-            .unwrap_or_default();
+            .unwrap_or_default());
     }
 
     let d0 = start.local.date();
     let time = start.local.time();
-    let week0 = d0 - Duration::days(days_after_wkst(d0.weekday(), rule.wkst));
+    let Some(week0) =
+        d0.checked_sub_signed(Duration::days(days_after_wkst(d0.weekday(), rule.wkst)))
+    else {
+        return Ok(Vec::new());
+    };
     let until = rule
         .until
         .as_deref()
         .and_then(|u| until_instant(u, &start.zone));
     // Zone offsets never exceed a day, so two days of slack either side
     // covers any wall-clock/UTC skew.
-    let window_end = (to + Duration::days(2)).naive_utc().date();
+    let (Some(window_start), Some(window_end)) = (
+        from.checked_sub_signed(Duration::days(2)),
+        to.checked_add_signed(Duration::days(2)),
+    ) else {
+        return Ok(Vec::new());
+    };
+    let window_end = window_end.naive_utc().date();
     let first_k = match rule.count {
         Some(_) => 0,
-        None => periods_before(
-            rule,
-            d0,
-            week0,
-            (from - Duration::days(2)).naive_utc().date(),
-        ),
+        None => periods_before(rule, d0, week0, window_start.naive_utc().date()),
     };
 
     let mut out = Vec::new();
     let mut emitted = 0u32;
     for k in first_k..first_k.saturating_add(MAX_PERIODS) {
+        *budget = budget.checked_sub(1).ok_or(TooComplex)?;
         let Some((period_start, dates)) = period(rule, d0, week0, k) else {
             break;
         };
@@ -839,22 +897,39 @@ fn expand(
                 continue;
             }
             if rule.count.is_some_and(|count| emitted >= count) {
-                return out;
+                return Ok(out);
             }
             emitted += 1;
             let Some(utc) = start.zone.to_utc(local) else {
                 continue;
             };
             if until.is_some_and(|until| utc > until) || utc >= to {
-                return out;
+                return Ok(out);
             }
             if utc >= from {
                 out.push((local, utc));
             }
         }
     }
-    out
+    Ok(out)
 }
+
+/// A feed whose rules would take more work to expand than any real calendar
+/// needs. See [`expand`].
+#[derive(Debug)]
+struct TooComplex;
+
+/// Recurrence periods one feed may walk in total. A busy real calendar walks
+/// a few thousand; this leaves three orders of magnitude of headroom.
+const MAX_PERIODS_PER_FEED: u64 = 5_000_000;
+
+/// Busy intervals one feed may produce inside the sync window.
+///
+/// ⚠️ A cap, not a truncation: a feed over it fails with a readable error and
+/// keeps whatever was cached before, because importing an arbitrary prefix
+/// would make the user look free at times they aren't. A packed work calendar
+/// is a few thousand blocks over the seven-month window.
+pub const MAX_INTERVALS_PER_FEED: usize = 20_000;
 
 // --- Events ----------------------------------------------------------------
 
@@ -963,6 +1038,7 @@ pub fn busy_intervals(
     }
 
     let mut out = Vec::new();
+    let mut budget = MAX_PERIODS_PER_FEED;
     for event in &events {
         if event.cancelled || event.transparent {
             continue;
@@ -981,7 +1057,7 @@ pub fn busy_intervals(
         // can overlap.
         let length = match (&event.end, event.duration) {
             (Some(end), _) => match end.utc() {
-                Some(end_utc) => end_utc - start_utc,
+                Some(end_utc) => end_utc.signed_duration_since(start_utc),
                 None => continue,
             },
             (None, Some(d)) => d,
@@ -993,10 +1069,20 @@ pub fn busy_intervals(
         }
 
         let (occurrences, overrides) = match (&event.rrule, &event.recurrence_id) {
-            (Some(rule), None) => (
-                expand(rule, start, from - length, to),
-                event.uid.as_deref().and_then(|uid| replaced.get(uid)),
-            ),
+            (Some(rule), None) => {
+                // An event this long overlaps every window anyway; one too
+                // long to subtract is not a real event.
+                let Some(reach) = from.checked_sub_signed(length) else {
+                    continue;
+                };
+                let occurrences = expand(rule, start, reach, to, &mut budget).map_err(|_| {
+                    anyhow!("This calendar's repeating events are too complex to import")
+                })?;
+                (
+                    occurrences,
+                    event.uid.as_deref().and_then(|uid| replaced.get(uid)),
+                )
+            }
             _ => (vec![(start.local, start_utc)], None),
         };
 
@@ -1007,12 +1093,20 @@ pub fn busy_intervals(
             if overrides.is_some_and(|slots| slots.iter().any(|x| x.names(local, occurrence))) {
                 continue;
             }
+            let Some(end) = occurrence.checked_add_signed(length) else {
+                continue;
+            };
             let interval = BusyInterval {
                 start: occurrence,
-                end: occurrence + length,
+                end,
             };
             // Half-open on both sides, matching services::availability.
             if interval.start < to && from < interval.end {
+                if out.len() >= MAX_INTERVALS_PER_FEED {
+                    bail!(
+                        "This calendar has more than {MAX_INTERVALS_PER_FEED} busy blocks in the next few months, too many to import"
+                    );
+                }
                 out.push(interval);
             }
         }
@@ -1854,6 +1948,102 @@ BEGIN:VEVENT\nDTSTART;TZID=Odd:20260302T090000\nDTEND;TZID=Odd:20260302T100000\n
         does_not_panic(
             "BEGIN:VEVENT\nDTSTART;TZID=\"(UTC+999999:00) Nowhere\":20260302T090000\nDTEND;TZID=\"(UTC+999999:00) Nowhere\":20260302T100000\nEND:VEVENT",
         );
+    }
+
+    // --- Builder: further hostile-feed cases found auditing the parser ----
+
+    // ⚠️ Not just "no panic": in a release build 1193046 * 3600 wraps to
+    // -1696 seconds, which `FixedOffset` accepts, so the unchecked multiply
+    // read this as UTC-00:28:16 instead of rejecting it. An unrecognised
+    // zone reads as UTC.
+    #[test]
+    fn a_display_name_offset_that_would_wrap_is_rejected_not_wrapped() {
+        let out = parse(
+            "BEGIN:VEVENT\nDTSTART;TZID=\"(UTC+1193046:00) Nowhere\":20260302T090000\nDTEND;TZID=\"(UTC+1193046:00) Nowhere\":20260302T100000\nEND:VEVENT",
+        );
+
+        assert_eq!(out[0].start, at(2026, 3, 2, 9));
+    }
+
+    #[test]
+    fn a_real_display_name_offset_still_applies() {
+        let out = parse(
+            "BEGIN:VEVENT\nDTSTART;TZID=\"(UTC+05:30) Nowhere\":20260302T090000\nDTEND;TZID=\"(UTC+05:30) Nowhere\":20260302T100000\nEND:VEVENT",
+        );
+
+        assert_eq!(
+            out[0].start,
+            Utc.with_ymd_and_hms(2026, 3, 2, 3, 30, 0).unwrap()
+        );
+    }
+
+    // `last_day_of_month` did `month + 1` on a feed-supplied BYMONTH.
+    #[test]
+    fn an_out_of_range_bymonth_in_a_vtimezone_does_not_panic() {
+        does_not_panic(
+            "BEGIN:VTIMEZONE\nTZID:Odd\nBEGIN:STANDARD\nDTSTART:16010101T030000\nTZOFFSETTO:+0100\nRRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=4294967295\nEND:STANDARD\nEND:VTIMEZONE\n\
+BEGIN:VEVENT\nDTSTART;TZID=Odd:20260302T090000\nDTEND;TZID=Odd:20260302T100000\nEND:VEVENT",
+        );
+    }
+
+    // `add_months_to_first` added the step unchecked.
+    #[test]
+    fn a_huge_monthly_interval_does_not_panic() {
+        does_not_panic(
+            "BEGIN:VEVENT\nDTSTART:20260302T090000Z\nDTEND:20260302T100000Z\nRRULE:FREQ=MONTHLY;INTERVAL=9223372036854775807\nEND:VEVENT",
+        );
+    }
+
+    // Dates at the edge of chrono's range made the zone and window
+    // arithmetic overflow; four-digit years keep everything well inside it.
+    #[test]
+    fn a_year_outside_four_digits_is_ignored_not_a_panic() {
+        does_not_panic(
+            "BEGIN:VEVENT\nDTSTART;TZID=Europe/Paris:+2621430101T090000\nDTEND;TZID=Europe/Paris:+2621430101T100000\nRRULE:FREQ=WEEKLY\nEND:VEVENT",
+        );
+        does_not_panic(
+            "BEGIN:VEVENT\nDTSTART:00000101T000000Z\nDURATION:P1D\nRRULE:FREQ=DAILY\nEND:VEVENT",
+        );
+    }
+
+    // ⚠️ A cap, not a truncation: importing an arbitrary prefix would make
+    // somebody look free when they aren't.
+    #[test]
+    fn a_feed_with_too_many_busy_blocks_is_refused_with_a_reason() {
+        let events: String = (0..=MAX_INTERVALS_PER_FEED)
+            .map(|_| "BEGIN:VEVENT\nDTSTART:20260302T090000Z\nDTEND:20260302T100000Z\nEND:VEVENT\n")
+            .collect();
+
+        let err =
+            busy_intervals(&cal(&events), at(2026, 3, 1, 0), at(2026, 4, 1, 0), false).unwrap_err();
+
+        assert!(err.to_string().contains("too many to import"), "{err}");
+    }
+
+    #[test]
+    fn a_feed_exactly_at_the_cap_still_imports() {
+        let events: String = (0..MAX_INTERVALS_PER_FEED)
+            .map(|_| "BEGIN:VEVENT\nDTSTART:20260302T090000Z\nDTEND:20260302T100000Z\nEND:VEVENT\n")
+            .collect();
+
+        let out =
+            busy_intervals(&cal(&events), at(2026, 3, 1, 0), at(2026, 4, 1, 0), false).unwrap();
+
+        assert_eq!(out.len(), MAX_INTERVALS_PER_FEED);
+    }
+
+    // The per-rule period cap alone let many `COUNT` rules from year 1 walk
+    // 100k periods each. The feed-wide budget stops that with an error.
+    #[test]
+    fn a_feed_whose_rules_take_too_long_to_expand_is_refused() {
+        let events: String = (0..60)
+            .map(|_| "BEGIN:VEVENT\nDTSTART:00010101T090000Z\nDTEND:00010101T100000Z\nRRULE:FREQ=DAILY;INTERVAL=1;COUNT=4000000000\nEND:VEVENT\n")
+            .collect();
+
+        let err =
+            busy_intervals(&cal(&events), at(2026, 3, 1, 0), at(2026, 4, 1, 0), false).unwrap_err();
+
+        assert!(err.to_string().contains("too complex"), "{err}");
     }
 
     // A real Google public feed, fetched live. All-day by nature, so it is
