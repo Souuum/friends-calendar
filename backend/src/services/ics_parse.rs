@@ -1785,6 +1785,20 @@ BEGIN:VEVENT\nUID:off\nRECURRENCE-ID;VALUE=DATE:20260309\nDTSTART;VALUE=DATE:202
         assert_eq!(s.len(), 5);
     }
 
+    // `outlook_windows_timezone_names_are_resolved` stays green with the
+    // Windows table switched off, because its feed carries VTIMEZONE blocks
+    // and those resolve the zone on their own. This one has none, so only
+    // the table can place it - and it pins that the parser consults it.
+    #[test]
+    fn a_windows_tzid_without_a_vtimezone_resolves_through_the_table() {
+        let feed = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;TZID=Romance Standard Time:20260706T090000\r\nDTEND;TZID=Romance Standard Time:20260706T100000\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nDTSTART;TZID=Pacific Standard Time:20260707T090000\r\nDTEND;TZID=Pacific Standard Time:20260707T100000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+        let out = parse_window(feed, at(2026, 7, 1, 0), at(2026, 7, 31, 0));
+
+        // Summer: Paris UTC+2, Los Angeles UTC-7.
+        assert_eq!(starts(&out), vec![at(2026, 7, 6, 7), at(2026, 7, 7, 16)]);
+    }
+
     // --- Verifier: hostile feed data must not panic ----------------------
     //
     // The feed is whatever URL a user pasted. `sync_all` runs every user's
