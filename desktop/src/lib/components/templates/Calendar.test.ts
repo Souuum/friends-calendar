@@ -444,6 +444,28 @@ describe('Calendar busy blocks', () => {
     expect(screen.queryByText(/Nothing on this day/)).not.toBeInTheDocument();
   });
 
+  // What it shows instead: the merged blocks as anonymous time ranges.
+  it('lists the tapped day’s busy time as anonymous, merged ranges', async () => {
+    getExternalBusy.mockResolvedValue([busyToday(9, 11), busyToday(10, 12), busyToday(14, 15)]);
+    render(Calendar, { props: { events: [] } });
+    await waitFor(() => expect(screen.getByTestId('busy-summary')).toBeInTheDocument());
+
+    const now = new Date();
+    const today = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, '0'),
+      String(now.getDate()).padStart(2, '0')
+    ].join('-');
+    await fireEvent.click(document.querySelector<HTMLElement>(`[data-date="${today}"]`)!);
+
+    const list = screen.getByTestId('selected-day-busy');
+    expect(list.children).toHaveLength(2);
+    expect(list).toHaveTextContent('from your calendars');
+    expect(list.closest('section')).toHaveTextContent(/0\s*events\s*·\s*2 busy/);
+    // Not buttons: a block has no detail to open.
+    expect(list.querySelector('button')).toBeNull();
+  });
+
   // A connected calendar is the exception, not the rule, and a failure here
   // must not take the calendar down with it.
   it('renders the calendar anyway when the busy fetch fails', async () => {

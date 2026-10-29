@@ -12,6 +12,7 @@
   import CreateEventModal from '$lib/components/CreateEventModal.svelte';
   import { dateUtils } from '$lib/utils/dateUtils';
   import { statusOf } from '$lib/utils/eventStatus';
+  import { busyForDay, mergeBusy } from '$lib/utils/busyBlocks';
   import { createEventDispatcher } from 'svelte';
 
   export let events: EventWithParticipants[] = [];
@@ -284,6 +285,17 @@
   // times already (matchesFilter, eventsForDay, Frame's avatarUrl).
   $: selectedDayEvents = selectedDay ? eventsForDay(selectedDay) : [];
 
+  // ⚠️ The imported half of the same list. On a phone the cell is too narrow
+  // to read, so this list is where a day's meetings are seen - and a day full
+  // of them used to be announced as "Nothing on this day". Times only: the
+  // server never stores a title, and that is the point. `busy` is named here
+  // directly for the same static-dependency reason as the line above.
+  $: selectedDayBusy = selectedDay ? mergeBusy(busyForDay(busy, selectedDay)) : [];
+
+  function clock(at: Date): string {
+    return at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+
   /**
    * The mockup's "Best overlap this week: Fri 20:00, 7 free".
    *
@@ -455,6 +467,7 @@
               <span class="font-mono text-[11px] text-muted">
                 {selectedDayEvents.length}
                 {selectedDayEvents.length === 1 ? 'event' : 'events'}
+                {selectedDayBusy.length > 0 ? `· ${selectedDayBusy.length} busy` : ''}
               </span>
               <button
                 type="button"
@@ -489,7 +502,33 @@
                   </button>
                 {/each}
               </div>
-            {:else}
+            {/if}
+
+            {#if selectedDayBusy.length > 0}
+              <!-- Not buttons: there is no detail to open. See BusyBand. -->
+              <div
+                class="flex flex-col gap-1.5"
+                class:mt-1.5={selectedDayEvents.length > 0}
+                data-testid="selected-day-busy"
+              >
+                {#each selectedDayBusy as block (block.start.getTime())}
+                  <div
+                    class="flex items-center gap-2.5 rounded-[11px] border border-dashed border-line px-3 py-2.5"
+                  >
+                    <span class="min-w-0 flex-1">
+                      <span class="block text-[14px] font-semibold text-muted">Busy</span>
+                      <span class="block font-mono text-[11px] text-muted">
+                        {block.clippedStart ? '…' : clock(block.start)}–{block.clippedEnd
+                          ? '…'
+                          : clock(block.end)} · from your calendars
+                      </span>
+                    </span>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+
+            {#if selectedDayEvents.length === 0 && selectedDayBusy.length === 0}
               <p class="m-0 text-[13px] text-muted">
                 Nothing on this day. Press and hold it — or double-click — to add something.
               </p>
