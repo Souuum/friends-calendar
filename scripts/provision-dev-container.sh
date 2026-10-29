@@ -121,7 +121,7 @@ apt-get update -qq
 # build C code. postgresql: the scratch databases #[sqlx::test] creates.
 apt-get install -y -qq --no-install-recommends \
   build-essential pkg-config libssl-dev ca-certificates curl git xz-utils \
-  postgresql python3 >/dev/null
+  postgresql python3 tmux >/dev/null
 
 id dev >/dev/null 2>&1 || useradd --create-home --shell /bin/bash dev
 
@@ -190,6 +190,38 @@ as_dev 'cd ~/friends-calendar/desktop && npx playwright install chromium >/dev/n
 
 log "Prefetching Rust crates"
 as_dev 'cd ~/friends-calendar && cargo fetch -q'
+
+log "Claude Code Remote Control service"
+# Same shape as the host's session (tmux "claude" running `claude rc` in the
+# repo), but started at boot and restarted when it exits. Worktree spawn mode:
+# the builder and verifier each get their own checkout, so the verifier
+# switching branches can't pull files out from under the builder.
+# Claude Code itself is installed separately (see next steps), and the very
+# first start is interactive: attach with `tmux attach -t claude` to answer
+# "Enable Remote Control?" and log in. Restarts after that need nothing.
+cat > /etc/systemd/system/claude-rc.service <<'UNIT'
+[Unit]
+Description=Claude Code Remote Control session (tmux "claude", as dev)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=forking
+User=dev
+WorkingDirectory=/home/dev/friends-calendar
+Environment=LANG=C.UTF-8
+# A login shell, so ~/.profile puts cargo, claude and DATABASE_URL in place.
+ExecStart=/usr/bin/tmux new-session -d -s claude -c /home/dev/friends-calendar "bash -lc \"claude rc --spawn=worktree\""
+ExecStop=/usr/bin/tmux kill-session -t claude
+# When claude rc exits, the tmux session (and server) go with it; bring it back.
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable claude-rc.service >/dev/null
 INSIDE
 
 IP_NOW=$(pct exec "$CTID" -- hostname -I | awk '{print $1}')
@@ -205,8 +237,12 @@ Next steps (as the dev user: pct enter $CTID, then su - dev):
      then:
          cd ~/friends-calendar && git config credential.helper store && git push --dry-run
      and enter the token once when asked.
-  2. Install Claude Code as dev, following the official docs, then start it in
-     ~/friends-calendar. The agents are in .claude/agents/ (builder, verifier).
+  2. Install Claude Code as dev (official installer, from the docs), then
+     start the always-on session and answer its first-run questions once:
+         exit; systemctl start claude-rc     (as root in the container)
+         su - dev; tmux attach -t claude     (y, log in, then Ctrl-b d)
+     It comes back on its own after that, at boot and if it exits.
+     The agents are in .claude/agents/ (builder, verifier).
   3. First full check, to warm the build cache (takes a while once):
          cd ~/friends-calendar/backend && cargo test
          cd ~/friends-calendar/desktop && yarn test && yarn test:storybook

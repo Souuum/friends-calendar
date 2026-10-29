@@ -657,6 +657,14 @@ Chromium, and the repo, owned by a `dev` user. It refuses CTIDs 100 and 101.
 The host has no toolchain, and CT 100/101 are production, so before this,
 backend changes went to CI uncompiled.
 
+It runs as **CT 107** (`192.168.1.138`). The `claude-rc` systemd service runs
+`claude rc --spawn=worktree` in a tmux session called `claude`, as `dev`, from
+`~/friends-calendar`. That's the same shape as the host's hand-started session,
+but it starts at boot and restarts if it exits. **Worktree** spawn mode is
+deliberate: each session gets its own checkout, so the verifier checking out a
+branch can't swap files under the builder. The first start is interactive
+(`tmux attach -t claude`), and later restarts need nothing.
+
 ## Testing
 
 **Standing policy for this repo, not just this feature: every backend or
