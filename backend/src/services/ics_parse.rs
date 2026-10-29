@@ -5,32 +5,58 @@
 //! app has no business storing either. Availability only ever needs
 //! `(start, end)`, so `SUMMARY`, `DESCRIPTION`, `LOCATION` and `ATTENDEE`
 //! are never even parsed - not read and discarded, *not parsed*. There is a
-//! test asserting the output type carries no room for them.
+//! test asserting the output type carries no room for them. (`UID` is read,
+//! but only to pair a moved occurrence with its series; it is an opaque id
+//! and never leaves this module.)
 //!
 //! ## What it understands
 //!
 //! - Line unfolding (RFC 5545 §3.1) - a folded `DTSTART` is otherwise
 //!   invisible.
-//! - `DTSTART`/`DTEND` as UTC (`…Z`), as a floating/zoned local time with
-//!   `TZID`, or as an all-day `VALUE=DATE`.
+//! - Parameter values in double quotes, which may contain `:` and `;`.
+//! - `DTSTART`/`DTEND` as UTC (`…Z`), as a zoned local time with `TZID`, as
+//!   a floating time, or as an all-day `VALUE=DATE`.
+//! - `TZID` as an IANA name, a **Windows** zone id (what Outlook and Teams
+//!   write - see `services::windows_zones`), an Outlook display name such as
+//!   `(UTC+01:00) Amsterdam, Berlin, …`, a Mozilla-style path, or any name
+//!   described by a `VTIMEZONE` block in the feed. `X-WR-TIMEZONE` covers
+//!   floating times. An unresolvable zone is logged, then read as UTC.
 //! - `DURATION` where there is no `DTEND`, which is what Google writes for
 //!   many events.
-//! - `RRULE` for `DAILY`/`WEEKLY`/`MONTHLY` with `INTERVAL`, `COUNT`,
-//!   `UNTIL` and `BYDAY`, expanded **only inside the requested window** so
-//!   an infinite rule stays bounded.
-//! - `EXDATE`, so a cancelled occurrence of a recurring event stops
-//!   blocking.
+//! - `RRULE` for `DAILY`/`WEEKLY`/`MONTHLY`/`YEARLY` with `INTERVAL`,
+//!   `COUNT`, `UNTIL`, `WKST`, `BYDAY` (with ordinals for monthly rules, e.g.
+//!   `2TU`) and `BYMONTHDAY`. Occurrences are generated in **DTSTART's own
+//!   zone** and converted afterwards, so a 09:00 Paris meeting stays at 09:00
+//!   across a DST change.
+//! - `EXDATE`, and `RECURRENCE-ID` overrides: a moved occurrence blocks its
+//!   new slot instead of its old one, and a cancelled one blocks neither.
+//!
+//! ## Bounded, on purpose
+//!
+//! `RRULE:FREQ=DAILY` with no `COUNT` or `UNTIL` is infinite. Expansion jumps
+//! arithmetically to the requested window rather than walking from
+//! `DTSTART`, so a stand-up created years ago costs the same as one created
+//! last week; only a `COUNT` rule is walked from the start, because `COUNT`
+//! is counted from there. A hard cap on periods walked is a second belt.
 //!
 //! ## What it does not
 //!
-//! `RDATE`, `BYSETPOS`, `BYMONTHDAY`, and per-occurrence overrides via
-//! `RECURRENCE-ID`. Each would make a handful of events slightly wrong
-//! rather than silently dropping them; they're listed here so the gap is
-//! known rather than discovered.
+//! `RDATE`, `BYSETPOS`, `BYMONTH`/`BYWEEKNO`/`BYYEARDAY` on the event itself,
+//! sub-daily frequencies (`HOURLY` and below - only `DTSTART` is used), and
+//! `RECURRENCE-ID;RANGE=THISANDFUTURE` (treated as a single occurrence). Each
+//! would leave a handful of occurrences slightly wrong rather than dropping
+//! a calendar.
+
+use std::collections::HashMap;
+use std::rc::Rc;
 
 use anyhow::Result;
-use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone, Utc, Weekday};
-use chrono_tz::Tz;
+use chrono::{
+    DateTime, Datelike, Duration, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Utc, Weekday,
+};
+use chrono_tz::{TZ_VARIANTS, Tz};
+
+use crate::services::windows_zones;
 
 /// The only thing that leaves this module. Deliberately has nowhere to put a
 /// title - see the module doc.
@@ -66,11 +92,41 @@ type Params = Vec<(String, String)>;
 
 /// Splits `DTSTART;TZID=Europe/Paris:20260301T190000` into its name, its
 /// parameters, and its value.
+///
+/// ⚠️ A parameter value containing `:` or `;` must be quoted (RFC 5545
+/// §3.1), and Outlook does exactly that: `TZID="(UTC+01:00) Amsterdam, …"`.
+/// Splitting on the first colon regardless of quotes cut the property inside
+/// the zone name, the value stopped parsing, and the event was dropped.
 fn split_property(line: &str) -> Option<(String, Params, String)> {
-    let (left, value) = line.split_once(':')?;
-    let mut parts = left.split(';');
-    let name = parts.next()?.to_ascii_uppercase();
-    let params = parts
+    let mut in_quotes = false;
+    let mut cuts = Vec::new();
+    let mut colon = None;
+    for (i, c) in line.char_indices() {
+        match c {
+            '"' => in_quotes = !in_quotes,
+            ';' if !in_quotes => cuts.push(i),
+            ':' if !in_quotes => {
+                colon = Some(i);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let colon = colon?;
+    let left = &line[..colon];
+    let value = &line[colon + 1..];
+
+    let mut pieces = Vec::with_capacity(cuts.len() + 1);
+    let mut begin = 0;
+    for cut in cuts {
+        pieces.push(&left[begin..cut]);
+        begin = cut + 1;
+    }
+    pieces.push(&left[begin..]);
+
+    let name = pieces[0].to_ascii_uppercase();
+    let params = pieces[1..]
+        .iter()
         .filter_map(|p| {
             let (k, v) = p.split_once('=')?;
             Some((k.to_ascii_uppercase(), v.trim_matches('"').to_string()))
@@ -79,14 +135,313 @@ fn split_property(line: &str) -> Option<(String, Params, String)> {
     Some((name, params, value.to_string()))
 }
 
-/// A parsed date-time, which may be all-day.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// --- Time zones ------------------------------------------------------------
+
+/// Where a wall-clock time lives.
+#[derive(Debug, Clone)]
+enum Zone {
+    Utc,
+    Named(Tz),
+    Fixed(FixedOffset),
+    /// Described only by a `VTIMEZONE` block in the feed itself.
+    Custom(Rc<VTimezone>),
+}
+
+impl Zone {
+    fn to_utc(&self, local: NaiveDateTime) -> Option<DateTime<Utc>> {
+        match self {
+            Zone::Utc => Some(Utc.from_utc_datetime(&local)),
+            Zone::Named(tz) => local_to_utc(tz, local),
+            Zone::Fixed(offset) => local_to_utc(offset, local),
+            Zone::Custom(vtz) => Some(
+                Utc.from_utc_datetime(&(local - Duration::seconds(vtz.offset_at(local) as i64))),
+            ),
+        }
+    }
+}
+
+/// The earlier reading of an ambiguous (clocks-back) time. A time inside the
+/// clocks-forward gap does not exist; RFC 5545 §3.3.5 reads it with the
+/// offset from before the gap, which lands an hour later on the wall clock.
+fn local_to_utc<Z: TimeZone>(zone: &Z, local: NaiveDateTime) -> Option<DateTime<Utc>> {
+    zone.from_local_datetime(&local)
+        .earliest()
+        .or_else(|| {
+            zone.from_local_datetime(&(local + Duration::hours(1)))
+                .earliest()
+        })
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
+/// `(BYMONTH, BYDAY ordinal, BYDAY weekday)` of a yearly zone transition.
+type ObservanceRule = (u32, i32, Weekday);
+
+/// One `STANDARD`/`DAYLIGHT` block of a `VTIMEZONE`.
+#[derive(Debug)]
+struct Observance {
+    start: NaiveDateTime,
+    /// Seconds east of UTC once this observance is in effect.
+    offset_to: i32,
+    /// `FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU` - the only shape real exports use.
+    rule: Option<ObservanceRule>,
+}
+
+#[derive(Debug, Default)]
+struct VTimezone {
+    observances: Vec<Observance>,
+}
+
+impl VTimezone {
+    /// Offset in seconds east of UTC at a wall-clock time: whichever
+    /// observance most recently began.
+    fn offset_at(&self, local: NaiveDateTime) -> i32 {
+        let mut best: Option<(NaiveDateTime, i32)> = None;
+        for obs in &self.observances {
+            let onsets: Vec<NaiveDateTime> = match obs.rule {
+                Some((month, ordinal, weekday)) => [local.year() - 1, local.year()]
+                    .into_iter()
+                    .filter_map(|y| nth_weekday(y, month, weekday, ordinal))
+                    .map(|d| d.and_time(obs.start.time()))
+                    .filter(|onset| *onset >= obs.start)
+                    .collect(),
+                None => vec![obs.start],
+            };
+            for onset in onsets {
+                if onset <= local && best.is_none_or(|(b, _)| onset > b) {
+                    best = Some((onset, obs.offset_to));
+                }
+            }
+        }
+        best.map(|(_, o)| o)
+            .or_else(|| self.observances.first().map(|o| o.offset_to))
+            .unwrap_or(0)
+    }
+}
+
+/// `+0100`, `-0800`, `+053000`.
+fn parse_offset(value: &str) -> Option<i32> {
+    let (sign, digits) = match value.as_bytes().first()? {
+        b'+' => (1, &value[1..]),
+        b'-' => (-1, &value[1..]),
+        _ => return None,
+    };
+    if digits.len() < 4 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let h: i32 = digits[0..2].parse().ok()?;
+    let m: i32 = digits[2..4].parse().ok()?;
+    let s: i32 = digits.get(4..6).and_then(|s| s.parse().ok()).unwrap_or(0);
+    Some(sign * (h * 3600 + m * 60 + s))
+}
+
+/// `(UTC+01:00) Amsterdam, …` -> +1h. `(UTC) Dublin, …` -> 0.
+fn display_name_offset(name: &str) -> Option<FixedOffset> {
+    let inner = name.strip_prefix('(')?.split(')').next()?;
+    let rest = inner
+        .strip_prefix("UTC")
+        .or_else(|| inner.strip_prefix("GMT"))?;
+    if rest.is_empty() {
+        return FixedOffset::east_opt(0);
+    }
+    let sign = match rest.as_bytes()[0] {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    let (h, m) = rest[1..].split_once(':').unwrap_or((&rest[1..], "0"));
+    let secs = sign * (h.parse::<i32>().ok()? * 3600 + m.parse::<i32>().ok()? * 60);
+    FixedOffset::east_opt(secs)
+}
+
+/// The IANA zone a `TZID` means, by every naming scheme real exports use.
+fn resolve_named(name: &str) -> Option<Tz> {
+    let name = name.trim();
+    if let Ok(tz) = name.parse::<Tz>() {
+        return Some(tz);
+    }
+    if let Some(tz) = windows_zones::to_iana(name).and_then(|iana| iana.parse().ok()) {
+        return Some(tz);
+    }
+    // Mozilla-style `/mozilla.org/20050126_1/Europe/Paris`.
+    for (i, _) in name.match_indices('/') {
+        if let Ok(tz) = name[i + 1..].parse::<Tz>() {
+            return Some(tz);
+        }
+    }
+    // Outlook's display name: the cities listed share the zone's rules by
+    // definition, so the first one IANA knows by name settles it.
+    if let Some((_, cities)) = name.strip_prefix('(').and_then(|n| n.split_once(')')) {
+        for city in cities.split(',') {
+            let wanted = format!("/{}", city.trim().replace(' ', "_"));
+            if wanted.len() < 3 {
+                continue;
+            }
+            if let Some(tz) = TZ_VARIANTS.iter().find(|tz| tz.name().ends_with(&wanted)) {
+                return Some(*tz);
+            }
+        }
+    }
+    None
+}
+
+/// Every time zone a feed can name, resolved once per `TZID`.
+struct TzContext {
+    vtimezones: HashMap<String, Rc<VTimezone>>,
+    /// `X-WR-TIMEZONE`: the calendar's own zone, for floating times.
+    default: Option<Zone>,
+    cache: HashMap<String, Zone>,
+}
+
+impl TzContext {
+    fn from_lines(lines: &[String]) -> Self {
+        let mut vtimezones = HashMap::new();
+        let mut default = None;
+
+        let mut in_vtz = false;
+        let mut tzid: Option<String> = None;
+        let mut observances = Vec::new();
+        // (start, offset_to, rule) of the observance being read.
+        let mut current: Option<(Option<NaiveDateTime>, Option<i32>, Option<ObservanceRule>)> =
+            None;
+
+        for line in lines {
+            let trimmed = line.trim_end();
+            let upper = trimmed.to_ascii_uppercase();
+            match upper.as_str() {
+                "BEGIN:VTIMEZONE" => {
+                    in_vtz = true;
+                    tzid = None;
+                    observances = Vec::new();
+                    continue;
+                }
+                "END:VTIMEZONE" => {
+                    if let Some(id) = tzid.take() {
+                        vtimezones.insert(
+                            id,
+                            Rc::new(VTimezone {
+                                observances: std::mem::take(&mut observances),
+                            }),
+                        );
+                    }
+                    in_vtz = false;
+                    continue;
+                }
+                "BEGIN:STANDARD" | "BEGIN:DAYLIGHT" if in_vtz => {
+                    current = Some((None, None, None));
+                    continue;
+                }
+                "END:STANDARD" | "END:DAYLIGHT" if in_vtz => {
+                    if let Some((Some(start), Some(offset_to), rule)) = current.take() {
+                        observances.push(Observance {
+                            start,
+                            offset_to,
+                            rule,
+                        });
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+
+            let Some((name, _, value)) = split_property(trimmed) else {
+                continue;
+            };
+            if in_vtz {
+                match (&mut current, name.as_str()) {
+                    (None, "TZID") => tzid = Some(value),
+                    (Some(obs), "DTSTART") => {
+                        obs.0 = NaiveDateTime::parse_from_str(&value, "%Y%m%dT%H%M%S").ok()
+                    }
+                    (Some(obs), "TZOFFSETTO") => obs.1 = parse_offset(&value),
+                    (Some(obs), "RRULE") => obs.2 = parse_observance_rule(&value),
+                    _ => {}
+                }
+            } else if name == "X-WR-TIMEZONE" {
+                default = resolve_named(&value).map(Zone::Named);
+            }
+        }
+
+        TzContext {
+            vtimezones,
+            default,
+            cache: HashMap::new(),
+        }
+    }
+
+    fn floating(&self) -> Zone {
+        self.default.clone().unwrap_or(Zone::Utc)
+    }
+
+    fn zone_for(&mut self, tzid: &str) -> Zone {
+        if let Some(zone) = self.cache.get(tzid) {
+            return zone.clone();
+        }
+        let zone = if let Some(tz) = resolve_named(tzid) {
+            Zone::Named(tz)
+        } else if let Some(vtz) = self
+            .vtimezones
+            .get(tzid)
+            .filter(|v| !v.observances.is_empty())
+        {
+            Zone::Custom(vtz.clone())
+        } else if let Some(offset) = display_name_offset(tzid) {
+            Zone::Fixed(offset)
+        } else if let Some(default) = &self.default {
+            default.clone()
+        } else {
+            // ⚠️ Not silent: a wrong zone puts every meeting in this feed
+            // hours out, and this line is the only trace of why.
+            tracing::warn!("Unrecognised TZID {tzid:?} in an imported calendar; reading it as UTC");
+            Zone::Utc
+        };
+        self.cache.insert(tzid.to_string(), zone.clone());
+        zone
+    }
+}
+
+fn parse_observance_rule(value: &str) -> Option<ObservanceRule> {
+    let mut month = None;
+    let mut day = None;
+    for part in value.split(';') {
+        let (k, v) = part.split_once('=')?;
+        match k.to_ascii_uppercase().as_str() {
+            "BYMONTH" => month = v.parse().ok(),
+            "BYDAY" => day = parse_byday(v),
+            _ => {}
+        }
+    }
+    let (ordinal, weekday) = day?;
+    Some((month?, ordinal.unwrap_or(1), weekday))
+}
+
+// --- Times -----------------------------------------------------------------
+
+/// A parsed date-time: the wall clock, the zone it is read in, and whether it
+/// is all-day.
+#[derive(Debug, Clone)]
 struct IcsTime {
-    at: DateTime<Utc>,
+    local: NaiveDateTime,
+    zone: Zone,
     all_day: bool,
 }
 
-fn parse_time(params: &[(String, String)], value: &str) -> Option<IcsTime> {
+impl IcsTime {
+    fn utc(&self) -> Option<DateTime<Utc>> {
+        self.zone.to_utc(self.local)
+    }
+
+    /// Whether this (an `EXDATE` or `RECURRENCE-ID`) names the occurrence.
+    /// A date-only value names the whole day.
+    fn names(&self, local: NaiveDateTime, utc: DateTime<Utc>) -> bool {
+        if self.all_day {
+            self.local.date() == local.date()
+        } else {
+            self.utc() == Some(utc)
+        }
+    }
+}
+
+fn parse_time(params: &[(String, String)], value: &str, ctx: &mut TzContext) -> Option<IcsTime> {
     let is_date = params
         .iter()
         .any(|(k, v)| k == "VALUE" && v.eq_ignore_ascii_case("DATE"));
@@ -94,41 +449,37 @@ fn parse_time(params: &[(String, String)], value: &str) -> Option<IcsTime> {
     if is_date || value.len() == 8 {
         let date = NaiveDate::parse_from_str(value, "%Y%m%d").ok()?;
         return Some(IcsTime {
-            at: Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0)?),
+            local: date.and_hms_opt(0, 0, 0)?,
+            zone: Zone::Utc,
             all_day: true,
         });
     }
 
     if let Some(stripped) = value.strip_suffix('Z') {
-        let naive = NaiveDateTime::parse_from_str(stripped, "%Y%m%dT%H%M%S").ok()?;
         return Some(IcsTime {
-            at: Utc.from_utc_datetime(&naive),
+            local: NaiveDateTime::parse_from_str(stripped, "%Y%m%dT%H%M%S").ok()?,
+            zone: Zone::Utc,
             all_day: false,
         });
     }
 
-    let naive = NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S").ok()?;
+    let local = NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S").ok()?;
 
     // ⚠️ A local time with a TZID. Resolving it in the wrong zone puts the
     // block up to 12 hours out, which in this feature means confidently
     // suggesting a time somebody is in a meeting.
-    let tz = params
-        .iter()
-        .find(|(k, _)| k == "TZID")
-        .and_then(|(_, v)| v.parse::<Tz>().ok());
-
-    let at = match tz {
-        Some(tz) => tz
-            .from_local_datetime(&naive)
-            .earliest()
-            .map(|dt| dt.with_timezone(&Utc))?,
-        // No TZID: a "floating" time, which the spec says means local to
-        // whoever reads it. UTC is the only defensible reading here, and it
-        // is rare in practice.
-        None => Utc.from_utc_datetime(&naive),
+    let zone = match params.iter().find(|(k, _)| k == "TZID") {
+        Some((_, tzid)) => ctx.zone_for(tzid),
+        // No TZID: a "floating" time, local to whoever reads it. The
+        // calendar's own X-WR-TIMEZONE is the best reading, else UTC.
+        None => ctx.floating(),
     };
 
-    Some(IcsTime { at, all_day: false })
+    Some(IcsTime {
+        local,
+        zone,
+        all_day: false,
+    })
 }
 
 /// `PT1H30M`, `P1D` and friends.
@@ -173,10 +524,9 @@ fn parse_duration(value: &str) -> Option<Duration> {
     Some(total)
 }
 
-fn weekday_from_ics(code: &str) -> Option<Weekday> {
-    // BYDAY can carry an ordinal ("2TU"); the ordinal is BYSETPOS-adjacent
-    // and unsupported, so only the day code is read.
-    let code = code.trim_start_matches(|c: char| c.is_ascii_digit() || c == '-' || c == '+');
+// --- Recurrence ------------------------------------------------------------
+
+fn weekday_from_code(code: &str) -> Option<Weekday> {
     match code.to_ascii_uppercase().as_str() {
         "MO" => Some(Weekday::Mon),
         "TU" => Some(Weekday::Tue),
@@ -189,12 +539,40 @@ fn weekday_from_ics(code: &str) -> Option<Weekday> {
     }
 }
 
+/// One `BYDAY` entry: `TU`, `2TU`, `-1SU`.
+fn parse_byday(entry: &str) -> Option<(Option<i32>, Weekday)> {
+    let entry = entry.trim();
+    if entry.len() < 2 {
+        return None;
+    }
+    let (ordinal, code) = entry.split_at(entry.len() - 2);
+    let weekday = weekday_from_code(code)?;
+    let ordinal = match ordinal {
+        "" => None,
+        n => Some(n.trim_start_matches('+').parse().ok()?),
+    };
+    Some((ordinal, weekday))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Freq {
+    Daily,
+    Weekly,
+    Monthly,
+    Yearly,
+    /// HOURLY and below: only DTSTART is used.
+    Other,
+}
+
 struct Rrule {
-    freq: String,
+    freq: Freq,
     interval: i64,
-    count: Option<usize>,
-    until: Option<DateTime<Utc>>,
-    byday: Vec<Weekday>,
+    count: Option<u32>,
+    /// Kept raw: a floating UNTIL is read in DTSTART's zone.
+    until: Option<String>,
+    byday: Vec<(Option<i32>, Weekday)>,
+    bymonthday: Vec<i32>,
+    wkst: Weekday,
 }
 
 fn parse_rrule(value: &str) -> Option<Rrule> {
@@ -203,15 +581,27 @@ fn parse_rrule(value: &str) -> Option<Rrule> {
     let mut count = None;
     let mut until = None;
     let mut byday = Vec::new();
+    let mut bymonthday = Vec::new();
+    let mut wkst = Weekday::Mon;
 
     for part in value.split(';') {
         let (k, v) = part.split_once('=')?;
         match k.to_ascii_uppercase().as_str() {
-            "FREQ" => freq = Some(v.to_ascii_uppercase()),
+            "FREQ" => {
+                freq = Some(match v.to_ascii_uppercase().as_str() {
+                    "DAILY" => Freq::Daily,
+                    "WEEKLY" => Freq::Weekly,
+                    "MONTHLY" => Freq::Monthly,
+                    "YEARLY" => Freq::Yearly,
+                    _ => Freq::Other,
+                })
+            }
             "INTERVAL" => interval = v.parse().unwrap_or(1),
             "COUNT" => count = v.parse().ok(),
-            "UNTIL" => until = parse_time(&[], v).map(|t| t.at),
-            "BYDAY" => byday = v.split(',').filter_map(weekday_from_ics).collect(),
+            "UNTIL" => until = Some(v.to_string()),
+            "BYDAY" => byday = v.split(',').filter_map(parse_byday).collect(),
+            "BYMONTHDAY" => bymonthday = v.split(',').filter_map(|d| d.parse().ok()).collect(),
+            "WKST" => wkst = weekday_from_code(v).unwrap_or(Weekday::Mon),
             _ => {}
         }
     }
@@ -222,76 +612,330 @@ fn parse_rrule(value: &str) -> Option<Rrule> {
         count,
         until,
         byday,
+        bymonthday,
+        wkst,
     })
 }
 
-/// Expands a recurring event's start times **within `[from, to)`**.
+fn last_day_of_month(year: i32, month: u32) -> Option<NaiveDate> {
+    let (ny, nm) = if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, month + 1)
+    };
+    NaiveDate::from_ymd_opt(ny, nm, 1)?.pred_opt()
+}
+
+/// The `n`th `weekday` of a month; negative counts from the end (`-1SU` is
+/// the last Sunday).
+fn nth_weekday(year: i32, month: u32, weekday: Weekday, n: i32) -> Option<NaiveDate> {
+    if n > 0 {
+        NaiveDate::from_weekday_of_month_opt(year, month, weekday, u8::try_from(n).ok()?)
+    } else if n < 0 {
+        let last = last_day_of_month(year, month)?;
+        let back = (last.weekday().num_days_from_monday() + 7 - weekday.num_days_from_monday()) % 7;
+        let date = last - Duration::days(back as i64 + 7 * (-n as i64 - 1));
+        (date.month() == month).then_some(date)
+    } else {
+        None
+    }
+}
+
+fn days_after_wkst(day: Weekday, wkst: Weekday) -> i64 {
+    ((day.num_days_from_monday() + 7 - wkst.num_days_from_monday()) % 7) as i64
+}
+
+fn matches_monthday(rule: &Rrule, date: NaiveDate) -> bool {
+    let Some(last) = last_day_of_month(date.year(), date.month()) else {
+        return false;
+    };
+    rule.bymonthday.iter().any(|&n| {
+        let day = if n > 0 { n } else { last.day() as i32 + 1 + n };
+        day == date.day() as i32
+    })
+}
+
+/// The occurrence dates of a monthly (or yearly-by-weekday) rule in one month.
 ///
-/// ⚠️ Bounded by the window on purpose: `RRULE:FREQ=DAILY` with no `COUNT`
-/// or `UNTIL` is infinite, and a sync that tried to enumerate it would never
-/// return. The cap below is a second belt for a pathological `INTERVAL`.
+/// ⚠️ An occurrence that doesn't exist - the 31st of a 30-day month - is
+/// skipped, not clamped (RFC 5545 §3.3.10).
+fn dates_in_month(rule: &Rrule, year: i32, month: u32, default_day: u32) -> Vec<NaiveDate> {
+    let Some(last) = last_day_of_month(year, month) else {
+        return Vec::new();
+    };
+    let mut dates: Vec<NaiveDate> = if !rule.byday.is_empty() {
+        rule.byday
+            .iter()
+            .flat_map(|&(ordinal, weekday)| match ordinal {
+                Some(n) => nth_weekday(year, month, weekday, n).into_iter().collect(),
+                None => (1..=5)
+                    .filter_map(|n| nth_weekday(year, month, weekday, n))
+                    .collect::<Vec<_>>(),
+            })
+            .filter(|d| rule.bymonthday.is_empty() || matches_monthday(rule, *d))
+            .collect()
+    } else if !rule.bymonthday.is_empty() {
+        (1..=last.day())
+            .filter_map(|d| NaiveDate::from_ymd_opt(year, month, d))
+            .filter(|d| matches_monthday(rule, *d))
+            .collect()
+    } else {
+        NaiveDate::from_ymd_opt(year, month, default_day)
+            .into_iter()
+            .collect()
+    };
+    dates.sort();
+    dates.dedup();
+    dates
+}
+
+fn add_months_to_first(year: i32, month: u32, months: i64) -> Option<(i32, u32)> {
+    let total = year as i64 * 12 + (month as i64 - 1) + months;
+    Some((
+        i32::try_from(total.div_euclid(12)).ok()?,
+        (total.rem_euclid(12) + 1) as u32,
+    ))
+}
+
+/// Period `k` of a rule: the date it begins on, and the occurrence dates in it.
+fn period(
+    rule: &Rrule,
+    d0: NaiveDate,
+    week0: NaiveDate,
+    k: i64,
+) -> Option<(NaiveDate, Vec<NaiveDate>)> {
+    let step = k.checked_mul(rule.interval)?;
+    match rule.freq {
+        Freq::Daily => {
+            let date = d0.checked_add_signed(Duration::try_days(step)?)?;
+            let keep = (rule.byday.is_empty()
+                || rule.byday.iter().any(|(_, w)| *w == date.weekday()))
+                && (rule.bymonthday.is_empty() || matches_monthday(rule, date));
+            Some((date, if keep { vec![date] } else { Vec::new() }))
+        }
+        Freq::Weekly => {
+            // ⚠️ Week by week, honouring INTERVAL: a fortnightly 1:1 is every
+            // *other* week, whichever days it lists.
+            let start = week0.checked_add_signed(Duration::try_weeks(step)?)?;
+            let mut dates: Vec<NaiveDate> = if rule.byday.is_empty() {
+                vec![start + Duration::days(days_after_wkst(d0.weekday(), rule.wkst))]
+            } else {
+                rule.byday
+                    .iter()
+                    .map(|(_, w)| start + Duration::days(days_after_wkst(*w, rule.wkst)))
+                    .collect()
+            };
+            dates.sort();
+            dates.dedup();
+            Some((start, dates))
+        }
+        Freq::Monthly => {
+            let (y, m) = add_months_to_first(d0.year(), d0.month(), step)?;
+            Some((
+                NaiveDate::from_ymd_opt(y, m, 1)?,
+                dates_in_month(rule, y, m, d0.day()),
+            ))
+        }
+        Freq::Yearly => {
+            let y = d0.year().checked_add(i32::try_from(step).ok()?)?;
+            Some((
+                NaiveDate::from_ymd_opt(y, 1, 1)?,
+                dates_in_month(rule, y, d0.month(), d0.day()),
+            ))
+        }
+        Freq::Other => None,
+    }
+}
+
+/// How many whole periods lie between DTSTART and `target`, less one for
+/// safety - where an endless rule can start walking without missing anything.
+fn periods_before(rule: &Rrule, d0: NaiveDate, week0: NaiveDate, target: NaiveDate) -> i64 {
+    let elapsed = match rule.freq {
+        Freq::Daily => (target - d0).num_days(),
+        Freq::Weekly => (target - week0).num_days() / 7,
+        Freq::Monthly => {
+            (target.year() as i64 - d0.year() as i64) * 12 + target.month() as i64
+                - d0.month() as i64
+        }
+        Freq::Yearly => target.year() as i64 - d0.year() as i64,
+        Freq::Other => 0,
+    };
+    (elapsed / rule.interval - 1).max(0)
+}
+
+/// `UNTIL` as an inclusive instant. A date-only UNTIL includes that whole day.
+fn until_instant(raw: &str, zone: &Zone) -> Option<DateTime<Utc>> {
+    if let Some(stripped) = raw.strip_suffix('Z') {
+        let naive = NaiveDateTime::parse_from_str(stripped, "%Y%m%dT%H%M%S").ok()?;
+        return Some(Utc.from_utc_datetime(&naive));
+    }
+    if raw.len() == 8 {
+        let date = NaiveDate::parse_from_str(raw, "%Y%m%d").ok()?;
+        return zone.to_utc(date.and_hms_opt(23, 59, 59)?);
+    }
+    zone.to_utc(NaiveDateTime::parse_from_str(raw, "%Y%m%dT%H%M%S").ok()?)
+}
+
+/// Expands a recurring event's starts **within `[from, to)`**, as
+/// `(wall clock, UTC)` pairs.
+///
+/// ⚠️ Generated on DTSTART's wall clock in DTSTART's zone, then converted:
+/// stepping the UTC instant instead moves every occurrence by an hour once
+/// DST changes.
+///
+/// ⚠️ Bounded: an endless rule jumps straight to the window, so its age
+/// doesn't matter (walking from DTSTART with a step cap meant a stand-up
+/// older than ~2.7 years produced nothing at all). A `COUNT` rule has to be
+/// walked from the start, since that's where it counts from - it ends by
+/// itself. `MAX_PERIODS` is a last belt for a pathological rule.
 fn expand(
     rule: &Rrule,
-    first: DateTime<Utc>,
+    start: &IcsTime,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
-) -> Vec<DateTime<Utc>> {
-    const MAX_OCCURRENCES: usize = 1000;
+) -> Vec<(NaiveDateTime, DateTime<Utc>)> {
+    const MAX_PERIODS: i64 = 100_000;
 
-    let mut out = Vec::new();
-    let mut cursor = first;
-    let mut emitted = 0usize;
-
-    for _ in 0..MAX_OCCURRENCES {
-        if cursor >= to {
-            break;
-        }
-        if rule.until.is_some_and(|until| cursor > until) {
-            break;
-        }
-        if rule.count.is_some_and(|count| emitted >= count) {
-            break;
-        }
-
-        let matches_day = rule.byday.is_empty() || rule.byday.contains(&cursor.weekday());
-        if matches_day {
-            emitted += 1;
-            if cursor >= from {
-                out.push(cursor);
-            }
-        }
-
-        cursor = match rule.freq.as_str() {
-            // With BYDAY, a weekly rule lists several days per week, so step
-            // a day at a time and let the BYDAY check above do the filtering.
-            "DAILY" => cursor + Duration::days(rule.interval),
-            "WEEKLY" if !rule.byday.is_empty() => cursor + Duration::days(1),
-            "WEEKLY" => cursor + Duration::weeks(rule.interval),
-            "MONTHLY" => add_months(cursor, rule.interval),
-            _ => break,
-        };
+    if rule.freq == Freq::Other {
+        return start
+            .utc()
+            .filter(|utc| *utc >= from && *utc < to)
+            .map(|utc| vec![(start.local, utc)])
+            .unwrap_or_default();
     }
 
+    let d0 = start.local.date();
+    let time = start.local.time();
+    let week0 = d0 - Duration::days(days_after_wkst(d0.weekday(), rule.wkst));
+    let until = rule
+        .until
+        .as_deref()
+        .and_then(|u| until_instant(u, &start.zone));
+    // Zone offsets never exceed a day, so two days of slack either side
+    // covers any wall-clock/UTC skew.
+    let window_end = (to + Duration::days(2)).naive_utc().date();
+    let first_k = match rule.count {
+        Some(_) => 0,
+        None => periods_before(
+            rule,
+            d0,
+            week0,
+            (from - Duration::days(2)).naive_utc().date(),
+        ),
+    };
+
+    let mut out = Vec::new();
+    let mut emitted = 0u32;
+    for k in first_k..first_k.saturating_add(MAX_PERIODS) {
+        let Some((period_start, dates)) = period(rule, d0, week0, k) else {
+            break;
+        };
+        if period_start > window_end {
+            break;
+        }
+        for date in dates {
+            let local = date.and_time(time);
+            if local < start.local {
+                continue;
+            }
+            if rule.count.is_some_and(|count| emitted >= count) {
+                return out;
+            }
+            emitted += 1;
+            let Some(utc) = start.zone.to_utc(local) else {
+                continue;
+            };
+            if until.is_some_and(|until| utc > until) || utc >= to {
+                return out;
+            }
+            if utc >= from {
+                out.push((local, utc));
+            }
+        }
+    }
     out
 }
 
-/// Calendar-aware month arithmetic, clamping to the last valid day - the
-/// 31st of a 30-day month would otherwise roll into the next one.
-fn add_months(at: DateTime<Utc>, months: i64) -> DateTime<Utc> {
-    let total = at.month0() as i64 + months;
-    let year = at.year() + (total.div_euclid(12)) as i32;
-    let month0 = total.rem_euclid(12) as u32;
+// --- Events ----------------------------------------------------------------
 
-    let mut day = at.day();
-    loop {
-        if let Some(date) = NaiveDate::from_ymd_opt(year, month0 + 1, day) {
-            return Utc.from_utc_datetime(&date.and_time(at.time()));
+/// What one VEVENT says about *when*, and nothing about *what*.
+#[derive(Default)]
+struct RawEvent {
+    uid: Option<String>,
+    start: Option<IcsTime>,
+    end: Option<IcsTime>,
+    duration: Option<Duration>,
+    rrule: Option<Rrule>,
+    exdates: Vec<IcsTime>,
+    recurrence_id: Option<IcsTime>,
+    // A cancelled event still appears in many exports; it should not block.
+    cancelled: bool,
+    // TRANSP:TRANSPARENT is the calendar's own way of saying "this does not
+    // make me busy" - respect it rather than overruling it.
+    transparent: bool,
+}
+
+fn collect_events(lines: &[String], ctx: &mut TzContext) -> Vec<RawEvent> {
+    let mut events = Vec::new();
+    let mut current: Option<RawEvent> = None;
+    // Depth of sub-components (VALARM) inside the event: their DURATION and
+    // TRIGGER describe the alarm, not the event.
+    let mut nested = 0usize;
+
+    for line in lines {
+        let trimmed = line.trim_end();
+        if trimmed.eq_ignore_ascii_case("BEGIN:VEVENT") {
+            current = Some(RawEvent::default());
+            nested = 0;
+            continue;
         }
-        if day <= 28 {
-            return at + Duration::days(30 * months);
+        if trimmed.eq_ignore_ascii_case("END:VEVENT") {
+            if let Some(event) = current.take() {
+                events.push(event);
+            }
+            continue;
         }
-        day -= 1;
+        let Some(event) = current.as_mut() else {
+            continue;
+        };
+
+        let upper = trimmed.to_ascii_uppercase();
+        if upper.starts_with("BEGIN:") {
+            nested += 1;
+            continue;
+        }
+        if upper.starts_with("END:") {
+            nested = nested.saturating_sub(1);
+            continue;
+        }
+        if nested > 0 {
+            continue;
+        }
+
+        let Some((name, params, value)) = split_property(trimmed) else {
+            continue;
+        };
+        match name.as_str() {
+            "UID" => event.uid = Some(value),
+            "DTSTART" => event.start = parse_time(&params, &value, ctx),
+            "DTEND" => event.end = parse_time(&params, &value, ctx),
+            "DURATION" => event.duration = parse_duration(&value),
+            "RRULE" => event.rrule = parse_rrule(&value),
+            "RECURRENCE-ID" => event.recurrence_id = parse_time(&params, &value, ctx),
+            "EXDATE" => {
+                for one in value.split(',') {
+                    if let Some(t) = parse_time(&params, one, ctx) {
+                        event.exdates.push(t);
+                    }
+                }
+            }
+            "STATUS" => event.cancelled = value.eq_ignore_ascii_case("CANCELLED"),
+            "TRANSP" => event.transparent = value.eq_ignore_ascii_case("TRANSPARENT"),
+            _ => {}
+        }
     }
+
+    events
 }
 
 /// Every busy interval in `input` that overlaps `[from, to)`.
@@ -305,100 +949,72 @@ pub fn busy_intervals(
     include_all_day: bool,
 ) -> Result<Vec<BusyInterval>> {
     let lines = unfold(input);
+    let mut ctx = TzContext::from_lines(&lines);
+    let events = collect_events(&lines, &mut ctx);
+
+    // A moved or cancelled occurrence is a second VEVENT with the series' UID
+    // and a RECURRENCE-ID naming the slot it replaces. Whatever it says, the
+    // series no longer owns that slot.
+    let mut replaced: HashMap<&str, Vec<&IcsTime>> = HashMap::new();
+    for event in &events {
+        if let (Some(uid), Some(slot)) = (&event.uid, &event.recurrence_id) {
+            replaced.entry(uid.as_str()).or_default().push(slot);
+        }
+    }
+
     let mut out = Vec::new();
-
-    let mut in_event = false;
-    let mut start: Option<IcsTime> = None;
-    let mut end: Option<IcsTime> = None;
-    let mut duration: Option<Duration> = None;
-    let mut rrule: Option<Rrule> = None;
-    let mut exdates: Vec<DateTime<Utc>> = Vec::new();
-    // A cancelled event still appears in many exports; it should not block.
-    let mut cancelled = false;
-    // So should a declined one, where the export says so.
-    let mut transparent = false;
-
-    for line in lines {
-        let trimmed = line.trim_end();
-        if trimmed.eq_ignore_ascii_case("BEGIN:VEVENT") {
-            in_event = true;
-            start = None;
-            end = None;
-            duration = None;
-            rrule = None;
-            exdates.clear();
-            cancelled = false;
-            transparent = false;
+    for event in &events {
+        if event.cancelled || event.transparent {
             continue;
         }
-        if trimmed.eq_ignore_ascii_case("END:VEVENT") {
-            in_event = false;
-            if cancelled || transparent {
-                continue;
-            }
-            let Some(start_time) = start else { continue };
-            if start_time.all_day && !include_all_day {
-                continue;
-            }
-
-            // No DTEND and no DURATION: RFC 5545 says an all-day event lasts
-            // a day and a timed one is instantaneous. An instant blocks
-            // nothing, so it is skipped rather than stored as a zero-width
-            // interval nothing can overlap.
-            let length = match (end, duration) {
-                (Some(e), _) => e.at - start_time.at,
-                (None, Some(d)) => d,
-                (None, None) if start_time.all_day => Duration::days(1),
-                (None, None) => continue,
-            };
-            if length <= Duration::zero() {
-                continue;
-            }
-
-            let starts = match &rrule {
-                Some(rule) => expand(rule, start_time.at, from - length, to),
-                None => vec![start_time.at],
-            };
-
-            for occurrence in starts {
-                if exdates.contains(&occurrence) {
-                    continue;
-                }
-                let interval = BusyInterval {
-                    start: occurrence,
-                    end: occurrence + length,
-                };
-                // Half-open on both sides, matching services::availability.
-                if interval.start < to && from < interval.end {
-                    out.push(interval);
-                }
-            }
+        let Some(start) = &event.start else { continue };
+        if start.all_day && !include_all_day {
             continue;
         }
-        if !in_event {
-            continue;
-        }
-
-        let Some((name, params, value)) = split_property(trimmed) else {
+        let Some(start_utc) = start.utc() else {
             continue;
         };
-        match name.as_str() {
-            "DTSTART" => start = parse_time(&params, &value),
-            "DTEND" => end = parse_time(&params, &value),
-            "DURATION" => duration = parse_duration(&value),
-            "RRULE" => rrule = parse_rrule(&value),
-            "EXDATE" => {
-                for one in value.split(',') {
-                    if let Some(t) = parse_time(&params, one) {
-                        exdates.push(t.at);
-                    }
-                }
+
+        // No DTEND and no DURATION: RFC 5545 says an all-day event lasts a
+        // day and a timed one is instantaneous. An instant blocks nothing, so
+        // it is skipped rather than stored as a zero-width interval nothing
+        // can overlap.
+        let length = match (&event.end, event.duration) {
+            (Some(end), _) => match end.utc() {
+                Some(end_utc) => end_utc - start_utc,
+                None => continue,
+            },
+            (None, Some(d)) => d,
+            (None, None) if start.all_day => Duration::days(1),
+            (None, None) => continue,
+        };
+        if length <= Duration::zero() {
+            continue;
+        }
+
+        let (occurrences, overrides) = match (&event.rrule, &event.recurrence_id) {
+            (Some(rule), None) => (
+                expand(rule, start, from - length, to),
+                event.uid.as_deref().and_then(|uid| replaced.get(uid)),
+            ),
+            _ => (vec![(start.local, start_utc)], None),
+        };
+
+        for (local, occurrence) in occurrences {
+            if event.exdates.iter().any(|x| x.names(local, occurrence)) {
+                continue;
             }
-            "STATUS" => cancelled = value.eq_ignore_ascii_case("CANCELLED"),
-            // TRANSP:TRANSPARENT is the calendar's own way of saying "this
-            // does not make me busy" - respect it rather than overruling it.
-            "TRANSP" => transparent = value.eq_ignore_ascii_case("TRANSPARENT"),
-            _ => {}
+            if overrides.is_some_and(|slots| slots.iter().any(|x| x.names(local, occurrence))) {
+                continue;
+            }
+            let interval = BusyInterval {
+                start: occurrence,
+                end: occurrence + length,
+            };
+            // Half-open on both sides, matching services::availability.
+            if interval.start < to && from < interval.end {
+                out.push(interval);
+            }
         }
     }
 
@@ -820,5 +1436,194 @@ BEGIN:VEVENT\nUID:standup@google.com\nRECURRENCE-ID:20260309T090000Z\nDTSTART:20
             .map(|i| i.start)
             .collect();
         assert_eq!(on_the_ninth, vec![at(2026, 3, 9, 14)]);
+    }
+
+    // --- Beyond the repros: the rest of what real feeds write -----------
+
+    // Outlook's display-name form resolves to a real zone, not just "kept":
+    // Amsterdam is UTC+1 in November.
+    #[test]
+    fn a_quoted_display_name_tzid_resolves_to_its_city() {
+        let feed = cal("BEGIN:VEVENT\n\
+DTSTART;TZID=\"(UTC+01:00) Amsterdam, Berlin, Bern, Rome, Stockholm, Vienna\":20261102T090000\n\
+DTEND;TZID=\"(UTC+01:00) Amsterdam, Berlin, Bern, Rome, Stockholm, Vienna\":20261102T100000\n\
+END:VEVENT");
+
+        let out = parse_window(&feed, at(2026, 11, 1, 0), at(2026, 11, 8, 0));
+
+        assert_eq!(out[0].start, at(2026, 11, 2, 8));
+    }
+
+    // A zone no table knows ("Customized Time Zone" is what Outlook writes
+    // for an edited zone) is read from the feed's own VTIMEZONE, DST and all.
+    #[test]
+    fn an_unknown_tzid_is_read_from_its_vtimezone() {
+        let feed = "BEGIN:VCALENDAR\r
+BEGIN:VTIMEZONE\r
+TZID:Customized Time Zone\r
+BEGIN:STANDARD\r
+DTSTART:16010101T030000\r
+TZOFFSETFROM:+0200\r
+TZOFFSETTO:+0100\r
+RRULE:FREQ=YEARLY;INTERVAL=1;BYDAY=-1SU;BYMONTH=10\r
+END:STANDARD\r
+BEGIN:DAYLIGHT\r
+DTSTART:16010101T020000\r
+TZOFFSETFROM:+0100\r
+TZOFFSETTO:+0200\r
+RRULE:FREQ=YEARLY;INTERVAL=1;BYDAY=-1SU;BYMONTH=3\r
+END:DAYLIGHT\r
+END:VTIMEZONE\r
+BEGIN:VEVENT\r
+DTSTART;TZID=Customized Time Zone:20260302T090000\r
+DTEND;TZID=Customized Time Zone:20260302T100000\r
+RRULE:FREQ=WEEKLY;BYDAY=MO\r
+END:VEVENT\r
+END:VCALENDAR\r
+";
+
+        let out = parse_window(feed, at(2026, 3, 1, 0), at(2026, 4, 1, 0));
+
+        assert_eq!(out.len(), 5);
+        assert_eq!(out[3].start, at(2026, 3, 23, 8), "winter: UTC+1");
+        assert_eq!(out[4].start, at(2026, 3, 30, 7), "summer: UTC+2");
+    }
+
+    // Google writes X-WR-TIMEZONE; a floating time belongs to it.
+    #[test]
+    fn a_floating_time_uses_the_calendars_own_zone() {
+        let feed = "BEGIN:VCALENDAR\r\nX-WR-TIMEZONE:Europe/Paris\r\nBEGIN:VEVENT\r\nDTSTART:20260302T090000\r\nDTEND:20260302T100000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+        let out = parse_window(feed, at(2026, 3, 1, 0), at(2026, 4, 1, 0));
+
+        assert_eq!(out[0].start, at(2026, 3, 2, 8));
+    }
+
+    // A cancelled occurrence (an override with STATUS:CANCELLED) frees the
+    // slot and blocks nothing in its place.
+    #[test]
+    fn a_cancelled_occurrence_frees_its_slot() {
+        let out = parse(
+            "BEGIN:VEVENT\nUID:standup@google.com\nDTSTART:20260302T090000Z\nDTEND:20260302T100000Z\nRRULE:FREQ=WEEKLY;BYDAY=MO\nEND:VEVENT\n\
+BEGIN:VEVENT\nUID:standup@google.com\nRECURRENCE-ID:20260309T090000Z\nDTSTART:20260309T090000Z\nDTEND:20260309T100000Z\nSTATUS:CANCELLED\nEND:VEVENT",
+        );
+
+        assert_eq!(out.len(), 4);
+        assert!(!out.iter().any(|i| i.start == at(2026, 3, 9, 9)));
+    }
+
+    // An override only touches its own series.
+    #[test]
+    fn an_override_does_not_touch_another_series() {
+        let out = parse(
+            "BEGIN:VEVENT\nUID:a\nDTSTART:20260302T090000Z\nDTEND:20260302T100000Z\nRRULE:FREQ=WEEKLY;BYDAY=MO\nEND:VEVENT\n\
+BEGIN:VEVENT\nUID:b\nRECURRENCE-ID:20260309T090000Z\nDTSTART:20260309T140000Z\nDTEND:20260309T150000Z\nEND:VEVENT",
+        );
+
+        assert!(out.iter().any(|i| i.start == at(2026, 3, 9, 9)));
+        assert!(out.iter().any(|i| i.start == at(2026, 3, 9, 14)));
+    }
+
+    // EXDATE in the series' own zone has to match after DST, which it only
+    // does if occurrences are generated on the wall clock.
+    #[test]
+    fn a_zoned_exdate_after_dst_still_matches() {
+        let out = parse(
+            "BEGIN:VEVENT\nDTSTART;TZID=Europe/Paris:20260302T090000\nDTEND;TZID=Europe/Paris:20260302T100000\nRRULE:FREQ=WEEKLY;BYDAY=MO\nEXDATE;TZID=Europe/Paris:20260330T090000\nEND:VEVENT",
+        );
+
+        assert_eq!(out.len(), 4);
+        assert!(
+            !out.iter()
+                .any(|i| i.start.date_naive() == at(2026, 3, 30, 0).date_naive())
+        );
+    }
+
+    // ⚠️ COUNT counts from DTSTART, so skipping ahead must not reset it: ten
+    // days from 25 Feb leaves six in March.
+    #[test]
+    fn count_is_counted_from_dtstart_not_from_the_window() {
+        let out = parse(
+            "BEGIN:VEVENT\nDTSTART:20260225T090000Z\nDTEND:20260225T093000Z\nRRULE:FREQ=DAILY;COUNT=10\nEND:VEVENT",
+        );
+        assert_eq!(out.len(), 6);
+
+        let long_finished = parse(
+            "BEGIN:VEVENT\nDTSTART:20230102T090000Z\nDTEND:20230102T093000Z\nRRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=5\nEND:VEVENT",
+        );
+        assert!(long_finished.is_empty());
+    }
+
+    // Outlook's "second Tuesday of every month" and "last Friday".
+    #[test]
+    fn monthly_byday_ordinals_pick_the_right_week() {
+        let out = busy_intervals(
+            &cal("BEGIN:VEVENT\nDTSTART:20260113T090000Z\nDTEND:20260113T100000Z\nRRULE:FREQ=MONTHLY;BYDAY=2TU\nEND:VEVENT\n\
+BEGIN:VEVENT\nDTSTART:20260130T170000Z\nDTEND:20260130T180000Z\nRRULE:FREQ=MONTHLY;BYDAY=-1FR\nEND:VEVENT"),
+            at(2026, 3, 1, 0),
+            at(2026, 5, 1, 0),
+            false,
+        )
+        .unwrap();
+
+        let mut starts: Vec<_> = out.iter().map(|i| i.start).collect();
+        starts.sort();
+        assert_eq!(
+            starts,
+            vec![
+                at(2026, 3, 10, 9),
+                at(2026, 3, 27, 17),
+                at(2026, 4, 14, 9),
+                at(2026, 4, 24, 17)
+            ]
+        );
+    }
+
+    // RFC 5545: an occurrence that doesn't exist is skipped, not moved.
+    #[test]
+    fn a_monthly_rule_on_the_31st_skips_short_months() {
+        let out = busy_intervals(
+            &cal(
+                "BEGIN:VEVENT\nDTSTART:20260131T090000Z\nDTEND:20260131T100000Z\nRRULE:FREQ=MONTHLY\nEND:VEVENT",
+            ),
+            at(2026, 2, 1, 0),
+            at(2026, 6, 1, 0),
+            false,
+        )
+        .unwrap();
+
+        let starts: Vec<_> = out.iter().map(|i| i.start).collect();
+        assert_eq!(starts, vec![at(2026, 3, 31, 9), at(2026, 5, 31, 9)]);
+    }
+
+    // A VALARM's DURATION is the alarm's repeat spacing, not the event's.
+    #[test]
+    fn an_alarm_does_not_change_the_events_length() {
+        let out = parse(
+            "BEGIN:VEVENT\nDTSTART:20260302T090000Z\nDURATION:PT1H\nBEGIN:VALARM\nTRIGGER:-PT15M\nDURATION:PT5M\nREPEAT:2\nACTION:DISPLAY\nEND:VALARM\nEND:VEVENT",
+        );
+
+        assert_eq!(out[0].end, at(2026, 3, 2, 10));
+    }
+
+    // ⚠️ The bound that matters: an endless rule from decades ago is as cheap
+    // as one from last week, and still lands on the right days.
+    #[test]
+    fn an_ancient_endless_rule_stays_bounded_and_correct() {
+        let out = parse(
+            "BEGIN:VEVENT\nDTSTART:19700105T090000Z\nDTEND:19700105T091500Z\nRRULE:FREQ=WEEKLY;BYDAY=MO\nEND:VEVENT",
+        );
+
+        let starts: Vec<_> = out.iter().map(|i| i.start).collect();
+        assert_eq!(
+            starts,
+            vec![
+                at(2026, 3, 2, 9),
+                at(2026, 3, 9, 9),
+                at(2026, 3, 16, 9),
+                at(2026, 3, 23, 9),
+                at(2026, 3, 30, 9)
+            ]
+        );
     }
 }

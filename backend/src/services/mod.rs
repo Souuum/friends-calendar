@@ -19,3 +19,4 @@ pub mod nudge;
 pub mod profile;
 pub mod reaction_sync;
 pub mod reminders;
+pub mod windows_zones;
