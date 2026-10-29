@@ -321,10 +321,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Weekly announcements digest — same conditional-spawn shape as the
-    // Discord bot above. Only needs bot_token + guild_id (not the
-    // announcement-channel env var): the actual send target is resolved
-    // per-tick from services::discord_config, since it's meant to follow
-    // whatever's configured on the /server page.
+    // Discord bot above. Needs bot_token + guild_id; the send target is
+    // resolved per-tick (DB config from the /server page first, the
+    // announcement-channel env var as the fallback), so it follows whatever's
+    // configured without a restart.
     if let (Some(bot_token), Some(guild_id)) = (&state.discord_bot_token, &state.discord_guild_id) {
         let bot_token = bot_token.clone();
         let guild_id = guild_id.clone();
@@ -332,7 +332,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let http_clone = state.http_client.clone();
         let base_url = state.discord_api_base.clone();
         tokio::spawn(services::digest::spawn_digest_loop(
-            base_url, db_clone, http_clone, bot_token, guild_id,
+            base_url,
+            db_clone,
+            http_clone,
+            bot_token,
+            guild_id,
+            state.discord_announcement_channel_id,
         ));
     }
 

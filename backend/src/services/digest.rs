@@ -7,7 +7,9 @@ use crate::services::{discord_config, discord_feed};
 
 /// Checked roughly hourly from a background loop spawned in main.rs (see
 /// `spawn_digest_loop` below and its call site). Posts a one-line weekly
-/// summary to the guild's configured announcements channel iff:
+/// summary to the guild's announcements channel - resolved like every other
+/// announce path, DB config first and `DISCORD_ANNOUNCEMENT_CHANNEL_ID`
+/// (`fallback`) second - iff:
 /// `digest_enabled` is on (a real toggle on the /server page - see
 /// 009_add_announcement_feed.sql's comment on why this is a *guild-level*
 /// setting, separate from the per-user `notify_weekly_digest` preference
@@ -20,6 +22,7 @@ pub async fn maybe_send_weekly_digest(
     http: &Client,
     bot_token: &str,
     guild_id: &str,
+    fallback: Option<u64>,
     now: DateTime<Utc>,
 ) -> Result<bool> {
     let Some(config) = discord_config::get_config(db, guild_id).await? else {
@@ -28,9 +31,12 @@ pub async fn maybe_send_weekly_digest(
     if !config.digest_enabled {
         return Ok(false);
     }
-    let Some(channel_id) = config.announcements_channel_id else {
+    let Some(channel_id) =
+        discord_config::resolve_announcement_channel_id(db, guild_id, fallback).await?
+    else {
         return Ok(false);
     };
+    let channel_id = channel_id.to_string();
 
     if !is_due(now, config.last_digest_sent_at) {
         return Ok(false);
@@ -76,12 +82,21 @@ pub async fn spawn_digest_loop(
     http: Client,
     bot_token: String,
     guild_id: String,
+    fallback: Option<u64>,
 ) {
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(3600));
     loop {
         ticker.tick().await;
-        match maybe_send_weekly_digest(&base_url, &db, &http, &bot_token, &guild_id, Utc::now())
-            .await
+        match maybe_send_weekly_digest(
+            &base_url,
+            &db,
+            &http,
+            &bot_token,
+            &guild_id,
+            fallback,
+            Utc::now(),
+        )
+        .await
         {
             Ok(true) => tracing::info!("📬 Sent weekly announcements digest for guild {guild_id}"),
             Ok(false) => {}

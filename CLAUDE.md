@@ -492,18 +492,14 @@ destination is ever wanted, adding a column back is trivial.
   where auto-announced events get posted. `GET` never 404s — returns an
   all-null `BotChannelConfig` if nothing's been saved yet, so the page can
   render an empty form instead of an error state.
-  - **Important, deliberate limitation:** this migration is partial.
-    `services::calendar::create_event`'s per-request auto-announce now
-    resolves the channel via `services::discord_config::resolve_announcement_channel_id`
-    (DB config first, env var as fallback if nothing's configured), so a
-    change here takes effect on the very next event created. `bot.rs`'s
-    gateway `Handler`, however, still reads `announcement_channel_id` once
-    at process startup from the env var and is **not** hot-reloaded — a
-    change made on this page won't reach the long-lived gateway connection
-    until the process restarts. Not fixed here because it would mean either
-    polling the DB from the gateway handler or a restart-signal mechanism,
-    both bigger than this skill's scope; flagging it rather than silently
-    leaving a half-working "live-editable" claim.
+  - Every announce path resolves the channel via
+    `services::discord_config::resolve_announcement_channel_id` (DB config
+    first, env var as fallback if nothing's configured) - the per-request
+    auto-announce, the announcements feed, and (since 2026-10-29) the weekly
+    digest, which used to read only the DB column and so never posted on an
+    env-var-only deployment. A change here takes effect on the next event or
+    digest tick. `bot.rs` no longer filters reactions by channel at all (see
+    Multi-server steps 3+4), so there is nothing in the gateway to reload.
 - `desktop/src/routes/server/+page.svelte` — reachable via `Frame.svelte`'s
   new "Discord server" sidebar item. Renders `LinkedServerCard.svelte`
   (unchanged, reused as-is) plus the channel-config form, and a static
@@ -574,8 +570,9 @@ calendar-events filter. See below for what happened to the old view.
   9:00 UTC, and either nothing's ever been sent or it's been ≥6 days since
   the last one, the 6-day floor guarding against re-firing on every hourly
   poll through the same Monday morning) and `maybe_send_weekly_digest`
-  (checks the guild's `discord_bot_config.digest_enabled`, posts a
-  one-line "N new posts this week" message via `discord_feed::send_channel_message`,
+  (checks the guild's `discord_bot_config.digest_enabled`, resolves the
+  channel DB-first with the `DISCORD_ANNOUNCEMENT_CHANNEL_ID` env var as
+  fallback, posts a one-line "N new posts this week" message via `discord_feed::send_channel_message`,
   stamps `last_digest_sent_at`). `spawn_digest_loop` is spawned from
   `main.rs` (same conditional-spawn-if-bot-token-and-guild-id-configured
   shape as the Discord bot itself) on an hourly `tokio::time::interval` —
@@ -898,9 +895,8 @@ question on its own. Status per skill:
   visibility, notification toggles, guarded account deletion) and a
   separate `/server` page (linked server card + DB-backed, user-editable
   multi-channel bot config, replacing the single `DISCORD_ANNOUNCEMENT_CHANNEL_ID`
-  env var for the per-request auto-announce path only — see Server page
-  above for the deliberate gap where `bot.rs`'s gateway handler still
-  isn't hot-reloaded). The "Sync friends" button that used to live on
+  env var as the primary source, with the env var kept as fallback — see
+  Server page above). The "Sync friends" button that used to live on
   `/settings` moved to the `/friends` directory page instead of being
   dropped, since removing it from `/settings` without adding it anywhere
   else would have silently taken away the only way to trigger a sync.
