@@ -152,6 +152,18 @@ const REPLIES = [
 
 const NOTIFICATIONS = [
   {
+    // An announcement row is a link to /announcements rather than a
+    // button, so it is the one notification whose styling (no-underline,
+    // text-inherit) the contrast and overflow audits need to see.
+    id: 'n3',
+    kind: 'announcement',
+    actor_username: 'alexandre_the_longest_name',
+    message:
+      'Alexandre (a long display name) posted an announcement: Soirée raclette samedi chez moi, ramenez du fromage et de quoi boire pour tout le…',
+    read: false,
+    created_at: AGO_1H
+  },
+  {
     id: 'n1',
     kind: 'event_invite',
     actor_username: 'alexandre_the_longest_name',
