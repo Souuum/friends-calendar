@@ -103,6 +103,44 @@ describe('notifications page', () => {
     expect(screen.getByText('0 unread')).toBeInTheDocument();
   });
 
+  it('links an announcement to the feed and marks it read when opened', async () => {
+    getNotifications.mockResolvedValue([
+      notification({
+        id: 'a1',
+        kind: 'announcement',
+        message: 'alice posted an announcement: Ski trip is on'
+      })
+    ]);
+    markNotificationRead.mockResolvedValue(undefined);
+    getUnreadNotificationCount.mockResolvedValue(0);
+
+    render(NotificationsPage);
+
+    const link = await screen.findByRole('link', {
+      name: /alice posted an announcement: Ski trip is on/
+    });
+    expect(link).toHaveAttribute('href', '/announcements');
+
+    await fireEvent.click(link);
+
+    await waitFor(() => expect(markNotificationRead).toHaveBeenCalledWith('a1'));
+    expect(screen.getByText('0 unread')).toBeInTheDocument();
+  });
+
+  it('does not turn other kinds into links', async () => {
+    getNotifications.mockResolvedValue([
+      notification({ id: 'n1', kind: 'friend_request', message: 'bob sent you a friend request' })
+    ]);
+
+    render(NotificationsPage);
+
+    await screen.findByText('bob sent you a friend request');
+    expect(screen.queryByRole('link', { name: /bob sent you a friend request/ })).toBeNull();
+    expect(
+      screen.getByRole('button', { name: /bob sent you a friend request/ })
+    ).toBeInTheDocument();
+  });
+
   it('marks all read', async () => {
     getNotifications.mockResolvedValue([
       notification({ id: 'n1', read: false }),

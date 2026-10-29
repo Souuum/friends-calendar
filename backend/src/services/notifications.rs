@@ -83,6 +83,71 @@ pub async fn create(
     Ok(())
 }
 
+/// The longest announcement excerpt quoted in a notification, in chars.
+const ANNOUNCEMENT_EXCERPT_CHARS: usize = 80;
+
+/// "{author} posted an announcement: {first line}", with the first line
+/// truncated so a long post doesn't become a long notification. Counted in
+/// chars, not bytes - posts here are routinely French, and slicing bytes
+/// would panic mid-character.
+pub fn announcement_message(author_name: &str, content: &str) -> String {
+    let first_line = content
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("");
+    let excerpt = if first_line.chars().count() > ANNOUNCEMENT_EXCERPT_CHARS {
+        let cut: String = first_line
+            .chars()
+            .take(ANNOUNCEMENT_EXCERPT_CHARS)
+            .collect();
+        format!("{}…", cut.trim_end())
+    } else {
+        first_line.to_string()
+    };
+    format!("{author_name} posted an announcement: {excerpt}")
+}
+
+/// Notifies every app user in the server `discord_guild_id` except the
+/// author that `author_id` posted an announcement. Returns how many
+/// recipients were *attempted* (the per-user `notify_announcements` gate in
+/// `create` may still drop some).
+///
+/// Only the app's composer calls this - never `discord_feed::sync_channel`.
+/// A sync mirrors whatever is already in Discord, including the composer's
+/// own post, so notifying from there would double-notify and also alert
+/// people about messages written outside the app.
+///
+/// One recipient failing is logged and skipped rather than stopping the
+/// rest: the post itself already went out.
+pub async fn notify_announcement(
+    db: &PgPool,
+    discord_guild_id: &str,
+    author_id: Uuid,
+    message: &str,
+) -> Result<usize> {
+    let recipients: Vec<Uuid> = sqlx::query_scalar(
+        r#"
+        SELECT ug.user_id
+        FROM user_guilds ug
+        JOIN guilds g ON g.id = ug.guild_id
+        WHERE g.discord_guild_id = $1 AND ug.user_id <> $2
+        "#,
+    )
+    .bind(discord_guild_id)
+    .bind(author_id)
+    .fetch_all(db)
+    .await?;
+
+    for user_id in &recipients {
+        if let Err(e) = create(db, *user_id, "announcement", Some(author_id), None, message).await {
+            tracing::warn!("Failed to notify {user_id} of an announcement: {e}");
+        }
+    }
+
+    Ok(recipients.len())
+}
+
 #[derive(sqlx::FromRow)]
 struct NotificationRow {
     id: Uuid,
@@ -527,5 +592,102 @@ mod tests {
         let marked = mark_all_read(&db, me).await.unwrap();
         assert_eq!(marked, 2);
         assert_eq!(unread_count(&db, me).await.unwrap(), 0);
+    }
+
+    // --- announcements -----------------------------------------------------
+
+    async fn seed_guild(db: &PgPool, discord_guild_id: &str, members: &[Uuid]) {
+        let guild = crate::services::guilds::ensure_guild(db, discord_guild_id)
+            .await
+            .unwrap();
+        crate::services::guilds::set_guild_members(db, guild, members)
+            .await
+            .unwrap();
+    }
+
+    async fn notifications_for(db: &PgPool, user_id: Uuid) -> Vec<(String, Option<Uuid>, String)> {
+        sqlx::query_as("SELECT kind, actor_user_id, message FROM notifications WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_all(db)
+            .await
+            .unwrap()
+    }
+
+    #[sqlx::test]
+    async fn notify_announcement_reaches_server_mates_only(db: PgPool) {
+        let author = seed_user(&db, "a", "author").await;
+        let mate = seed_user(&db, "m", "mate").await;
+        let elsewhere = seed_user(&db, "e", "elsewhere").await;
+        let nowhere = seed_user(&db, "n", "nowhere").await;
+        seed_guild(&db, "g1", &[author, mate]).await;
+        // The author is in g2 as well, so membership of *some* shared server
+        // must not be enough - it has to be the one posted to.
+        seed_guild(&db, "g2", &[elsewhere, author]).await;
+
+        let attempted = notify_announcement(&db, "g1", author, "hello")
+            .await
+            .unwrap();
+
+        assert_eq!(attempted, 1, "only the one other member of g1");
+        assert_eq!(
+            notifications_for(&db, mate).await,
+            vec![(
+                "announcement".to_string(),
+                Some(author),
+                "hello".to_string()
+            )]
+        );
+        assert!(
+            notifications_for(&db, author).await.is_empty(),
+            "never the author"
+        );
+        assert!(
+            notifications_for(&db, elsewhere).await.is_empty(),
+            "not another server"
+        );
+        assert!(
+            notifications_for(&db, nowhere).await.is_empty(),
+            "not a non-member"
+        );
+    }
+
+    #[sqlx::test]
+    async fn notify_announcement_for_an_unknown_server_notifies_nobody(db: PgPool) {
+        let author = seed_user(&db, "a", "author").await;
+        let mate = seed_user(&db, "m", "mate").await;
+        seed_guild(&db, "g1", &[author, mate]).await;
+
+        let attempted = notify_announcement(&db, "unknown", author, "hello")
+            .await
+            .unwrap();
+
+        assert_eq!(attempted, 0);
+        assert!(notifications_for(&db, mate).await.is_empty());
+    }
+
+    #[test]
+    fn announcement_message_quotes_the_first_non_empty_line() {
+        assert_eq!(
+            announcement_message("Soum", "\n  Ski trip is on  \nDetails below"),
+            "Soum posted an announcement: Ski trip is on"
+        );
+    }
+
+    #[test]
+    fn announcement_message_truncates_long_lines_on_char_boundaries() {
+        let message = announcement_message("Soum", &"é".repeat(200));
+        let excerpt = message
+            .strip_prefix("Soum posted an announcement: ")
+            .unwrap();
+        assert_eq!(excerpt.chars().count(), ANNOUNCEMENT_EXCERPT_CHARS + 1);
+        assert!(excerpt.ends_with('…'));
+    }
+
+    #[test]
+    fn announcement_message_leaves_short_lines_alone() {
+        assert_eq!(
+            announcement_message("Soum", "Raclette ce soir"),
+            "Soum posted an announcement: Raclette ce soir"
+        );
     }
 }

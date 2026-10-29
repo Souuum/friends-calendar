@@ -12,7 +12,7 @@ use crate::{
     services::{
         discord_config, discord_feed, discord_webhook,
         event_adoption::{self, AdoptError},
-        reaction_sync,
+        notifications, reaction_sync,
     },
 };
 
@@ -166,6 +166,21 @@ pub async fn compose_announcement(
     .map_err(webhook_error)?;
 
     tracing::info!("📣 {} posted an announcement", user.username);
+
+    // The post is out, so a notification failure must not fail the request
+    // - same as every other trigger. Only here, never in the sync below:
+    // a sync mirrors Discord and would notify about messages nobody wrote
+    // through the app. Recipients are the server compose resolved its
+    // channel from (`resolve_channel` already required `discord_guild_id`).
+    if let Some(guild_id) = state.discord_guild_id.as_deref() {
+        let author = author_of(&user);
+        let message = notifications::announcement_message(&author.name, &content);
+        if let Err(e) =
+            notifications::notify_announcement(&state.db, guild_id, user.id, &message).await
+        {
+            tracing::warn!("Failed to notify server-mates of an announcement: {e}");
+        }
+    }
 
     // Sync so the poster sees their own message in the feed without having
     // to hit "Sync now" - the feed is a mirror, and a mirror that lags its

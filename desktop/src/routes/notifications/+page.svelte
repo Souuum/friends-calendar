@@ -95,6 +95,12 @@
     return n.kind === 'event_invite' && !!n.event_id;
   }
 
+  // Where tapping a notification takes you, or undefined when it only
+  // marks read. Announcements carry no post id, so they open the feed.
+  function linkFor(n: NotificationInfo): string | undefined {
+    return n.kind === 'announcement' ? '/announcements' : undefined;
+  }
+
   // `pending` is an answer nobody gave, so it reads as still open.
   const ANSWER_LABEL: Record<string, string> = {
     accepted: "You're going",
@@ -124,6 +130,23 @@
 <svelte:head>
   <title>Notifications - Friends Calendar</title>
 </svelte:head>
+
+{#snippet rowBody(notification: NotificationInfo)}
+  {#if notification.actor_avatar_url}
+    <img src={notification.actor_avatar_url} alt="" class="w-9 h-9 rounded-full flex-shrink-0" />
+  {:else}
+    <div class="w-9 h-9 rounded-full bg-gray-300 flex-shrink-0"></div>
+  {/if}
+  <div class="flex-1 min-w-0">
+    <p class="text-sm m-0">{notification.message}</p>
+    <p class="text-xs text-gray-500 m-0 mt-1 font-mono">
+      {formatTime(notification.created_at)}
+    </p>
+  </div>
+  {#if !notification.read}
+    <span class="w-2 h-2 rounded-full bg-red-500 flex-shrink-0 anim-pulse-dot"></span>
+  {/if}
+{/snippet}
 
 <Frame>
   <div class="max-w-2xl anim-fade-up">
@@ -161,29 +184,26 @@
               style="animation-delay: {i * 45}ms"
               class="anim-slide-left {notification.read ? 'bg-surface' : 'bg-indigo-50'}"
             >
-              <button
-                on:click={() => markRead(notification.id)}
-                class="w-full text-left flex items-center gap-3 p-4"
-              >
-                {#if notification.actor_avatar_url}
-                  <img
-                    src={notification.actor_avatar_url}
-                    alt=""
-                    class="w-9 h-9 rounded-full flex-shrink-0"
-                  />
-                {:else}
-                  <div class="w-9 h-9 rounded-full bg-gray-300 flex-shrink-0"></div>
-                {/if}
-                <div class="flex-1 min-w-0">
-                  <p class="text-sm m-0">{notification.message}</p>
-                  <p class="text-xs text-gray-500 m-0 mt-1 font-mono">
-                    {formatTime(notification.created_at)}
-                  </p>
-                </div>
-                {#if !notification.read}
-                  <span class="w-2 h-2 rounded-full bg-red-500 flex-shrink-0 anim-pulse-dot"></span>
-                {/if}
-              </button>
+              <!-- An announcement is about a post that lives on
+                   /announcements, so its row is a link there; opening it
+                   counts as reading it. Every other kind stays a button that
+                   only marks read. -->
+              {#if linkFor(notification)}
+                <a
+                  href={linkFor(notification)}
+                  on:click={() => markRead(notification.id)}
+                  class="w-full text-left flex items-center gap-3 p-4 no-underline text-inherit"
+                >
+                  {@render rowBody(notification)}
+                </a>
+              {:else}
+                <button
+                  on:click={() => markRead(notification.id)}
+                  class="w-full text-left flex items-center gap-3 p-4"
+                >
+                  {@render rowBody(notification)}
+                </button>
+              {/if}
 
               {#if canRsvp(notification)}
                 {@const answer = answerOf(notification)}

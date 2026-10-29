@@ -872,10 +872,14 @@ question on its own. Status per skill:
   existed and needed no new data to notify about. `/notifications` page,
   a shared `unreadNotificationCount` store (`stores.ts`) so the header
   bell and the sidebar's Notifications badge agree without each fetching
-  independently, and `ViewButton.svelte` gained badge rendering. The
-  announcement-posting trigger is intentionally **not** wired (the skill
-  flags it as ambiguous — who should be notified on a post? - pending
-  `mockup-announcements-feed`).
+  independently, and `ViewButton.svelte` gained badge rendering.
+  **Announcement notifications (2026-10-29):** posting through the app's
+  composer (`POST /api/announcements/compose`) notifies every *other* app
+  user in that server (`user_guilds` of `DISCORD_GUILD_ID`), actor = author,
+  via `notifications::notify_announcement`; syncing never notifies. The row
+  links to `/announcements`. ⚠️ Migration 019 flipped
+  `notify_announcements`' *default* to true (it was false since 008, when
+  nothing sent one); existing rows were left as stored.
 - `.claude/skills/mockup-announcements-feed/SKILL.md` — **done.** The user
   confirmed "replace" over "keep alongside" for the scope question the
   skill flagged. See "Announcements page" above for the full picture:
@@ -887,11 +891,8 @@ question on its own. Status per skill:
   that setting isn't a no-op switch. The old event-RSVP card survives as
   `EventRsvpCard.svelte`, still used by `/friends/[id]`'s shared-events
   section — only the top-level `/announcements` page and the component's
-  name changed. `notifications`'s announcement-posting trigger (flagged
-  above as pending this skill) is still **not** wired — deciding who
-  should be notified on a synced post, and whether "sync" should even be
-  the trigger point vs. Discord posting in real time, is a separate call
-  from what this skill's scope question actually asked.
+  name changed. Announcement notifications fire on compose only, not on
+  sync — see the notifications entry above.
 - `.claude/skills/mockup-settings-and-server/SKILL.md` — **done.** Split
   the old `/settings` (linked server + friends) into a real
   profile/preferences page (`/settings` — display name, timezone, default
