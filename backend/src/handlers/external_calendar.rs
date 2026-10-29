@@ -134,3 +134,78 @@ pub async fn disconnect_calendar(
         Err(AppError::NotFound)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use serde_json::{Value, json};
+    use sqlx::PgPool;
+    use tower::ServiceExt;
+
+    use crate::config::AppState;
+    use crate::handlers::auth::generate_jwt;
+    use crate::services::auth::create_or_update_user;
+
+    // Verifier (round 3): the connect request runs the first sync inline, so
+    // the fetch deadline has to hold on this path too - through the real
+    // router and the real `AppState.http_client`, not a test-built client.
+    // A server that accepts and never answers must cost the request ~30 s,
+    // not hang it, and the reason must land on the row the page renders.
+    #[sqlx::test]
+    async fn connecting_a_feed_that_never_answers_returns_within_the_deadline(db: PgPool) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                held.push(socket);
+            }
+        });
+        let user = create_or_update_user(
+            &db,
+            crate::models::DiscordUser {
+                id: "me-discord".into(),
+                username: "me".into(),
+                discriminator: "0".into(),
+                avatar: None,
+                email: None,
+            },
+        )
+        .await
+        .unwrap();
+        let state = AppState::for_test(db, "http://unused.invalid".to_string());
+        let token = generate_jwt(&user.discord_id, &state.jwt_secret).unwrap();
+        let app = crate::build_router(state);
+        let started = std::time::Instant::now();
+
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            app.oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/calendar/external")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        json!({ "url": format!("http://{addr}/cal.ics"), "label": "Work" })
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            ),
+        )
+        .await
+        .expect("POST /api/calendar/external still hanging after 60s")
+        .unwrap();
+
+        assert!(started.elapsed() >= std::time::Duration::from_secs(29));
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        let error = json[0]["last_error"].as_str().unwrap_or_default();
+        assert!(error.contains("took longer than 30 seconds"), "{json}");
+        assert!(json[0]["last_synced_at"].is_null(), "{json}");
+    }
+}

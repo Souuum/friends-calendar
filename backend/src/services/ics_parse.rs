@@ -2952,6 +2952,227 @@ END:VTIMEZONE\r\n",
         }
     }
 
+    // --- Work inside one period that the budget doesn't see (round 3) -------
+    //
+    // `expand` charges one unit per period and one per candidate date, but
+    // building a period's candidates is O(|BYDAY|) (daily: `any` over the
+    // list; weekly: collect + sort + dedup; monthly/yearly: `nth_weekday`
+    // per entry) and O(|BYMONTHDAY|) per date checked. Neither list is
+    // deduplicated or bounded, though their domains are tiny (7 weekdays x
+    // ordinals; +-31 days). A COUNT rule is walked from DTSTART, so one rule
+    // starting long ago walks up to `MAX_PERIODS` (100k) periods and pays
+    // the whole list in each - while charging the budget ~1 unit per period.
+
+    /// One VEVENT whose RRULE carries a `list_len`-entry BY* list.
+    fn giant_by_list(
+        freq: &str,
+        by: &str,
+        entry: &str,
+        list_len: usize,
+        start_year: i32,
+    ) -> String {
+        let mut list = String::with_capacity(list_len * (entry.len() + 1));
+        for i in 0..list_len {
+            if i > 0 {
+                list.push(',');
+            }
+            list.push_str(entry);
+        }
+        format!(
+            "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:g\r\nDTSTART:{start_year}0101T090000Z\r\nDTEND:{start_year}0101T100000Z\r\nRRULE:FREQ={freq};COUNT=4000000000;{by}={list}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+        )
+    }
+
+    fn time_parse(feed: &str) -> (StdDuration, Result<usize, String>) {
+        let now = Utc.with_ymd_and_hms(2026, 3, 20, 12, 0, 0).unwrap();
+        let started = Instant::now();
+        let out = busy_intervals(
+            feed,
+            now - Duration::days(42),
+            now + Duration::days(183),
+            false,
+        );
+        (
+            started.elapsed(),
+            out.map(|o| o.len()).map_err(|e| e.to_string()),
+        )
+    }
+
+    // ⚠️ Verifier repro (round 3). A daily rule whose BYMONTHDAY names a day
+    // that never exists (`99`), repeated: no period ever yields a date, so
+    // the budget is charged one unit per period while each period scans the
+    // whole list. 200k entries is a 600 KB feed - an eighth of the size cap -
+    // and DTSTART in 1800 lets the COUNT walk reach `MAX_PERIODS`: 100k
+    // periods x 200k comparisons = 2e10, minutes of uncancellable
+    // `spawn_blocking` CPU from one VEVENT. At the full 5 MB (1.6M entries)
+    // it is ~8x that.
+    #[test]
+    fn a_giant_bymonthday_list_cannot_hold_the_parser() {
+        let feed = giant_by_list("DAILY", "BYMONTHDAY", "99", 200_000, 1800);
+        assert!(feed.len() < 5 * 1024 * 1024 / 8);
+
+        let (took, out) = time_parse(&feed);
+
+        assert!(
+            took < StdDuration::from_secs(5),
+            "a {} byte feed held the parser for {took:?} -> {out:?}",
+            feed.len()
+        );
+    }
+
+    // ⚠️ Verifier repro (round 3). Same shape for weekly BYDAY: every period
+    // collects, sorts and dedups the whole list before charging <= 7 dates.
+    // 200k x "MO" (600 KB), COUNT walked from 1800.
+    #[test]
+    fn a_giant_byday_list_cannot_hold_the_parser() {
+        let feed = giant_by_list("WEEKLY", "BYDAY", "MO", 200_000, 1800);
+        assert!(feed.len() < 5 * 1024 * 1024 / 8);
+
+        let (took, out) = time_parse(&feed);
+
+        assert!(
+            took < StdDuration::from_secs(5),
+            "a {} byte feed held the parser for {took:?} -> {out:?}",
+            feed.len()
+        );
+    }
+
+    /// MONTHLY with both lists: `dates_in_month` makes ~5 candidates per
+    /// BYDAY entry and runs `matches_monthday` - a scan of BYMONTHDAY - on
+    /// each, so one period costs ~5 x |BYDAY| x |BYMONTHDAY|. Quadratic in
+    /// the feed's size, and an endless rule pays it in every period of the
+    /// sync window.
+    fn byday_times_bymonthday(n: usize, count: &str) -> String {
+        format!(
+            "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:q\r\nDTSTART:20260105T090000Z\r\nDTEND:20260105T100000Z\r\nRRULE:FREQ=MONTHLY;{count}BYDAY={};BYMONTHDAY={}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+            vec!["MO"; n].join(","),
+            vec!["99"; n].join(","),
+        )
+    }
+
+    // ⚠️ Verifier repro (round 3), the worst of the three: quadratic.
+    // 20k x "MO" and 20k x "99" is a 120 KB feed (2% of the size cap) and an
+    // endless rule - nothing walks from the distant past, only the ~8
+    // monthly periods of the sync window - yet each period does ~2e9
+    // comparisons. At 400k + 400k entries (2.4 MB) it is 400x that per
+    // period: hours of uncancellable CPU from a single VEVENT.
+    #[test]
+    fn byday_and_bymonthday_lists_cannot_multiply() {
+        let feed = byday_times_bymonthday(20_000, "");
+        assert!(feed.len() < 5 * 1024 * 1024 / 40);
+
+        let (took, out) = time_parse(&feed);
+
+        assert!(
+            took < StdDuration::from_secs(5),
+            "a {} byte feed held the parser for {took:?} -> {out:?}",
+            feed.len()
+        );
+    }
+
+    #[test]
+    #[ignore = "timing probe; run with --ignored --nocapture"]
+    fn round3_quadratic_probe() {
+        for n in [2_000, 4_000, 8_000, 16_000] {
+            let feed = byday_times_bymonthday(n, "");
+            let (took, out) = time_parse(&feed);
+            eprintln!(
+                "N={n} monthly BYDAY x N, BYMONTHDAY x N, endless: {} bytes, {took:?} -> {out:?}",
+                feed.len()
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "timing probe; run with --ignored --nocapture"]
+    fn round3_cost_probe() {
+        let n: usize = std::env::var("PROBE_N")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(10_000);
+        let probes: Vec<(&str, String)> = vec![
+            (
+                "daily BYMONTHDAY=99 x N, from 1752",
+                giant_by_list("DAILY", "BYMONTHDAY", "99", n, 1752),
+            ),
+            (
+                "daily BYDAY=SU x N + BYMONTHDAY=99, from 1800",
+                giant_by_list("DAILY", "BYDAY", "SU", n, 1800)
+                    .replace("COUNT=4000000000;", "COUNT=4000000000;BYMONTHDAY=99;"),
+            ),
+            (
+                "weekly BYDAY=MO x N, from 100",
+                giant_by_list("WEEKLY", "BYDAY", "MO", n, 100),
+            ),
+            (
+                "monthly BYDAY=1MO x N + BYMONTHDAY=99, from 1800",
+                giant_by_list("MONTHLY", "BYDAY", "1MO", n, 1800)
+                    .replace("COUNT=4000000000;", "COUNT=4000000000;BYMONTHDAY=99;"),
+            ),
+            (
+                "yearly BYDAY=MO x N, from 1",
+                giant_by_list("YEARLY", "BYDAY", "MO", n, 1),
+            ),
+            (
+                "endless weekly BYDAY=MO x N (no COUNT)",
+                giant_by_list("WEEKLY", "BYDAY", "MO", n, 2020).replace("COUNT=4000000000;", ""),
+            ),
+            ("one 5 MB folded line", {
+                let mut s = String::from("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nX-JUNK:");
+                for _ in 0..(5 * 1024 * 1024 / 4) {
+                    s.push_str("ab\r\n ");
+                }
+                s.push_str("\r\nDTSTART:20260301T090000Z\r\nDTEND:20260301T100000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n");
+                s
+            }),
+            ("one 5 MB unfolded line", {
+                let mut s = String::from("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nX-JUNK;A=\"");
+                s.push_str(&";:".repeat(5 * 1024 * 1024 / 2));
+                s.push_str("\":x\r\nDTSTART:20260301T090000Z\r\nDTEND:20260301T100000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n");
+                s
+            }),
+            ("N events, distinct UIDs, 50 EXDATEs each", {
+                let mut s = String::from("BEGIN:VCALENDAR\r\n");
+                let ex: Vec<String> = (0..50)
+                    .map(|d| format!("202603{:02}T090000Z", 1 + d % 28))
+                    .collect();
+                for i in 0..n.min(10_000) {
+                    s.push_str(&format!("BEGIN:VEVENT\r\nUID:u{i}\r\nDTSTART:20260201T090000Z\r\nDTEND:20260201T100000Z\r\nRRULE:FREQ=DAILY;COUNT=3\r\nEXDATE:{}\r\nEND:VEVENT\r\n", ex.join(",")));
+                }
+                s.push_str("END:VCALENDAR\r\n");
+                s
+            }),
+            ("N VTIMEZONEs x 40 observances, events in each", {
+                let mut s = String::from("BEGIN:VCALENDAR\r\n");
+                for z in 0..n.min(4000) {
+                    s.push_str(&format!("BEGIN:VTIMEZONE\r\nTZID:Z{z}\r\n"));
+                    for o in 0..40 {
+                        s.push_str(&format!("BEGIN:STANDARD\r\nDTSTART:{}0101T000000\r\nTZOFFSETTO:+0{}00\r\nRRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU\r\nEND:STANDARD\r\n", 1900 + o, o % 9));
+                    }
+                    s.push_str("END:VTIMEZONE\r\n");
+                    s.push_str(&format!("BEGIN:VEVENT\r\nDTSTART;TZID=Z{z}:20260201T090000\r\nDTEND;TZID=Z{z}:20260201T100000\r\nRRULE:FREQ=DAILY\r\nEXDATE;TZID=Z{z}:20260301T090000\r\nEND:VEVENT\r\n"));
+                }
+                s.push_str("END:VCALENDAR\r\n");
+                s
+            }),
+        ];
+        for (name, feed) in probes {
+            // Past 100k only the BY-list probes are meaningful (and small).
+            if n > 100_000 && !name.contains(" x N") {
+                continue;
+            }
+            if feed.len() > 5 * 1024 * 1024 && n > 100_000 {
+                eprintln!(
+                    "N={n} {name}: {} bytes, over the size cap, skipped",
+                    feed.len()
+                );
+                continue;
+            }
+            let (took, out) = time_parse(&feed);
+            eprintln!("N={n} {name}: {} bytes, {took:?} -> {out:?}", feed.len());
+        }
+    }
+
     #[test]
     fn hostile_generated_feeds_never_panic_or_run_away() {
         // Generous: an unoptimised build on a shared container. The point is

@@ -995,6 +995,179 @@ mod tests {
         assert!(why.contains("took longer than 30 seconds"), "{why}");
     }
 
+    /// A server that answers 200 at once, then trickles one byte a second
+    /// forever: always under the size cap, never finished. Every read
+    /// succeeds, so only an overall deadline - not a per-read one - ends it.
+    async fn trickling_server() -> std::net::SocketAddr {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut request = [0u8; 4096];
+                    let _ = socket.read(&mut request).await;
+                    let _ = socket
+                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/calendar\r\nTransfer-Encoding: chunked\r\n\r\n")
+                        .await;
+                    loop {
+                        if socket.write_all(b"1\r\nX\r\n").await.is_err() {
+                            return;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    }
+                });
+            }
+        });
+        addr
+    }
+
+    // Verifier (round 3): the silent-server repro only proves the deadline
+    // covers *waiting for headers*. This one gets headers at once and a
+    // body byte every second, so it proves the deadline covers the body read
+    // too - and that the feeds queued behind it still sync.
+    #[sqlx::test]
+    async fn a_feed_that_trickles_bytes_is_cut_at_the_deadline(db: PgPool) {
+        let addr = trickling_server().await;
+        let alice = a_user(&db, "alice").await;
+        let bob = a_user(&db, "bob").await;
+        let good = serving(FEED).await;
+        let slow_id = connect_ics(&db, alice, &format!("http://{addr}/cal.ics"), None)
+            .await
+            .unwrap();
+        let ok_id = connect_ics(&db, bob, &format!("{}/cal.ics", good.uri()), None)
+            .await
+            .unwrap();
+        let started = std::time::Instant::now();
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            sync_all(&db, &Client::new(), now()),
+        )
+        .await;
+
+        assert!(
+            outcome.is_ok(),
+            "sync_all still reading the trickle after 60s"
+        );
+        assert!(started.elapsed() >= std::time::Duration::from_secs(29));
+        assert_eq!(cached(&db, ok_id).await, 1);
+        let why = last_error(&db, slow_id).await.unwrap();
+        assert!(why.contains("took longer than 30 seconds"), "{why}");
+    }
+
+    // Verifier (round 3): concurrency must not cost isolation. Ten feeds -
+    // more than `SYNC_CONCURRENCY`, so some wait for a permit - one of which
+    // panics the parser and one of which trickles until the deadline. The
+    // other eight all sync, each failure is recorded against its own row,
+    // and the slow one's permit doesn't starve the queue (the whole pass
+    // takes one deadline, not two).
+    #[sqlx::test]
+    async fn ten_feeds_one_panicking_one_slow_the_rest_all_sync(db: PgPool) {
+        let slow = trickling_server().await;
+        let hostile = serving("BEGIN:VCALENDAR\r\nX-PANIC-ME:1\r\nEND:VCALENDAR\r\n").await;
+        let good = serving(FEED).await;
+        let mut ok_ids = Vec::new();
+        let slow_id = connect_ics(
+            &db,
+            a_user(&db, "slow").await,
+            &format!("http://{slow}/cal.ics"),
+            None,
+        )
+        .await
+        .unwrap();
+        let bad_id = connect_ics(
+            &db,
+            a_user(&db, "bad").await,
+            &format!("{}/cal.ics", hostile.uri()),
+            None,
+        )
+        .await
+        .unwrap();
+        for i in 0..8 {
+            let user = a_user(&db, &format!("user{i}")).await;
+            // Distinct URLs, so connect_ics's upsert doesn't fold them.
+            let id = connect_ics(&db, user, &format!("{}/cal.ics?u={i}", good.uri()), None)
+                .await
+                .unwrap();
+            ok_ids.push(id);
+        }
+        let started = std::time::Instant::now();
+
+        let synced = tokio::time::timeout(
+            std::time::Duration::from_secs(55),
+            sync_all_with(&db, &Client::new(), now(), panics_on_marker),
+        )
+        .await
+        .expect("sync pass outlived one deadline plus slack")
+        .unwrap();
+
+        eprintln!("10-feed pass took {:?}", started.elapsed());
+        assert_eq!(synced, 8);
+        for id in ok_ids {
+            assert_eq!(cached(&db, id).await, 1);
+            assert_eq!(last_error(&db, id).await, None);
+        }
+        assert_eq!(
+            last_error(&db, bad_id).await.as_deref(),
+            Some("This calendar couldn't be read")
+        );
+        assert!(
+            last_error(&db, slow_id)
+                .await
+                .unwrap()
+                .contains("took longer than 30 seconds")
+        );
+    }
+
+    // Verifier (round 3): two syncs of the *same* calendar at once - the
+    // connect request's inline sync overlapping the hourly pass, say. Each
+    // replaces the window in its own transaction (DELETE then INSERT); under
+    // READ COMMITTED the second DELETE cannot see the first's uncommitted
+    // INSERT, so both sets can survive. Asserts the window is never doubled.
+    //
+    // FAILS on 6b9b591 ("left 4 copies of one block"): pre-existing, not
+    // introduced by the concurrent `sync_all` (which never syncs one id
+    // twice), and self-healing at the next sync; the calendar merges
+    // overlapping bands and availability takes a union, so nothing visible
+    // changes. Ignored so it doesn't redden CI for a nit; a per-calendar
+    // lock (`SELECT ... FOR UPDATE` on the external_calendars row inside the
+    // transaction) would make it pass.
+    #[sqlx::test]
+    #[ignore = "verifier repro (nit, pre-existing): concurrent re-syncs duplicate the window"]
+    async fn concurrent_syncs_of_one_calendar_do_not_double_its_window(db: PgPool) {
+        let user = a_user(&db, "me").await;
+        let server = serving(FEED).await;
+        let url = format!("{}/cal.ics", server.uri());
+        let id = connect_ics(&db, user, &url, None).await.unwrap();
+
+        let http = Client::new();
+        let mut worst = 0;
+        for _ in 0..30 {
+            sqlx::query("DELETE FROM external_busy WHERE calendar_id = $1")
+                .bind(id)
+                .execute(&db)
+                .await
+                .unwrap();
+            let (a, b, c, d) = tokio::join!(
+                sync_one(&db, &http, id, &url, now()),
+                sync_one(&db, &http, id, &url, now()),
+                sync_one(&db, &http, id, &url, now()),
+                sync_one(&db, &http, id, &url, now()),
+            );
+            for r in [a, b, c, d] {
+                r.unwrap();
+            }
+            worst = worst.max(cached(&db, id).await);
+        }
+
+        assert_eq!(
+            worst, 1,
+            "a concurrent re-sync left {worst} copies of one block"
+        );
+    }
+
     // ⚠️ A cap, not a truncation: storing the first N blocks would make
     // somebody look free at times they aren't.
     #[sqlx::test]
