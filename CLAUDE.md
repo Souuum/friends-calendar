@@ -631,6 +631,32 @@ friend of yours. Points worth knowing before changing it:
   / "Next:" lists on `/friends/[id]` and `/friends` (which would otherwise
   show events only the *friend* is in).
 
+## Two-agent team: builder + verifier (2026-10-29)
+
+Two subagents in `.claude/agents/`, split by **role, not by layer**:
+
+- **`builder`** turns an issue into a PR: failing test first, then the fix,
+  every test tier that applies, a story per component. Never certifies its own
+  work.
+- **`verifier`** proves the PR: everything CI runs, locally, plus the checks CI
+  can't do (literal client payload through the router, real browser preflight
+  for new routes or methods, real browser submit for forms, screenshots at 402
+  and 1280). It reports PASS/FAIL with evidence and writes **test files only**.
+  For a bug report it writes the failing repro and the builder fixes it, so the
+  test and the fix never have the same author.
+
+Not split backend/frontend on purpose: features here cross both, and the worst
+bugs (enum casing, the missing CORS method, happy-dom's missing form
+validation) sat exactly on that seam. A layer split would put the handoff there.
+
+**They run in a dev container, not on the Proxmox host**:
+`scripts/provision-dev-container.sh` (run on the host as root) creates an
+unprivileged Debian 12 LXC. It has Rust + clippy + rustfmt, cargo-audit, Node
+22 + Yarn 1, Postgres 15 with a CREATEDB role for `#[sqlx::test]`, Playwright's
+Chromium, and the repo, owned by a `dev` user. It refuses CTIDs 100 and 101.
+The host has no toolchain, and CT 100/101 are production, so before this,
+backend changes went to CI uncompiled.
+
 ## Testing
 
 **Standing policy for this repo, not just this feature: every backend or
