@@ -59,14 +59,12 @@ pub async fn mark_digest_sent(db: &PgPool, guild_id: &str, sent_at: DateTime<Utc
     Ok(())
 }
 
-/// Which channel new event announcements should post to. DB config wins if
-/// present (live-editable from the /server page - a change here takes
-/// effect on the very next event created, since this is a plain per-request
-/// read, no caching); falls back to the env-var-configured
-/// `AppState.discord_announcement_channel_id` if there's no DB row yet, so
-/// existing deployments keep working unchanged until someone visits
-/// /server. Deliberately does NOT cover the gateway bot's reaction-watching
-/// channel (bot.rs captures that once at process startup) - see CLAUDE.md.
+/// The announcement channel for a guild, used by every path that posts to
+/// it (event auto-announce, the feed, post-invite, the weekly digest). The
+/// DB config from /server wins when it holds a parseable id; otherwise falls
+/// back to the env-var `AppState.discord_announcement_channel_id`. A plain
+/// per-request read, no caching, so a change on /server applies on the next
+/// call.
 pub async fn resolve_announcement_channel_id(
     db: &PgPool,
     guild_id: &str,
