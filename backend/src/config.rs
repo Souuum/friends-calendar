@@ -7,6 +7,8 @@ use std::collections::HashMap;
 use std::env;
 use std::sync::{Arc, Mutex};
 
+use crate::services::external_calendar::{self, AddressPolicy};
+
 /// oauth2 5.x encodes which endpoints a client has configured in the type
 /// itself, so `BasicClient` alone is no longer a complete type. This is the
 /// shape this app builds: auth URI and token URI set, device-authorization /
@@ -40,6 +42,11 @@ pub struct AppState {
     pub discord_bot_token: Option<String>,
     pub discord_guild_id: Option<String>,
     pub http_client: reqwest::Client,
+    /// Fetches imported calendar feeds - URLs a user pasted. ⚠️ Never the
+    /// general `http_client`: this one refuses private addresses at DNS
+    /// resolution and on every redirect (SSRF). See
+    /// `services::external_calendar::feed_client`.
+    pub feed_http_client: reqwest::Client,
     // Used by the Discord gateway bot (bot.rs / services::discord_announcement)
     // to know which channel to post event announcements in and watch for
     // ✅-reaction RSVPs. Same "optional, degrade gracefully" treatment as
@@ -172,6 +179,7 @@ impl AppState {
             discord_bot_token,
             discord_guild_id,
             http_client: reqwest::Client::new(),
+            feed_http_client: external_calendar::feed_client(AddressPolicy::PublicOnly, None),
             discord_announcement_channel_id,
             discord_api_base,
         })
@@ -207,6 +215,12 @@ impl AppState {
             discord_bot_token: Some("test-bot-token".to_string()),
             discord_guild_id: Some("test-guild-id".to_string()),
             http_client: reqwest::Client::new(),
+            // `*.test` resolves to loopback so wiremock can stand in for a
+            // public feed; literal private hosts are still refused.
+            feed_http_client: external_calendar::feed_client(
+                AddressPolicy::AllowLoopback,
+                Some(Arc::new(external_calendar::DotTestDns)),
+            ),
             discord_announcement_channel_id: Some(123456789),
             discord_api_base,
         }

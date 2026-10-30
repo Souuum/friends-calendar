@@ -351,7 +351,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // External calendars need no Discord anything - they're plain HTTP GETs
     // of a URL the user pasted - so this is spawned unconditionally, unlike
     // the two loops above.
-    services::external_calendar::spawn_sync_loop(state.db.clone(), state.http_client.clone());
+    services::external_calendar::spawn_sync_loop(state.db.clone(), state.feed_http_client.clone());
 
     // One backfill pass at startup, so reactions that arrived while the bot
     // was down - or that predate the event ever being announced through this

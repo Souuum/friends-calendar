@@ -91,7 +91,7 @@ pub async fn connect_calendar(
     // error: the connection exists, and the UI shows why it isn't working.
     if let Err(e) = external_calendar::sync_one(
         &state.db,
-        &state.http_client,
+        &state.feed_http_client,
         id,
         &external_calendar::normalise_feed_url(&req.url).unwrap_or_default(),
         chrono::Utc::now(),
@@ -149,7 +149,7 @@ mod tests {
 
     // Verifier (round 3): the connect request runs the first sync inline, so
     // the fetch deadline has to hold on this path too - through the real
-    // router and the real `AppState.http_client`, not a test-built client.
+    // router and the real `AppState.feed_http_client`, not a test-built client.
     // A server that accepts and never answers must cost the request ~30 s,
     // not hang it, and the reason must land on the row the page renders.
     #[sqlx::test]
@@ -188,7 +188,7 @@ mod tests {
                     .header("Authorization", format!("Bearer {token}"))
                     .header("Content-Type", "application/json")
                     .body(Body::from(
-                        json!({ "url": format!("http://{addr}/cal.ics"), "label": "Work" })
+                        json!({ "url": format!("http://calendar.test:{}/cal.ics", addr.port()), "label": "Work" })
                             .to_string(),
                     ))
                     .unwrap(),
@@ -299,11 +299,10 @@ mod tests {
         // `internal` drops here and verifies `.expect(0)`.
     }
 
-    // ⚠️ Needs the seam described in the verifier report:
-    // `AppState::for_test`'s feed client resolves any `*.test` name to
-    // 127.0.0.1 (a fake resolver, under the test-only loopback allowance),
-    // and the connect handler fetches with that feed client, not the general
-    // `http_client`. The redirect *target* is a literal private address,
+    // ⚠️ Relies on `AppState::for_test`'s feed client, which resolves any
+    // `*.test` name to 127.0.0.1 (a fake resolver, under the test-only
+    // loopback allowance), and on the connect handler fetching with that
+    // feed client, not the general `http_client`. The redirect *target* is a literal private address,
     // which no policy - test or production - may follow.
     #[sqlx::test]
     async fn connecting_a_feed_that_redirects_to_a_private_address_does_not_follow_it(db: PgPool) {

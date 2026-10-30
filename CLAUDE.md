@@ -1193,6 +1193,23 @@ sync) is in place for them.
   fetches this URL, so `file://` would make it a file-read primitive.
   `webcal://` is *rewritten* rather than refused, because that is what Apple
   Calendar hands you.
+- ⚠️ **Feeds must live on the public internet (SSRF fix, 2026-10-30).** Until
+  then `http://127.0.0.1:<port>/` connected, synced, and reported the result
+  in `last_error` - a port scanner. Now refused, with a message containing
+  "private": loopback, RFC 1918, link-local/metadata, CGNAT, multicast,
+  reserved and documentation ranges, `localhost`/`*.localhost`, and IPv4
+  hidden in IPv6 (mapped, compatible, NAT64, 6to4). Literal hosts are checked
+  on save, before every fetch (old rows), and on every redirect hop. Names
+  are checked **inside the resolver** of `feed_client`, refusing the whole
+  name if any answer is private - reqwest then connects only to the checked
+  addresses, so a rebinding second lookup doesn't exist. Proxies are off.
+  It's a separate client, `AppState.feed_http_client`; never fetch a feed
+  with `http_client`. `AddressPolicy::AllowLoopback` is `#[cfg(test)]` and
+  relaxes only *DNS answers* of loopback, so tests reach wiremock as
+  `http://calendar.test:{port}` - a literal `127.0.0.1` URL in a new test
+  is refused, as it should be. reqwest's own `to_string()` hides the reason,
+  so `surface_refusal` digs the refusal out of the error chain
+  (mutation-tested: without it three tests fail).
 - **Cached window: six weeks back to six months ahead** of each sync
   (`SYNC_LOOKBACK_DAYS`/`SYNC_LOOKAHEAD_DAYS`). ⚠️ It used to be
   `[now, now+30d)` - the window *availability* needs - but the calendar draws

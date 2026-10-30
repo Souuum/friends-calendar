@@ -18,6 +18,9 @@
 //! titles are not read, not merely discarded. Importing a work calendar into
 //! a social app is a privacy problem the moment you keep "Interview with…".
 
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::Arc;
+
 use anyhow::{Result, anyhow, bail};
 use chrono::{DateTime, Duration, Utc};
 use reqwest::Client;
@@ -99,6 +102,254 @@ async fn read_capped(mut response: reqwest::Response) -> Result<String> {
     Ok(String::from_utf8_lossy(&body).into_owned())
 }
 
+// --- which addresses a feed may live at -----------------------------------
+//
+// ⚠️ The server fetches whatever URL a signed-in user pastes and reports the
+// outcome in `last_error`. Without these checks that is a blind SSRF and an
+// internal port scanner (`http://127.0.0.1:5432/`, cloud metadata at
+// `169.254.169.254`). Three layers, because each misses something the others
+// catch:
+//
+// - **Literal hosts** (IPs and `localhost` names) are refused when the URL is
+//   saved, again before every fetch (a row stored before the check existed
+//   must not be fetched either), and on every redirect hop.
+// - **Names** are checked where they are *resolved*: `feed_client` wraps the
+//   DNS resolver, so the addresses checked are the addresses reqwest
+//   connects to. A lookup before the request would be a second, rebindable
+//   lookup.
+// - **Proxies** are off: through a proxy, the proxy does the resolving.
+
+/// Redirect hops followed before giving up. Providers bounce feed URLs once
+/// or twice; ten is reqwest's own default.
+const MAX_FEED_REDIRECTS: usize = 10;
+
+/// A feed address that is not on the public internet.
+///
+/// A distinct type so the message survives reqwest's wrapping: reqwest's own
+/// `to_string()` only says "error sending request", and [`fetch_feed`] digs
+/// this back out of the source chain so the reader sees why.
+#[derive(Debug)]
+struct PrivateAddress(String);
+
+impl std::fmt::Display for PrivateAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for PrivateAddress {}
+
+impl PrivateAddress {
+    fn new(what: impl std::fmt::Display) -> Self {
+        Self(format!(
+            "{what} is a private or internal address - calendar links must point at the public internet"
+        ))
+    }
+}
+
+fn is_public_v4(ip: Ipv4Addr) -> bool {
+    let [a, b, c, _] = ip.octets();
+    let private = a == 0 // "this network" 0/8
+        || a == 10 // RFC 1918
+        || (a == 100 && (b & 0xc0) == 64) // CGNAT 100.64/10
+        || a == 127 // loopback
+        || (a == 169 && b == 254) // link-local, cloud metadata
+        || (a == 172 && (b & 0xf0) == 16) // RFC 1918
+        || (a == 192 && b == 0 && c == 0) // IETF protocol assignments
+        || (a == 192 && b == 0 && c == 2) // TEST-NET-1
+        || (a == 192 && b == 168) // RFC 1918
+        || (a == 198 && (b & 0xfe) == 18) // benchmarking 198.18/15
+        || (a == 198 && b == 51 && c == 100) // TEST-NET-2
+        || (a == 203 && b == 0 && c == 113) // TEST-NET-3
+        || a >= 224; // multicast 224/4, reserved 240/4, broadcast
+    !private
+}
+
+/// The IPv4 address inside an IPv6 one, for the forms that carry one.
+fn embedded_v4(s: [u16; 8]) -> Option<Ipv4Addr> {
+    let v4 = |hi: u16, lo: u16| {
+        let [a, b] = hi.to_be_bytes();
+        let [c, d] = lo.to_be_bytes();
+        Ipv4Addr::new(a, b, c, d)
+    };
+    match s {
+        // IPv4-mapped ::ffff:0:0/96, IPv4-compatible ::/96
+        [0, 0, 0, 0, 0, 0xffff, hi, lo] | [0, 0, 0, 0, 0, 0, hi, lo] => Some(v4(hi, lo)),
+        // NAT64 64:ff9b::/96
+        [0x64, 0xff9b, 0, 0, 0, 0, hi, lo] => Some(v4(hi, lo)),
+        // 6to4 2002::/16
+        [0x2002, hi, lo, ..] => Some(v4(hi, lo)),
+        _ => None,
+    }
+}
+
+fn is_public_v6(ip: Ipv6Addr) -> bool {
+    let s = ip.segments();
+    let private = ip.is_unspecified()
+        || ip.is_loopback()
+        || (s[0] & 0xfe00) == 0xfc00 // unique local fc00::/7
+        || (s[0] & 0xffc0) == 0xfe80 // link-local fe80::/10
+        || (s[0] & 0xff00) == 0xff00 // multicast ff00::/8
+        || (s[0] == 0x2001 && s[1] == 0x0db8); // documentation 2001:db8::/32
+    // An IPv4 address smuggled inside an IPv6 one is only as public as the
+    // IPv4 address itself.
+    !private && embedded_v4(s).is_none_or(is_public_v4)
+}
+
+fn is_public(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => is_public_v4(v4),
+        IpAddr::V6(v6) => is_public_v6(v6),
+    }
+}
+
+/// Refuses any address that is not on the public internet: loopback,
+/// RFC 1918, link-local (cloud metadata), CGNAT, multicast, reserved and
+/// documentation ranges, and IPv4 addresses wrapped in IPv6 (mapped,
+/// compatible, NAT64, 6to4) that unwrap to any of those.
+pub fn check_feed_ip(ip: IpAddr) -> Result<()> {
+    if is_public(ip) {
+        Ok(())
+    } else {
+        Err(PrivateAddress::new(ip).into())
+    }
+}
+
+/// `localhost`, `localhost.` and anything under `.localhost` (RFC 6761
+/// reserves the whole tree for loopback).
+fn is_localhost_name(domain: &str) -> bool {
+    let name = domain.trim_end_matches('.').to_ascii_lowercase();
+    name == "localhost" || name.ends_with(".localhost")
+}
+
+/// The literal-host rule: IP literals must be public and `localhost` names
+/// are refused. Other names are left to the resolver. `url` has already
+/// turned decimal, octal, hex and short IPv4 spellings into dotted quads.
+fn check_literal_host(url: &url::Url) -> std::result::Result<(), PrivateAddress> {
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) if !is_public_v4(ip) => Err(PrivateAddress::new(ip)),
+        Some(url::Host::Ipv6(ip)) if !is_public_v6(ip) => Err(PrivateAddress::new(ip)),
+        Some(url::Host::Domain(name)) if is_localhost_name(name) => Err(PrivateAddress::new(name)),
+        _ => Ok(()),
+    }
+}
+
+/// Which resolved addresses a [`feed_client`] will connect to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AddressPolicy {
+    /// Public addresses only. The only policy production code can name.
+    PublicOnly,
+    /// Also loopback, but **only as a DNS answer** - so a wiremock server can
+    /// stand in for a public host named `*.test`. Literal IPs and `localhost`
+    /// names are refused exactly as in production, initial URL and redirect.
+    #[cfg(test)]
+    AllowLoopback,
+}
+
+impl AddressPolicy {
+    fn allows_resolved(self, ip: IpAddr) -> bool {
+        match self {
+            Self::PublicOnly => check_feed_ip(ip).is_ok(),
+            #[cfg(test)]
+            Self::AllowLoopback => is_public(ip) || ip.to_canonical().is_loopback(),
+        }
+    }
+}
+
+/// Resolves a name, then refuses the **whole name** if any answer is not
+/// allowed. Dropping just the bad answer would let a round-robin record with
+/// one internal address in it keep pointing there.
+struct CheckedResolver {
+    policy: AddressPolicy,
+    inner: Option<Arc<dyn reqwest::dns::Resolve>>,
+}
+
+impl reqwest::dns::Resolve for CheckedResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let policy = self.policy;
+        let host = name.as_str().to_string();
+        let inner = self.inner.as_ref().map(|r| r.resolve(name));
+        Box::pin(async move {
+            let addrs: Vec<SocketAddr> = match inner {
+                Some(resolving) => resolving.await?.collect(),
+                None => tokio::net::lookup_host((host.as_str(), 0)).await?.collect(),
+            };
+            if let Some(bad) = addrs.iter().find(|a| !policy.allows_resolved(a.ip())) {
+                let refused =
+                    PrivateAddress::new(format!("{host} resolves to {}, which", bad.ip()));
+                return Err(Box::new(refused) as Box<dyn std::error::Error + Send + Sync>);
+            }
+            Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
+}
+
+/// The client every feed fetch goes through (`AppState.feed_http_client`).
+///
+/// ⚠️ Not the general `http_client`: that one follows redirects anywhere and
+/// connects wherever DNS says. This one checks every resolved address under
+/// `policy` (`resolver: None` means system DNS) - reqwest then connects only
+/// to the addresses that were checked, which is what defeats DNS rebinding -
+/// refuses redirect hops to literal private addresses and `localhost` names
+/// under *every* policy, and ignores proxy environment variables.
+pub fn feed_client(
+    policy: AddressPolicy,
+    resolver: Option<Arc<dyn reqwest::dns::Resolve>>,
+) -> Client {
+    let redirects = reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= MAX_FEED_REDIRECTS {
+            return attempt.error("This calendar redirected too many times");
+        }
+        match check_literal_host(attempt.url()) {
+            Ok(()) => attempt.follow(),
+            Err(refused) => attempt.error(refused),
+        }
+    });
+    reqwest::ClientBuilder::new()
+        .dns_resolver(Arc::new(CheckedResolver {
+            policy,
+            inner: resolver,
+        }))
+        .redirect(redirects)
+        .no_proxy()
+        .build()
+        .expect("failed to build the calendar feed HTTP client")
+}
+
+/// Resolves every `*.test` name to 127.0.0.1, for `AppState::for_test`'s
+/// feed client. Anything else fails to resolve, so a test cannot reach the
+/// real network through it.
+#[cfg(test)]
+pub(crate) struct DotTestDns;
+
+#[cfg(test)]
+impl reqwest::dns::Resolve for DotTestDns {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let name = name.as_str().to_string();
+        Box::pin(async move {
+            if name.ends_with(".test") {
+                let loopback = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+                Ok(Box::new(std::iter::once(loopback)) as reqwest::dns::Addrs)
+            } else {
+                Err(format!("no such test host: {name}").into())
+            }
+        })
+    }
+}
+
+/// Turns a reqwest failure caused by a refused address back into that
+/// refusal's own message, which reqwest's top-level `to_string()` hides.
+fn surface_refusal(error: reqwest::Error) -> anyhow::Error {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&error);
+    while let Some(e) = source {
+        if let Some(refused) = e.downcast_ref::<PrivateAddress>() {
+            return anyhow!("{refused}");
+        }
+        source = e.source();
+    }
+    error.into()
+}
+
 /// Fetches a feed's body within [`FEED_FETCH_TIMEOUT`].
 ///
 /// The deadline is applied here, per request, rather than on the shared
@@ -106,14 +357,21 @@ async fn read_capped(mut response: reqwest::Response) -> Result<String> {
 /// `tokio::time::timeout` covers connect, headers and the whole body read;
 /// reqwest's per-request timeout is the same bound from inside, so the
 /// connection is torn down rather than left open.
+///
+/// ⚠️ The literal host is re-checked here whatever client is passed in: a
+/// stored row may predate the check, and the sync loop fetches every row.
 async fn fetch_feed(http: &Client, url: &str) -> Result<String> {
+    if let Ok(parsed) = url::Url::parse(url) {
+        check_literal_host(&parsed)?;
+    }
     let fetch = async {
         let response = http
             .get(url)
             .header(reqwest::header::USER_AGENT, FEED_USER_AGENT)
             .timeout(FEED_FETCH_TIMEOUT)
             .send()
-            .await?;
+            .await
+            .map_err(surface_refusal)?;
         if !response.status().is_success() {
             return Err(anyhow!("Calendar returned {}", response.status()));
         }
@@ -189,6 +447,10 @@ pub struct ExternalCalendar {
 /// would make this a file-read / SSRF primitive. Webcal is Apple's scheme
 /// for "subscribe to this https URL" and is rewritten rather than refused,
 /// because it is exactly what people copy out of a calendar app.
+///
+/// ⚠️ Also refuses literal private addresses and `localhost` names - see
+/// [`check_feed_ip`]. Names that *resolve* somewhere private are caught by
+/// [`feed_client`]'s resolver instead, at the moment of connecting.
 pub fn normalise_feed_url(raw: &str) -> Result<String> {
     let trimmed = raw.trim();
     let rewritten = trimmed
@@ -198,7 +460,10 @@ pub fn normalise_feed_url(raw: &str) -> Result<String> {
 
     let parsed = url::Url::parse(&rewritten).map_err(|_| anyhow!("That isn't a valid URL"))?;
     match parsed.scheme() {
-        "http" | "https" => Ok(parsed.to_string()),
+        "http" | "https" => {
+            check_literal_host(&parsed)?;
+            Ok(parsed.to_string())
+        }
         other => Err(anyhow!(
             "Only http(s) calendar links are supported, not {other}"
         )),
@@ -503,9 +768,9 @@ mod tests {
     async fn busy_for_user_returns_the_intervals_in_the_window(db: PgPool) {
         let user = a_user(&db, "alice").await;
         let server = serving(FEED).await;
-        let url = format!("{}/cal.ics", server.uri());
+        let url = feed_url(&server);
         let id = connect_ics(&db, user, &url, Some("Work")).await.unwrap();
-        sync_one(&db, &Client::new(), id, &url, now())
+        sync_one(&db, &test_feed_client(), id, &url, now())
             .await
             .unwrap();
 
@@ -537,9 +802,9 @@ mod tests {
     async fn busy_blocks_carry_no_trace_of_what_the_event_was(db: PgPool) {
         let user = a_user(&db, "alice").await;
         let server = serving(FEED).await;
-        let url = format!("{}/cal.ics", server.uri());
+        let url = feed_url(&server);
         let id = connect_ics(&db, user, &url, Some("Work")).await.unwrap();
-        sync_one(&db, &Client::new(), id, &url, now())
+        sync_one(&db, &test_feed_client(), id, &url, now())
             .await
             .unwrap();
 
@@ -569,9 +834,9 @@ mod tests {
         let alice = a_user(&db, "alice").await;
         let bob = a_user(&db, "bob").await;
         let server = serving(FEED).await;
-        let url = format!("{}/cal.ics", server.uri());
+        let url = feed_url(&server);
         let id = connect_ics(&db, alice, &url, Some("Work")).await.unwrap();
-        sync_one(&db, &Client::new(), id, &url, now())
+        sync_one(&db, &test_feed_client(), id, &url, now())
             .await
             .unwrap();
 
@@ -591,9 +856,9 @@ mod tests {
     async fn blocks_outside_the_window_are_left_out(db: PgPool) {
         let user = a_user(&db, "alice").await;
         let server = serving(FEED).await;
-        let url = format!("{}/cal.ics", server.uri());
+        let url = feed_url(&server);
         let id = connect_ics(&db, user, &url, Some("Work")).await.unwrap();
-        sync_one(&db, &Client::new(), id, &url, now())
+        sync_one(&db, &test_feed_client(), id, &url, now())
             .await
             .unwrap();
 
@@ -640,10 +905,10 @@ mod tests {
     async fn syncing_caches_the_intervals(db: PgPool) {
         let user = a_user(&db, "me").await;
         let server = serving(FEED).await;
-        let url = format!("{}/cal.ics", server.uri());
+        let url = feed_url(&server);
         let id = connect_ics(&db, user, &url, Some("Work")).await.unwrap();
 
-        let count = sync_one(&db, &Client::new(), id, &url, now())
+        let count = sync_one(&db, &test_feed_client(), id, &url, now())
             .await
             .unwrap();
 
@@ -667,9 +932,9 @@ mod tests {
     async fn no_event_content_reaches_the_database(db: PgPool) {
         let user = a_user(&db, "me").await;
         let server = serving(FEED).await;
-        let url = format!("{}/cal.ics", server.uri());
+        let url = feed_url(&server);
         let id = connect_ics(&db, user, &url, None).await.unwrap();
-        sync_one(&db, &Client::new(), id, &url, now())
+        sync_one(&db, &test_feed_client(), id, &url, now())
             .await
             .unwrap();
 
@@ -705,10 +970,10 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_string(FEED))
             .mount(&server)
             .await;
-        let url = format!("{}/cal.ics", server.uri());
+        let url = feed_url(&server);
         let id = connect_ics(&db, user, &url, None).await.unwrap();
 
-        let count = sync_one(&db, &Client::new(), id, &url, now()).await;
+        let count = sync_one(&db, &test_feed_client(), id, &url, now()).await;
 
         assert_eq!(count.unwrap(), 1);
     }
@@ -717,13 +982,13 @@ mod tests {
     async fn re_syncing_replaces_the_window_rather_than_duplicating(db: PgPool) {
         let user = a_user(&db, "me").await;
         let server = serving(FEED).await;
-        let url = format!("{}/cal.ics", server.uri());
+        let url = feed_url(&server);
         let id = connect_ics(&db, user, &url, None).await.unwrap();
 
-        sync_one(&db, &Client::new(), id, &url, now())
+        sync_one(&db, &test_feed_client(), id, &url, now())
             .await
             .unwrap();
-        sync_one(&db, &Client::new(), id, &url, now())
+        sync_one(&db, &test_feed_client(), id, &url, now())
             .await
             .unwrap();
 
@@ -742,9 +1007,9 @@ mod tests {
     async fn a_failing_sync_keeps_the_cached_window_and_records_why(db: PgPool) {
         let user = a_user(&db, "me").await;
         let server = serving(FEED).await;
-        let url = format!("{}/cal.ics", server.uri());
+        let url = feed_url(&server);
         let id = connect_ics(&db, user, &url, None).await.unwrap();
-        sync_one(&db, &Client::new(), id, &url, now())
+        sync_one(&db, &test_feed_client(), id, &url, now())
             .await
             .unwrap();
 
@@ -757,13 +1022,13 @@ mod tests {
             .mount(&dead)
             .await;
         sqlx::query("UPDATE external_calendars SET credential = $1 WHERE id = $2")
-            .bind(format!("{}/cal.ics", dead.uri()))
+            .bind(feed_url(&dead))
             .bind(id)
             .execute(&db)
             .await
             .unwrap();
 
-        sync_all(&db, &Client::new(), now()).await.unwrap();
+        sync_all(&db, &test_feed_client(), now()).await.unwrap();
 
         let count: i64 =
             sqlx::query_scalar("SELECT count(*) FROM external_busy WHERE calendar_id = $1")
@@ -794,14 +1059,12 @@ mod tests {
             .mount(&bad)
             .await;
 
-        connect_ics(&db, user, &format!("{}/cal.ics", bad.uri()), None)
-            .await
-            .unwrap();
-        let ok_id = connect_ics(&db, user, &format!("{}/cal.ics", good.uri()), None)
+        connect_ics(&db, user, &feed_url(&bad), None).await.unwrap();
+        let ok_id = connect_ics(&db, user, &feed_url(&good), None)
             .await
             .unwrap();
 
-        let synced = sync_all(&db, &Client::new(), now()).await.unwrap();
+        let synced = sync_all(&db, &test_feed_client(), now()).await.unwrap();
 
         assert_eq!(synced, 1);
         let count: i64 =
@@ -855,14 +1118,12 @@ mod tests {
         let good = serving(FEED).await;
         // The hostile one first, so a panic that escaped would stop the loop
         // before it reached the good one.
-        let bad_id = connect_ics(&db, alice, &format!("{}/cal.ics", hostile.uri()), None)
+        let bad_id = connect_ics(&db, alice, &feed_url(&hostile), None)
             .await
             .unwrap();
-        let ok_id = connect_ics(&db, bob, &format!("{}/cal.ics", good.uri()), None)
-            .await
-            .unwrap();
+        let ok_id = connect_ics(&db, bob, &feed_url(&good), None).await.unwrap();
 
-        let synced = sync_all_with(&db, &Client::new(), now(), panics_on_marker)
+        let synced = sync_all_with(&db, &test_feed_client(), now(), panics_on_marker)
             .await
             .unwrap();
 
@@ -880,10 +1141,10 @@ mod tests {
     async fn sync_one_turns_a_parser_panic_into_an_error(db: PgPool) {
         let user = a_user(&db, "me").await;
         let hostile = serving("BEGIN:VCALENDAR\r\nX-PANIC-ME:1\r\nEND:VCALENDAR\r\n").await;
-        let url = format!("{}/cal.ics", hostile.uri());
+        let url = feed_url(&hostile);
         let id = connect_ics(&db, user, &url, None).await.unwrap();
 
-        let err = sync_one_with(&db, &Client::new(), id, &url, now(), panics_on_marker)
+        let err = sync_one_with(&db, &test_feed_client(), id, &url, now(), panics_on_marker)
             .await
             .unwrap_err();
 
@@ -907,13 +1168,13 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let url = format!("{}/cal.ics", server.uri());
+        let url = feed_url(&server);
         let id = connect_ics(&db, user, &url, None).await.unwrap();
-        sync_one(&db, &Client::new(), id, &url, now())
+        sync_one(&db, &test_feed_client(), id, &url, now())
             .await
             .unwrap();
 
-        sync_all(&db, &Client::new(), now()).await.unwrap();
+        sync_all(&db, &test_feed_client(), now()).await.unwrap();
 
         assert_eq!(cached(&db, id).await, 1);
         let error = last_error(&db, id).await.unwrap();
@@ -946,10 +1207,10 @@ mod tests {
             let _ = socket.write_all(b"0\r\n\r\n").await;
         });
         let user = a_user(&db, "me").await;
-        let url = format!("http://{addr}/cal.ics");
+        let url = format!("http://calendar.test:{}/cal.ics", addr.port());
         let id = connect_ics(&db, user, &url, None).await.unwrap();
 
-        let err = sync_one(&db, &Client::new(), id, &url, now())
+        let err = sync_one(&db, &test_feed_client(), id, &url, now())
             .await
             .unwrap_err();
 
@@ -980,16 +1241,19 @@ mod tests {
         let bob = a_user(&db, "bob").await;
         let good = serving(FEED).await;
         // The silent one first, so a stall blocks the good one behind it.
-        let silent_id = connect_ics(&db, alice, &format!("http://{addr}/cal.ics"), None)
-            .await
-            .unwrap();
-        let ok_id = connect_ics(&db, bob, &format!("{}/cal.ics", good.uri()), None)
-            .await
-            .unwrap();
+        let silent_id = connect_ics(
+            &db,
+            alice,
+            &format!("http://calendar.test:{}/cal.ics", addr.port()),
+            None,
+        )
+        .await
+        .unwrap();
+        let ok_id = connect_ics(&db, bob, &feed_url(&good), None).await.unwrap();
 
         let outcome = tokio::time::timeout(
             std::time::Duration::from_secs(90),
-            sync_all(&db, &Client::new(), now()),
+            sync_all(&db, &test_feed_client(), now()),
         )
         .await;
 
@@ -1042,17 +1306,20 @@ mod tests {
         let alice = a_user(&db, "alice").await;
         let bob = a_user(&db, "bob").await;
         let good = serving(FEED).await;
-        let slow_id = connect_ics(&db, alice, &format!("http://{addr}/cal.ics"), None)
-            .await
-            .unwrap();
-        let ok_id = connect_ics(&db, bob, &format!("{}/cal.ics", good.uri()), None)
-            .await
-            .unwrap();
+        let slow_id = connect_ics(
+            &db,
+            alice,
+            &format!("http://calendar.test:{}/cal.ics", addr.port()),
+            None,
+        )
+        .await
+        .unwrap();
+        let ok_id = connect_ics(&db, bob, &feed_url(&good), None).await.unwrap();
         let started = std::time::Instant::now();
 
         let outcome = tokio::time::timeout(
             std::time::Duration::from_secs(60),
-            sync_all(&db, &Client::new(), now()),
+            sync_all(&db, &test_feed_client(), now()),
         )
         .await;
 
@@ -1081,23 +1348,18 @@ mod tests {
         let slow_id = connect_ics(
             &db,
             a_user(&db, "slow").await,
-            &format!("http://{slow}/cal.ics"),
+            &format!("http://calendar.test:{}/cal.ics", slow.port()),
             None,
         )
         .await
         .unwrap();
-        let bad_id = connect_ics(
-            &db,
-            a_user(&db, "bad").await,
-            &format!("{}/cal.ics", hostile.uri()),
-            None,
-        )
-        .await
-        .unwrap();
+        let bad_id = connect_ics(&db, a_user(&db, "bad").await, &feed_url(&hostile), None)
+            .await
+            .unwrap();
         for i in 0..8 {
             let user = a_user(&db, &format!("user{i}")).await;
             // Distinct URLs, so connect_ics's upsert doesn't fold them.
-            let id = connect_ics(&db, user, &format!("{}/cal.ics?u={i}", good.uri()), None)
+            let id = connect_ics(&db, user, &format!("{}?u={i}", feed_url(&good)), None)
                 .await
                 .unwrap();
             ok_ids.push(id);
@@ -1106,7 +1368,7 @@ mod tests {
 
         let synced = tokio::time::timeout(
             std::time::Duration::from_secs(55),
-            sync_all_with(&db, &Client::new(), now(), panics_on_marker),
+            sync_all_with(&db, &test_feed_client(), now(), panics_on_marker),
         )
         .await
         .expect("sync pass outlived one deadline plus slack")
@@ -1144,10 +1406,10 @@ mod tests {
     async fn concurrent_syncs_of_one_calendar_do_not_double_its_window(db: PgPool) {
         let user = a_user(&db, "me").await;
         let server = serving(FEED).await;
-        let url = format!("{}/cal.ics", server.uri());
+        let url = feed_url(&server);
         let id = connect_ics(&db, user, &url, None).await.unwrap();
 
-        let http = Client::new();
+        let http = test_feed_client();
         let mut worst = 0;
         for _ in 0..30 {
             sqlx::query("DELETE FROM external_busy WHERE calendar_id = $1")
@@ -1190,11 +1452,11 @@ mod tests {
             "must trip the interval cap, not the size cap"
         );
         let server = serving(body).await;
-        let id = connect_ics(&db, user, &format!("{}/cal.ics", server.uri()), None)
+        let id = connect_ics(&db, user, &feed_url(&server), None)
             .await
             .unwrap();
 
-        sync_all(&db, &Client::new(), now()).await.unwrap();
+        sync_all(&db, &test_feed_client(), now()).await.unwrap();
 
         assert_eq!(cached(&db, id).await, 0, "nothing partial is stored");
         let error = last_error(&db, id).await.unwrap();
@@ -1205,9 +1467,9 @@ mod tests {
     async fn disconnecting_removes_the_cached_intervals_too(db: PgPool) {
         let user = a_user(&db, "me").await;
         let server = serving(FEED).await;
-        let url = format!("{}/cal.ics", server.uri());
+        let url = feed_url(&server);
         let id = connect_ics(&db, user, &url, None).await.unwrap();
-        sync_one(&db, &Client::new(), id, &url, now())
+        sync_one(&db, &test_feed_client(), id, &url, now())
             .await
             .unwrap();
 
@@ -1228,7 +1490,7 @@ mod tests {
         let me = a_user(&db, "me").await;
         let them = a_user(&db, "them").await;
         let server = serving(FEED).await;
-        let id = connect_ics(&db, them, &format!("{}/cal.ics", server.uri()), None)
+        let id = connect_ics(&db, them, &feed_url(&server), None)
             .await
             .unwrap();
 
@@ -1274,9 +1536,9 @@ END:VCALENDAR\r\n";
     async fn earlier_this_month_is_still_drawn_after_a_sync(db: PgPool) {
         let user = a_user(&db, "alice").await;
         let server = serving(MID_MONTH_FEED).await;
-        let url = format!("{}/cal.ics", server.uri());
+        let url = feed_url(&server);
         let id = connect_ics(&db, user, &url, Some("Work")).await.unwrap();
-        sync_one(&db, &Client::new(), id, &url, mid_month())
+        sync_one(&db, &test_feed_client(), id, &url, mid_month())
             .await
             .unwrap();
 
@@ -1305,9 +1567,9 @@ END:VCALENDAR\r\n";
     async fn next_month_is_drawn_after_a_sync(db: PgPool) {
         let user = a_user(&db, "alice").await;
         let server = serving(MID_MONTH_FEED).await;
-        let url = format!("{}/cal.ics", server.uri());
+        let url = feed_url(&server);
         let id = connect_ics(&db, user, &url, Some("Work")).await.unwrap();
-        sync_one(&db, &Client::new(), id, &url, mid_month())
+        sync_one(&db, &test_feed_client(), id, &url, mid_month())
             .await
             .unwrap();
 
@@ -1361,10 +1623,10 @@ END:VCALENDAR\r\n";
             )
             .mount(&server)
             .await;
-        let url = format!("{}/cal.ics", server.uri());
+        let url = feed_url(&server);
         let id = connect_ics(&db, user, &url, None).await.unwrap();
 
-        sync_one(&db, &Client::new(), id, &url, now())
+        sync_one(&db, &test_feed_client(), id, &url, now())
             .await
             .unwrap();
 
@@ -1542,23 +1804,14 @@ END:VCALENDAR\r\n";
 
     // --- the seam: a feed client that enforces the address rule ----------
     //
-    // ⚠️ These need API that does not exist yet (see the verifier report):
-    //
-    //   pub fn check_feed_ip(ip: std::net::IpAddr) -> Result<()>
-    //   pub enum AddressPolicy { PublicOnly, #[cfg(test)] AllowLoopback }
-    //   pub fn feed_client(
-    //       policy: AddressPolicy,
-    //       resolver: Option<Arc<dyn reqwest::dns::Resolve>>, // None = system DNS
-    //   ) -> Client
-    //
     // `feed_client` wraps the resolver so every resolved address goes
     // through the policy (refusing the name if *any* address fails), and
     // installs a redirect policy that refuses any hop whose host is a
     // literal non-public IP or a `localhost` name - under every policy,
     // `AllowLoopback` included. `AllowLoopback` only relaxes what *DNS*
     // returns, which is what lets wiremock on 127.0.0.1 stand in for a
-    // public host named `*.test`. Existing tests move to
-    // `test_feed_client()` + `feed_url(&server)` below.
+    // public host named `*.test`. Every wiremock-backed test above uses
+    // `test_feed_client()` + `feed_url(&server)` for that reason.
 
     /// Maps fixed names to fixed addresses. Never touches real DNS.
     struct FakeDns(std::collections::HashMap<&'static str, Vec<std::net::IpAddr>>);
@@ -1587,8 +1840,7 @@ END:VCALENDAR\r\n";
         ))
     }
 
-    /// The client every wiremock-backed test should use once the fix lands:
-    /// `*.test` names resolve to loopback, which `AllowLoopback` accepts.
+    /// The client every wiremock-backed test uses: `*.test` names resolve to loopback, which `AllowLoopback` accepts.
     fn test_feed_client() -> Client {
         feed_client(
             AddressPolicy::AllowLoopback,
