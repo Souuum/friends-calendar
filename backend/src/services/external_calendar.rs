@@ -1388,4 +1388,440 @@ END:VCALENDAR\r\n";
             ]
         );
     }
+
+    // --- private addresses: the fetch must not become an SSRF probe -------
+    //
+    // ⚠️ Verifier repro. The server fetches whatever URL a signed-in user
+    // pastes, follows redirects to any host, and writes the status or error
+    // back to `last_error`, which /settings renders. That is a blind SSRF and
+    // an internal port scanner: `http://127.0.0.1:5432/` answers differently
+    // from a closed port, and `http://169.254.169.254/` is cloud metadata.
+    //
+    // Contract these tests pin: a refused address is an `Err` whose
+    // `to_string()` is readable and contains the word "private" (it lands in
+    // `last_error` and in the connect form's 400 verbatim).
+
+    /// Every literal host that must be refused, in the forms people (and
+    /// attackers) actually write. `url` normalises decimal/octal/hex/short
+    /// IPv4 to dotted quads, so those reach the same check.
+    const PRIVATE_FEED_URLS: &[&str] = &[
+        // loopback, in every spelling
+        "http://127.0.0.1/cal.ics",
+        "http://127.0.0.1:5432/",
+        "http://127.1.2.3:8080/cal.ics",
+        "http://2130706433/cal.ics",
+        "http://0177.0.0.1/cal.ics",
+        "http://0x7f.0.0.1/cal.ics",
+        "http://127.1/cal.ics",
+        "webcal://127.0.0.1/cal.ics",
+        "http://localhost/cal.ics",
+        "http://localhost:8080/cal.ics",
+        "http://LOCALHOST./cal.ics",
+        "http://calendar.localhost/cal.ics",
+        "http://[::1]:8080/cal.ics",
+        // "this host" / unspecified
+        "http://0.0.0.0/cal.ics",
+        "http://0.0.0.0:8080/cal.ics",
+        "http://0.1.2.3/cal.ics",
+        "http://[::]/cal.ics",
+        // RFC 1918
+        "http://10.0.0.5/cal.ics",
+        "http://10.255.255.255/cal.ics",
+        "http://172.16.0.1/cal.ics",
+        "http://172.31.255.254/cal.ics",
+        "http://192.168.1.1/cal.ics",
+        "https://192.168.0.10:8006/",
+        // link-local, incl. cloud metadata
+        "http://169.254.169.254/latest/meta-data/",
+        "http://169.254.0.1/cal.ics",
+        "http://[fe80::1]/cal.ics",
+        // CGNAT 100.64/10
+        "http://100.64.0.1/cal.ics",
+        "http://100.127.255.254/cal.ics",
+        // benchmarking 198.18/15, IETF 192.0.0/24, reserved 240/4, broadcast
+        "http://198.18.0.1/cal.ics",
+        "http://198.19.255.254/cal.ics",
+        "http://192.0.0.8/cal.ics",
+        "http://240.0.0.1/cal.ics",
+        "http://255.255.255.255/cal.ics",
+        // multicast
+        "http://224.0.0.1/cal.ics",
+        "http://239.255.255.250:1900/",
+        "http://[ff02::1]/cal.ics",
+        // documentation ranges
+        "http://192.0.2.1/cal.ics",
+        "http://198.51.100.7/cal.ics",
+        "http://203.0.113.9/cal.ics",
+        "http://[2001:db8::1]/cal.ics",
+        // IPv6 unique-local fc00::/7
+        "http://[fc00::1]/cal.ics",
+        "http://[fd12:3456:789a::1]/cal.ics",
+        // IPv4 smuggled inside IPv6: mapped, compatible, NAT64, 6to4
+        "http://[::ffff:127.0.0.1]/cal.ics",
+        "http://[::ffff:10.0.0.5]/cal.ics",
+        "http://[::ffff:169.254.169.254]/cal.ics",
+        "http://[::127.0.0.1]/cal.ics",
+        "http://[64:ff9b::7f00:1]/cal.ics",
+        "http://[2002:7f00:1::]/cal.ics",
+    ];
+
+    #[test]
+    fn private_and_internal_addresses_are_refused_with_a_readable_reason() {
+        let mut accepted = Vec::new();
+        for raw in PRIVATE_FEED_URLS {
+            match normalise_feed_url(raw) {
+                Ok(url) => accepted.push(format!("{raw} -> {url}")),
+                Err(e) => assert!(
+                    e.to_string().to_lowercase().contains("private"),
+                    "{raw} refused, but not with a readable reason: {e}"
+                ),
+            }
+        }
+        assert!(
+            accepted.is_empty(),
+            "these internal addresses were accepted as calendar feeds:\n{}",
+            accepted.join("\n")
+        );
+    }
+
+    // The other half: the check must not refuse the providers it exists for,
+    // nor public addresses that merely sit next to a private range.
+    #[test]
+    fn real_calendar_providers_and_neighbouring_public_addresses_are_accepted() {
+        for good in [
+            "https://calendar.google.com/calendar/ical/abc%40group.calendar.google.com/private-0123/basic.ics",
+            "webcal://p01-caldav.icloud.com/published/2/MTIzNDU2Nzg5",
+            "https://outlook.office365.com/owa/calendar/0123abcd@example.com/4567/calendar.ics",
+            "https://example.com:8443/cal.ics",
+            "http://8.8.8.8/cal.ics",
+            "http://172.32.0.1/cal.ics",
+            "http://100.128.0.1/cal.ics",
+            "http://11.0.0.1/cal.ics",
+            "http://[2606:4700:4700::1111]/cal.ics",
+            "http://localhost.example.com/cal.ics",
+        ] {
+            assert!(
+                normalise_feed_url(good).is_ok(),
+                "should accept {good}: {:?}",
+                normalise_feed_url(good)
+            );
+        }
+    }
+
+    // A row stored before the check existed (or written by anything other
+    // than `connect_ics`) must not be fetched by the hourly pass either -
+    // `fetch_feed` re-checks literal hosts itself, whatever client it is
+    // handed. `Client::new()` on purpose: this holds with no special client.
+    #[sqlx::test]
+    async fn a_stored_private_url_is_not_fetched_by_the_sync_pass(db: PgPool) {
+        let user = a_user(&db, "alice").await;
+        let internal = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(FEED))
+            .expect(0)
+            .mount(&internal)
+            .await;
+        let url = format!("{}/cal.ics", internal.uri());
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO external_calendars (id, user_id, provider, credential)
+             VALUES (gen_random_uuid(), $1, 'ics', $2) RETURNING id",
+        )
+        .bind(user)
+        .bind(&url)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+
+        sync_all(&db, &Client::new(), now()).await.unwrap();
+
+        assert_eq!(cached(&db, id).await, 0, "the internal feed was imported");
+        let error = last_error(&db, id).await.unwrap_or_default();
+        assert!(error.to_lowercase().contains("private"), "{error:?}");
+        // `internal` drops here and verifies `.expect(0)`.
+    }
+
+    // --- the seam: a feed client that enforces the address rule ----------
+    //
+    // ⚠️ These need API that does not exist yet (see the verifier report):
+    //
+    //   pub fn check_feed_ip(ip: std::net::IpAddr) -> Result<()>
+    //   pub enum AddressPolicy { PublicOnly, #[cfg(test)] AllowLoopback }
+    //   pub fn feed_client(
+    //       policy: AddressPolicy,
+    //       resolver: Option<Arc<dyn reqwest::dns::Resolve>>, // None = system DNS
+    //   ) -> Client
+    //
+    // `feed_client` wraps the resolver so every resolved address goes
+    // through the policy (refusing the name if *any* address fails), and
+    // installs a redirect policy that refuses any hop whose host is a
+    // literal non-public IP or a `localhost` name - under every policy,
+    // `AllowLoopback` included. `AllowLoopback` only relaxes what *DNS*
+    // returns, which is what lets wiremock on 127.0.0.1 stand in for a
+    // public host named `*.test`. Existing tests move to
+    // `test_feed_client()` + `feed_url(&server)` below.
+
+    /// Maps fixed names to fixed addresses. Never touches real DNS.
+    struct FakeDns(std::collections::HashMap<&'static str, Vec<std::net::IpAddr>>);
+
+    impl reqwest::dns::Resolve for FakeDns {
+        fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+            let found = self.0.get(name.as_str()).cloned();
+            let name = name.as_str().to_string();
+            Box::pin(async move {
+                match found {
+                    Some(ips) => Ok(Box::new(
+                        ips.into_iter().map(|ip| std::net::SocketAddr::new(ip, 0)),
+                    ) as reqwest::dns::Addrs),
+                    None => Err(format!("no such test host: {name}").into()),
+                }
+            })
+        }
+    }
+
+    fn fake_dns(entries: &[(&'static str, &[&str])]) -> std::sync::Arc<FakeDns> {
+        std::sync::Arc::new(FakeDns(
+            entries
+                .iter()
+                .map(|(name, ips)| (*name, ips.iter().map(|ip| ip.parse().unwrap()).collect()))
+                .collect(),
+        ))
+    }
+
+    /// The client every wiremock-backed test should use once the fix lands:
+    /// `*.test` names resolve to loopback, which `AllowLoopback` accepts.
+    fn test_feed_client() -> Client {
+        feed_client(
+            AddressPolicy::AllowLoopback,
+            Some(fake_dns(&[
+                ("calendar.test", &["127.0.0.1"]),
+                ("other.test", &["127.0.0.1"]),
+                ("localhost", &["127.0.0.1"]),
+            ])),
+        )
+    }
+
+    /// A wiremock server's URL under a name, since its literal 127.0.0.1 is
+    /// (rightly) refused by `normalise_feed_url` and `fetch_feed`.
+    fn feed_url(server: &MockServer) -> String {
+        format!("http://calendar.test:{}/cal.ics", server.address().port())
+    }
+
+    async fn never_reached() -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(FEED))
+            .expect(0)
+            .mount(&server)
+            .await;
+        server
+    }
+
+    /// Runs one sync and returns its error, insisting it is quick: a refused
+    /// address must be refused before connecting, not after a timeout.
+    async fn sync_error(db: &PgPool, http: &Client, url: &str) -> String {
+        let user = a_user(db, "alice").await;
+        let id = connect_ics(db, user, url, None).await.unwrap();
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            sync_one(db, http, id, url, now()),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("{url}: still fetching after 5s - it tried to connect"));
+        match outcome {
+            Ok(n) => panic!("{url}: synced {n} intervals from an internal address"),
+            Err(e) => e.to_string(),
+        }
+    }
+
+    #[test]
+    fn check_feed_ip_refuses_every_non_public_range() {
+        for ip in [
+            "127.0.0.1",
+            "127.255.255.254",
+            "0.0.0.0",
+            "0.255.255.255",
+            "10.0.0.1",
+            "172.16.0.1",
+            "172.31.255.255",
+            "192.168.0.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "100.127.255.255",
+            "192.0.0.1",
+            "192.0.2.1",
+            "198.18.0.1",
+            "198.19.255.255",
+            "198.51.100.1",
+            "203.0.113.1",
+            "224.0.0.1",
+            "239.255.255.255",
+            "240.0.0.1",
+            "255.255.255.255",
+            "::",
+            "::1",
+            "::ffff:127.0.0.1",
+            "::ffff:192.168.1.1",
+            "::127.0.0.1",
+            "64:ff9b::a00:1",
+            "2002:c0a8:101::",
+            "fc00::1",
+            "fdff:ffff::1",
+            "fe80::1",
+            "febf::1",
+            "ff02::1",
+            "2001:db8::1",
+        ] {
+            let parsed: std::net::IpAddr = ip.parse().unwrap();
+            let refused = check_feed_ip(parsed);
+            assert!(refused.is_err(), "{ip} should be refused");
+            assert!(
+                refused
+                    .unwrap_err()
+                    .to_string()
+                    .to_lowercase()
+                    .contains("private"),
+                "{ip}: refusal should be readable"
+            );
+        }
+        for ip in [
+            "8.8.8.8",
+            "1.1.1.1",
+            "172.32.0.1",
+            "100.128.0.1",
+            "11.0.0.1",
+            "2606:4700:4700::1111",
+            "2a00:1450:4007:80f::200e",
+        ] {
+            assert!(
+                check_feed_ip(ip.parse().unwrap()).is_ok(),
+                "{ip} is public and should be allowed"
+            );
+        }
+    }
+
+    // The case a URL check alone cannot catch: the pasted host is public and
+    // passes, then answers with a redirect into the network.
+    #[sqlx::test]
+    async fn a_redirect_to_a_private_address_is_not_followed(db: PgPool) {
+        let internal = never_reached().await;
+        let port = internal.address().port();
+        for target in [
+            format!("http://127.0.0.1:{port}/cal.ics"),
+            format!("http://localhost:{port}/cal.ics"),
+            format!("http://[::ffff:127.0.0.1]:{port}/cal.ics"),
+            format!("http://2130706433:{port}/cal.ics"),
+            "http://169.254.169.254/latest/meta-data/".to_string(),
+            "http://10.0.0.5/cal.ics".to_string(),
+            "http://[fd00::1]/cal.ics".to_string(),
+        ] {
+            let public = MockServer::start().await;
+            Mock::given(method("GET"))
+                .respond_with(ResponseTemplate::new(302).insert_header("Location", target.as_str()))
+                .mount(&public)
+                .await;
+
+            let error = sync_error(&db, &test_feed_client(), &feed_url(&public)).await;
+
+            assert!(
+                error.to_lowercase().contains("private"),
+                "redirect to {target}: {error}"
+            );
+        }
+    }
+
+    // Providers do redirect (Google and Outlook both bounce feed URLs), so
+    // the fix is a checked redirect, not no redirects at all.
+    #[sqlx::test]
+    async fn a_redirect_between_public_hosts_is_still_followed(db: PgPool) {
+        let landing = serving(FEED).await;
+        let public = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(302).insert_header(
+                "Location",
+                format!("http://other.test:{}/cal.ics", landing.address().port()).as_str(),
+            ))
+            .mount(&public)
+            .await;
+        let user = a_user(&db, "alice").await;
+        let url = feed_url(&public);
+        let id = connect_ics(&db, user, &url, None).await.unwrap();
+
+        let count = sync_one(&db, &test_feed_client(), id, &url, now())
+            .await
+            .unwrap();
+
+        assert_eq!(count, 1);
+    }
+
+    // DNS: a name passes the URL check, so the address it resolves to must
+    // be checked too - and connected to as checked, which is why this lives
+    // in the client's resolver rather than a lookup before the request
+    // (that would be a second, rebindable lookup).
+    #[sqlx::test]
+    async fn a_name_that_resolves_to_a_private_address_is_refused(db: PgPool) {
+        let internal = never_reached().await;
+        let port = internal.address().port();
+        let production_rules = feed_client(
+            AddressPolicy::PublicOnly,
+            Some(fake_dns(&[
+                ("sneaky.test", &["127.0.0.1"]),
+                ("mapped.test", &["::ffff:127.0.0.1"]),
+                ("metadata.test", &["169.254.169.254"]),
+                ("lan.test", &["192.168.1.1"]),
+                // Round-robin with one internal answer: refuse the name, do
+                // not quietly try the next address.
+                ("mixed.test", &["127.0.0.1", "8.8.8.8"]),
+            ])),
+        );
+
+        for name in [
+            "sneaky.test",
+            "mapped.test",
+            "metadata.test",
+            "lan.test",
+            "mixed.test",
+        ] {
+            let url = format!("http://{name}:{port}/cal.ics");
+            let error = sync_error(&db, &production_rules, &url).await;
+            assert!(error.to_lowercase().contains("private"), "{name}: {error}");
+        }
+    }
+
+    // The production client, system DNS and no test resolver: `localhost`
+    // reaching the fetch (here bypassing `connect_ics`, as a stored row
+    // would) is still refused at resolution.
+    #[sqlx::test]
+    async fn the_production_feed_client_refuses_names_that_resolve_to_loopback(db: PgPool) {
+        let internal = never_reached().await;
+        let url = format!("http://localhost:{}/cal.ics", internal.address().port());
+        let user = a_user(&db, "alice").await;
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO external_calendars (id, user_id, provider, credential)
+             VALUES (gen_random_uuid(), $1, 'ics', $2) RETURNING id",
+        )
+        .bind(user)
+        .bind(&url)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            sync_one(
+                &db,
+                &feed_client(AddressPolicy::PublicOnly, None),
+                id,
+                &url,
+                now(),
+            ),
+        )
+        .await
+        .expect("still fetching after 5s")
+        .expect_err("fetched a loopback feed");
+
+        assert!(
+            error.to_string().to_lowercase().contains("private"),
+            "{error}"
+        );
+    }
 }

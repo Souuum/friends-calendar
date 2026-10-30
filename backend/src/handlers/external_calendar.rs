@@ -208,4 +208,149 @@ mod tests {
         assert!(error.contains("took longer than 30 seconds"), "{json}");
         assert!(json[0]["last_synced_at"].is_null(), "{json}");
     }
+
+    // --- private addresses (verifier repro) -------------------------------
+    //
+    // ⚠️ The connect form is a fetch-anything-for-me button: the server GETs
+    // the pasted URL inline and reports the outcome in `last_error`. These
+    // pin that an internal address is refused up front - 400, no row, no
+    // request - and that a redirect cannot reach one either.
+
+    async fn signed_in(db: &PgPool) -> (axum::Router, String) {
+        let user = create_or_update_user(
+            db,
+            crate::models::DiscordUser {
+                id: "me-discord".into(),
+                username: "me".into(),
+                discriminator: "0".into(),
+                avatar: None,
+                email: None,
+            },
+        )
+        .await
+        .unwrap();
+        let state = AppState::for_test(db.clone(), "http://unused.invalid".to_string());
+        let token = generate_jwt(&user.discord_id, &state.jwt_secret).unwrap();
+        (crate::build_router(state), token)
+    }
+
+    async fn connect(app: axum::Router, token: &str, url: &str) -> (StatusCode, Value) {
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            app.oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/calendar/external")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(json!({ "url": url }).to_string()))
+                    .unwrap(),
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("connecting {url} was still fetching after 10s"))
+        .unwrap();
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+    }
+
+    #[sqlx::test]
+    async fn connecting_a_private_address_is_refused_and_nothing_is_fetched_or_stored(db: PgPool) {
+        use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+        // Stands in for an internal service: anything reaching it is the bug.
+        let internal = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART:20260302T090000Z\r\nDTEND:20260302T100000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+            ))
+            .expect(0)
+            .mount(&internal)
+            .await;
+        let port = internal.address().port();
+        let (app, token) = signed_in(&db).await;
+
+        for url in [
+            format!("{}/cal.ics", internal.uri()),
+            format!("http://localhost:{port}/cal.ics"),
+            format!("http://2130706433:{port}/cal.ics"),
+            format!("http://[::ffff:127.0.0.1]:{port}/cal.ics"),
+            "http://169.254.169.254/latest/meta-data/".to_string(),
+            "http://10.0.0.5/cal.ics".to_string(),
+            "http://192.168.1.1/cal.ics".to_string(),
+            "http://[::1]:5432/".to_string(),
+        ] {
+            let (status, body) = connect(app.clone(), &token, &url).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{url}: {body}");
+            let message = body["error"].as_str().unwrap_or_default();
+            assert!(
+                message.to_lowercase().contains("private"),
+                "{url}: the 400 should say why: {body}"
+            );
+        }
+
+        let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM external_calendars")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(rows, 0, "a refused URL must not leave a connection behind");
+        // `internal` drops here and verifies `.expect(0)`.
+    }
+
+    // ⚠️ Needs the seam described in the verifier report:
+    // `AppState::for_test`'s feed client resolves any `*.test` name to
+    // 127.0.0.1 (a fake resolver, under the test-only loopback allowance),
+    // and the connect handler fetches with that feed client, not the general
+    // `http_client`. The redirect *target* is a literal private address,
+    // which no policy - test or production - may follow.
+    #[sqlx::test]
+    async fn connecting_a_feed_that_redirects_to_a_private_address_does_not_follow_it(db: PgPool) {
+        use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+        let internal = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART:20260302T090000Z\r\nDTEND:20260302T100000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+            ))
+            .expect(0)
+            .mount(&internal)
+            .await;
+        let (app, token) = signed_in(&db).await;
+
+        for (i, target) in [
+            format!("{}/cal.ics", internal.uri()),
+            "http://169.254.169.254/latest/meta-data/".to_string(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let public = MockServer::start().await;
+            Mock::given(method("GET"))
+                .respond_with(ResponseTemplate::new(302).insert_header("Location", target.as_str()))
+                .mount(&public)
+                .await;
+            let url = format!(
+                "http://calendar.test:{}/cal.ics?n={i}",
+                public.address().port()
+            );
+
+            let (status, body) = connect(app.clone(), &token, &url).await;
+
+            // The connection itself is fine (the pasted host is public); its
+            // first sync must fail, and say why, on every row so far.
+            assert_eq!(status, StatusCode::OK, "{url}: {body}");
+            let rows = body.as_array().cloned().unwrap_or_default();
+            assert_eq!(rows.len(), i + 1, "{body}");
+            for row in rows {
+                let error = row["last_error"].as_str().unwrap_or_default();
+                assert!(
+                    error.to_lowercase().contains("private"),
+                    "redirect to {target} should be refused as private: {body}"
+                );
+                assert!(row["last_synced_at"].is_null(), "{body}");
+            }
+        }
+        // `internal` drops here and verifies `.expect(0)`.
+    }
 }
