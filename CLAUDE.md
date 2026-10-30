@@ -1253,11 +1253,19 @@ sync) is in place for them.
   what is considered, not what is emitted: a skipped occurrence never
   reaches the 20,000-block cap, so 20,000 series sharing a UID with every
   occurrence overridden ran ~19 minutes in a 4.5 MB feed and tripped
-  nothing (now refused in ~0.13 s). Every unit is O(1) because overrides
-  and exdates are hash sets keyed by instant (or day, for all-day values) -
-  they were scanned per occurrence. The budget has to bound CPU itself:
-  the parse runs in `spawn_blocking`, which a timeout cannot cancel. A heavy
-  real work calendar spends ~61k. Smaller belts on per-feed cost that isn't
+  nothing (now refused in ~0.13 s). Units are O(1) because overrides and
+  exdates are hash sets keyed by instant (or day, for all-day values) -
+  they were scanned per occurrence - and because `BY*` list scans are
+  charged **per entry**. ⚠️ They weren't, once: a period cost one unit
+  however long its `BYDAY`/`BYMONTHDAY`, so `BYDAY=MO,MO,…` across 4.8 MB
+  ran 527 s, and MONTHLY with both lists was quadratic. `parse_rrule` now
+  also validates, sorts and dedups both lists (BYDAY ≤ 7×11, BYMONTHDAY
+  ≤ 62); a list given with **no** valid entry matches nothing (it used to
+  mean "no restriction" for unparseable entries). The budget has to bound
+  CPU itself: the parse runs in `spawn_blocking`, which a timeout cannot
+  cancel. A heavy real work calendar spends ~100k. Concurrent syncs of one
+  calendar are serialised by `SELECT … FOR UPDATE` on its row, or both
+  windows survived. Smaller belts on per-feed cost that isn't
   occurrences: 32 observances kept per `VTIMEZONE` (the latest onsets),
   256 distinct `TZID`s resolved (later ones read in the default zone), 16
   cities tried per Outlook display name, and logged TZIDs cut to 64 chars.

@@ -333,6 +333,15 @@ async fn sync_one_with(
     let intervals = run_isolated(move || parse(&body, from, to)).await?;
 
     let mut tx = db.begin().await?;
+    // ⚠️ One writer per calendar. Two syncs at once (the connect request's
+    // inline sync overlapping the hourly pass) each DELETE then INSERT; under
+    // READ COMMITTED the second DELETE cannot see the first's uncommitted
+    // rows, so both windows survived. The row lock serialises them, and the
+    // second DELETE then sees the first's committed rows.
+    sqlx::query("SELECT 1 FROM external_calendars WHERE id = $1 FOR UPDATE")
+        .bind(calendar_id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM external_busy WHERE calendar_id = $1")
         .bind(calendar_id)
         .execute(&mut *tx)
@@ -1127,15 +1136,11 @@ mod tests {
     // READ COMMITTED the second DELETE cannot see the first's uncommitted
     // INSERT, so both sets can survive. Asserts the window is never doubled.
     //
-    // FAILS on 6b9b591 ("left 4 copies of one block"): pre-existing, not
+    // FAILED on 6b9b591 ("left 4 copies of one block"): pre-existing, not
     // introduced by the concurrent `sync_all` (which never syncs one id
-    // twice), and self-healing at the next sync; the calendar merges
-    // overlapping bands and availability takes a union, so nothing visible
-    // changes. Ignored so it doesn't redden CI for a nit; a per-calendar
-    // lock (`SELECT ... FOR UPDATE` on the external_calendars row inside the
-    // transaction) would make it pass.
+    // twice). Fixed by locking the external_calendars row at the start of
+    // the write transaction (`SELECT ... FOR UPDATE`).
     #[sqlx::test]
-    #[ignore = "verifier repro (nit, pre-existing): concurrent re-syncs duplicate the window"]
     async fn concurrent_syncs_of_one_calendar_do_not_double_its_window(db: PgPool) {
         let user = a_user(&db, "me").await;
         let server = serving(FEED).await;

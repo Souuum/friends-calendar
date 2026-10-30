@@ -38,8 +38,10 @@
 //! `DTSTART`, so a stand-up created years ago costs the same as one created
 //! last week; only a `COUNT` rule is walked from the start, because `COUNT`
 //! is counted from there. A hard cap on periods walked per rule, and a
-//! feed-wide budget on every period, date and occurrence considered
-//! (`MAX_WORK_PER_FEED`), are a second belt, and a feed producing more than
+//! feed-wide budget on every period, `BY*` list entry scanned, date and
+//! occurrence considered (`MAX_WORK_PER_FEED`), are a second belt - the
+//! `BY*` lists themselves are deduplicated and validated down to a small
+//! constant size first - and a feed producing more than
 //! `MAX_INTERVALS_PER_FEED` blocks is refused rather than truncated.
 //!
 //! ⚠️ The feed is any URL somebody pasted. Every piece of arithmetic on its
@@ -679,9 +681,61 @@ struct Rrule {
     count: Option<u32>,
     /// Kept raw: a floating UNTIL is read in DTSTART's zone.
     until: Option<String>,
+    /// Sorted, deduplicated, and only entries this parser can honour - at
+    /// most 7 x 11 (see [`parse_rrule`]).
     byday: Vec<(Option<i32>, Weekday)>,
+    /// Sorted, deduplicated, `±1..=31` - at most 62.
     bymonthday: Vec<i32>,
     wkst: Weekday,
+    /// A `BY*` list was given and none of its entries survived validation.
+    /// The rule then matches no date at all - not "no restriction", which
+    /// is what an empty list means.
+    matches_nothing: bool,
+}
+
+/// Largest `|ordinal|` a monthly `BYDAY` can name: no month has six of any
+/// weekday. (RFC 5545 allows up to 53 on a yearly rule, numbering weeks of
+/// the year; this parser reads yearly rules within DTSTART's month, where
+/// anything past 5 already matched nothing.)
+const MAX_BYDAY_ORDINAL: i32 = 5;
+
+/// Validates, sorts and deduplicates a rule's `BY*` lists, so each has a
+/// small constant maximum size whatever the feed wrote.
+///
+/// ⚠️ The lists are scanned once per period or per candidate date, and a
+/// `COUNT` rule is walked from DTSTART: `BYDAY=MO,MO,…` repeated across a
+/// 4.8 MB feed took 527 s, and MONTHLY with both lists long was quadratic.
+/// Each list's domain is tiny, so a long one is only ever repetition or
+/// garbage.
+fn normalise_by_lists(rule: &mut Rrule, had_byday: bool, had_bymonthday: bool) {
+    let ordinals_matter = matches!(rule.freq, Freq::Monthly | Freq::Yearly);
+    rule.byday = std::mem::take(&mut rule.byday)
+        .into_iter()
+        .filter_map(|(ordinal, weekday)| match ordinal {
+            // Daily and weekly rules ignore an ordinal (RFC 5545 forbids
+            // one there), so dropping it keeps what they always did.
+            _ if !ordinals_matter => Some((None, weekday)),
+            None => Some((None, weekday)),
+            // A range check, not `abs()`: `i32::MIN.abs()` overflows (the
+            // fuzzer found it).
+            Some(n) if n != 0 && (-MAX_BYDAY_ORDINAL..=MAX_BYDAY_ORDINAL).contains(&n) => {
+                Some((Some(n), weekday))
+            }
+            // 0 is invalid; past ±5 there is no such weekday in a month.
+            Some(_) => None,
+        })
+        .collect();
+    rule.byday
+        .sort_by_key(|(ordinal, weekday)| (*ordinal, weekday.num_days_from_monday()));
+    rule.byday.dedup();
+
+    rule.bymonthday
+        .retain(|d| *d != 0 && (-31..=31).contains(d));
+    rule.bymonthday.sort_unstable();
+    rule.bymonthday.dedup();
+
+    rule.matches_nothing =
+        (had_byday && rule.byday.is_empty()) || (had_bymonthday && rule.bymonthday.is_empty());
 }
 
 fn parse_rrule(value: &str) -> Option<Rrule> {
@@ -691,6 +745,7 @@ fn parse_rrule(value: &str) -> Option<Rrule> {
     let mut until = None;
     let mut byday = Vec::new();
     let mut bymonthday = Vec::new();
+    let (mut had_byday, mut had_bymonthday) = (false, false);
     let mut wkst = Weekday::Mon;
 
     for part in value.split(';') {
@@ -708,14 +763,20 @@ fn parse_rrule(value: &str) -> Option<Rrule> {
             "INTERVAL" => interval = v.parse().unwrap_or(1),
             "COUNT" => count = v.parse().ok(),
             "UNTIL" => until = Some(v.to_string()),
-            "BYDAY" => byday = v.split(',').filter_map(parse_byday).collect(),
-            "BYMONTHDAY" => bymonthday = v.split(',').filter_map(|d| d.parse().ok()).collect(),
+            "BYDAY" => {
+                had_byday = true;
+                byday = v.split(',').filter_map(parse_byday).collect();
+            }
+            "BYMONTHDAY" => {
+                had_bymonthday = true;
+                bymonthday = v.split(',').filter_map(|d| d.parse().ok()).collect();
+            }
             "WKST" => wkst = weekday_from_code(v).unwrap_or(Weekday::Mon),
             _ => {}
         }
     }
 
-    Some(Rrule {
+    let mut rule = Rrule {
         freq: freq?,
         interval: interval.max(1),
         count,
@@ -723,7 +784,10 @@ fn parse_rrule(value: &str) -> Option<Rrule> {
         byday,
         bymonthday,
         wkst,
-    })
+        matches_nothing: false,
+    };
+    normalise_by_lists(&mut rule, had_byday, had_bymonthday);
+    Some(rule)
 }
 
 fn last_day_of_month(year: i32, month: u32) -> Option<NaiveDate> {
@@ -904,7 +968,8 @@ fn until_instant(raw: &str, zone: &Zone) -> Option<DateTime<Utc>> {
 /// itself. `MAX_PERIODS` is a last belt for a pathological rule.
 ///
 /// `budget` is shared by the whole feed (see [`MAX_WORK_PER_FEED`]) and is
-/// charged for every period walked and every candidate date in it. The
+/// charged for every period walked, every `BY*` entry scanned to build it,
+/// and every candidate date in it. The
 /// per-rule cap alone still let a feed of tens of thousands of `COUNT`
 /// rules starting in year 1 walk billions of periods; running out of budget
 /// fails the whole feed with [`TooComplex`] rather than quietly importing
@@ -918,6 +983,11 @@ fn expand(
 ) -> Result<Vec<(NaiveDateTime, DateTime<Utc>)>, TooComplex> {
     const MAX_PERIODS: i64 = 100_000;
 
+    // Same as before the lists were validated: a list of nothing but
+    // invalid entries never matched a date, DTSTART included.
+    if rule.matches_nothing {
+        return Ok(Vec::new());
+    }
     if rule.freq == Freq::Other {
         return Ok(start
             .utc()
@@ -951,10 +1021,11 @@ fn expand(
         None => periods_before(rule, d0, week0, window_start.naive_utc().date()),
     };
 
+    let per_period = period_cost(rule);
     let mut out = Vec::new();
     let mut emitted = 0u32;
     for k in first_k..first_k.saturating_add(MAX_PERIODS) {
-        spend(budget)?;
+        spend_n(budget, per_period)?;
         let Some((period_start, dates)) = period(rule, d0, week0, k) else {
             break;
         };
@@ -991,21 +1062,53 @@ fn expand(
 struct TooComplex;
 
 /// Units of work one feed may cost in total: every recurrence period walked,
-/// every candidate date inside one, and every occurrence considered for
-/// output - including the ones an `EXDATE` or `RECURRENCE-ID` then skips.
+/// every `BY*` list entry scanned to build it (see [`period_cost`]), every
+/// candidate date inside one, and every occurrence considered for output -
+/// including the ones an `EXDATE` or `RECURRENCE-ID` then skips.
 ///
 /// ⚠️ It must count what is *considered*, not what is emitted. A skipped
 /// occurrence never reaches [`MAX_INTERVALS_PER_FEED`], so a budget charged
 /// only on output can be starved: thousands of series whose every
-/// occurrence is cancelled cost unbounded time and trip nothing. Every unit
-/// here is O(1) (the override lookups are hashed - see [`Slots`]), so this
-/// bounds the parse's CPU, which matters because a `spawn_blocking` parse
-/// cannot be cancelled. A heavy real work calendar spends ~61k.
+/// occurrence is cancelled cost unbounded time and trip nothing. Each unit
+/// is O(1) (the override lookups are hashed - see [`Slots`]; list scans are
+/// charged per entry), so this bounds the parse's CPU, which matters because
+/// a `spawn_blocking` parse cannot be cancelled. A heavy real work calendar
+/// spends ~100k.
 const MAX_WORK_PER_FEED: u64 = 5_000_000;
 
 fn spend(budget: &mut u64) -> Result<(), TooComplex> {
-    *budget = budget.checked_sub(1).ok_or(TooComplex)?;
+    spend_n(budget, 1)
+}
+
+fn spend_n(budget: &mut u64, units: u64) -> Result<(), TooComplex> {
+    *budget = budget.checked_sub(units).ok_or(TooComplex)?;
     Ok(())
+}
+
+/// An upper bound on the `BY*` list entries [`period`] scans to build one
+/// period, plus one for the period itself.
+///
+/// ⚠️ Belt and braces with [`normalise_by_lists`], which already bounds the
+/// lists: without this, a period cost the budget one unit however long its
+/// lists were, and that gap is how `BYDAY=MO,MO,…` held the parser for
+/// minutes. Charged per entry, a list that ever escapes validation runs the
+/// budget out instead.
+fn period_cost(rule: &Rrule) -> u64 {
+    let byday = rule.byday.len() as u64;
+    let bymonthday = rule.bymonthday.len() as u64;
+    let scanned = match rule.freq {
+        // One `any` over BYDAY, one over BYMONTHDAY, for the one date.
+        Freq::Daily => byday.saturating_add(bymonthday),
+        Freq::Weekly => byday,
+        // Up to five candidates per BYDAY entry, each checked against the
+        // whole BYMONTHDAY list; or every day of the month checked against it.
+        Freq::Monthly | Freq::Yearly if byday > 0 => byday
+            .saturating_mul(5)
+            .saturating_mul(bymonthday.saturating_add(1)),
+        Freq::Monthly | Freq::Yearly => bymonthday.saturating_mul(31),
+        Freq::Other => 0,
+    };
+    scanned.saturating_add(1)
 }
 
 /// Busy intervals one feed may produce inside the sync window.
@@ -2090,6 +2193,134 @@ BEGIN:VEVENT\nDTSTART;TZID=Odd:20260302T090000\nDTEND;TZID=Odd:20260302T100000\n
     fn a_huge_monthly_interval_does_not_panic() {
         does_not_panic(
             "BEGIN:VEVENT\nDTSTART:20260302T090000Z\nDTEND:20260302T100000Z\nRRULE:FREQ=MONTHLY;INTERVAL=9223372036854775807\nEND:VEVENT",
+        );
+    }
+
+    // --- BY* lists: validated, deduplicated, bounded ------------------------
+
+    fn rule(value: &str) -> Rrule {
+        parse_rrule(value).expect("a rule")
+    }
+
+    #[test]
+    fn by_lists_are_bounded_whatever_the_feed_writes() {
+        let days = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
+        // Every ordinal from -10 to 10 on every weekday, plus the bare
+        // weekdays and `i32::MIN`, repeated.
+        let byday: Vec<String> = (0..100)
+            .flat_map(|_| (-10..=10).flat_map(|n: i32| days.iter().map(move |d| format!("{n}{d}"))))
+            .chain(days.iter().map(|d| d.to_string()))
+            .chain(days.iter().map(|d| format!("{}{d}", i32::MIN)))
+            .collect();
+        let bymonthday: Vec<String> = (0..20_000)
+            .map(|i| (i % 201 - 100).to_string())
+            .chain([i32::MIN.to_string()])
+            .collect();
+        let value = format!(
+            "FREQ=MONTHLY;BYDAY={};BYMONTHDAY={}",
+            byday.join(","),
+            bymonthday.join(",")
+        );
+
+        let r = rule(&value);
+
+        // 7 weekdays x (no ordinal, ±1..=5); ±1..=31.
+        assert_eq!(r.byday.len(), 7 * 11);
+        assert_eq!(r.bymonthday.len(), 62);
+        assert!(!r.matches_nothing);
+        assert!(r.byday.windows(2).all(|w| w[0] != w[1]));
+    }
+
+    #[test]
+    fn daily_and_weekly_rules_drop_ordinals_they_never_used() {
+        let r = rule("FREQ=WEEKLY;BYDAY=1MO,MO,-3MO,99WE");
+        assert_eq!(r.byday, vec![(None, Weekday::Mon), (None, Weekday::Wed)]);
+    }
+
+    #[test]
+    fn repeated_by_list_entries_expand_like_one() {
+        let once = parse(
+            "BEGIN:VEVENT\nDTSTART:20260302T090000Z\nDTEND:20260302T100000Z\nRRULE:FREQ=WEEKLY;BYDAY=MO,WE;COUNT=5\nEND:VEVENT\n\
+BEGIN:VEVENT\nDTSTART:20260113T090000Z\nDTEND:20260113T100000Z\nRRULE:FREQ=MONTHLY;BYDAY=2TU;BYMONTHDAY=8,9,10,11,12,13,14\nEND:VEVENT",
+        );
+        let repeated = parse(
+            "BEGIN:VEVENT\nDTSTART:20260302T090000Z\nDTEND:20260302T100000Z\nRRULE:FREQ=WEEKLY;BYDAY=WE,MO,MO,WE,MO;COUNT=5\nEND:VEVENT\n\
+BEGIN:VEVENT\nDTSTART:20260113T090000Z\nDTEND:20260113T100000Z\nRRULE:FREQ=MONTHLY;BYDAY=2TU,2TU,6TU;BYMONTHDAY=14,8,9,10,11,12,13,14,8,99\nEND:VEVENT",
+        );
+
+        assert_eq!(once.len(), 6, "{once:?}");
+        assert_eq!(repeated, once);
+    }
+
+    // RFC 5545: a BY* rule part restricts the set. A list given but holding
+    // no valid entry restricts it to nothing - it is not the same as leaving
+    // the part out, which would mean "every day" instead. Rules of nothing
+    // but out-of-range values already matched no date before the lists were
+    // validated; unparseable ones (`BYDAY=XX`) used to be read as "no
+    // restriction" and now agree with them.
+    #[test]
+    fn a_by_list_with_no_valid_entry_matches_nothing() {
+        for rrule in [
+            "FREQ=WEEKLY;BYDAY=XX",
+            "FREQ=WEEKLY;BYDAY=",
+            "FREQ=DAILY;BYMONTHDAY=0,99,-32",
+            "FREQ=MONTHLY;BYDAY=0MO,6MO,-6SU",
+            "FREQ=YEARLY;BYDAY=MO;BYMONTHDAY=40",
+            "FREQ=HOURLY;BYDAY=XX",
+        ] {
+            let out = parse(&format!(
+                "BEGIN:VEVENT\nDTSTART:20260302T090000Z\nDTEND:20260302T100000Z\nRRULE:{rrule}\nEND:VEVENT"
+            ));
+            assert!(out.is_empty(), "{rrule} -> {out:?}");
+        }
+    }
+
+    #[test]
+    fn an_invalid_entry_beside_a_valid_one_is_just_dropped() {
+        let out = parse(
+            "BEGIN:VEVENT\nDTSTART:20260310T090000Z\nDTEND:20260310T100000Z\nRRULE:FREQ=MONTHLY;BYDAY=6MO,2TU,XX;BYMONTHDAY=0,10\nEND:VEVENT",
+        );
+        assert_eq!(starts(&out), vec![at(2026, 3, 10, 9)]);
+    }
+
+    // Belt and braces: each period is charged for the list entries it scans,
+    // so a list that ever escapes validation still runs the budget out.
+    #[test]
+    fn a_period_is_charged_for_every_list_entry_it_scans() {
+        assert_eq!(period_cost(&rule("FREQ=WEEKLY")), 1);
+        assert_eq!(period_cost(&rule("FREQ=WEEKLY;BYDAY=MO,TU,WE")), 4);
+        assert_eq!(period_cost(&rule("FREQ=DAILY;BYDAY=MO;BYMONTHDAY=1,2")), 4);
+        assert_eq!(period_cost(&rule("FREQ=MONTHLY;BYMONTHDAY=1,-1")), 63);
+        // 2 entries x up to 5 candidates x (1 + 3 monthday checks).
+        assert_eq!(
+            period_cost(&rule("FREQ=MONTHLY;BYDAY=MO,TU;BYMONTHDAY=1,2,3")),
+            41
+        );
+
+        // An endless weekly rule over one month walks ~7 periods. A list a
+        // quarter of the budget long costs more than the budget once charged
+        // per entry, but finishes (cheaply, wrongly) if only periods count.
+        let mut unvalidated = rule("FREQ=WEEKLY");
+        unvalidated.byday = vec![(None, Weekday::Mon); MAX_WORK_PER_FEED as usize / 4 + 1];
+        let mut budget = MAX_WORK_PER_FEED;
+        let start = IcsTime {
+            local: NaiveDate::from_ymd_opt(2026, 3, 2)
+                .unwrap()
+                .and_hms_opt(9, 0, 0)
+                .unwrap(),
+            zone: Zone::Utc,
+            all_day: false,
+        };
+        assert!(
+            expand(
+                &unvalidated,
+                &start,
+                at(2026, 3, 1, 0),
+                at(2026, 4, 1, 0),
+                &mut budget
+            )
+            .is_err(),
+            "a list a quarter of the budget long must exhaust it within a month"
         );
     }
 
