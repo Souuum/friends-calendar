@@ -2275,6 +2275,101 @@ BEGIN:VEVENT\nDTSTART:20260113T090000Z\nDTEND:20260113T100000Z\nRRULE:FREQ=MONTH
         }
     }
 
+    // Verifier (round 4): validating the lists must not drop a spelling real
+    // feeds use. Lowercase codes, a space after the comma, an explicit `+`
+    // ordinal, Outlook's BYSETPOS rules, negative month days, a VTIMEZONE-
+    // style yearly rule and an ordinal on a daily rule (ignored, as before).
+    #[test]
+    fn real_world_by_list_spellings_survive_validation() {
+        let cases: &[(&str, &str, usize, Option<DateTime<Utc>>)] = &[
+            (
+                "20260302",
+                "FREQ=WEEKLY;BYDAY=mo,we",
+                9,
+                Some(at(2026, 3, 2, 9)),
+            ),
+            (
+                "20260302",
+                "FREQ=WEEKLY;BYDAY=MO, WE",
+                9,
+                Some(at(2026, 3, 2, 9)),
+            ),
+            (
+                "20260302",
+                "FREQ=WEEKLY;BYDAY= MO ,WE ",
+                9,
+                Some(at(2026, 3, 2, 9)),
+            ),
+            (
+                "20260302",
+                "FREQ=MONTHLY;BYDAY=+1MO",
+                1,
+                Some(at(2026, 3, 2, 9)),
+            ),
+            (
+                "20260302",
+                "FREQ=MONTHLY;BYDAY=-1FR",
+                1,
+                Some(at(2026, 3, 27, 9)),
+            ),
+            (
+                "20260302",
+                "FREQ=MONTHLY;BYDAY=+2tu",
+                1,
+                Some(at(2026, 3, 10, 9)),
+            ),
+            (
+                "20260302",
+                "FREQ=MONTHLY;BYMONTHDAY=-1",
+                1,
+                Some(at(2026, 3, 31, 9)),
+            ),
+            (
+                "20260302",
+                "FREQ=MONTHLY;BYMONTHDAY=+15",
+                1,
+                Some(at(2026, 3, 15, 9)),
+            ),
+            (
+                "20260302",
+                "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1",
+                22,
+                Some(at(2026, 3, 2, 9)),
+            ),
+            (
+                "20260302",
+                "FREQ=WEEKLY;WKST=SU;INTERVAL=1;BYDAY=SU,MO,TU,WE,TH,FR,SA",
+                30,
+                Some(at(2026, 3, 2, 9)),
+            ),
+            (
+                "20250330",
+                "FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU",
+                1,
+                Some(at(2026, 3, 29, 9)),
+            ),
+            (
+                "20260302",
+                "FREQ=DAILY;BYDAY=1MO",
+                5,
+                Some(at(2026, 3, 2, 9)),
+            ),
+            (
+                "20260302",
+                "FREQ=WEEKLY;BYDAY=-1MO",
+                5,
+                Some(at(2026, 3, 2, 9)),
+            ),
+        ];
+        for (date, rrule, n, first) in cases {
+            let out = parse(&format!(
+                "BEGIN:VEVENT\nDTSTART:{date}T090000Z\nDTEND:{date}T100000Z\nRRULE:{rrule}\nEND:VEVENT"
+            ));
+            assert_eq!(out.len(), *n, "{rrule} -> {:?}", starts(&out));
+            assert_eq!(starts(&out).first(), first.as_ref(), "{rrule}");
+        }
+    }
+
     #[test]
     fn an_invalid_entry_beside_a_valid_one_is_just_dropped() {
         let out = parse(
@@ -2741,6 +2836,63 @@ mod fuzz {
         "END:VTIMEZONE\n",
     ];
 
+    /// Round 4: long, duplicated, mixed-validity `BY*` lists - the class
+    /// that escaped the work budget in round 3. Lengths are mostly modest
+    /// (so many cases run) with an occasional very long one.
+    fn by_list_len(r: &mut Rng) -> usize {
+        match r.below(20) {
+            0 => 20_000 + r.below(60_000),
+            1..=4 => 500 + r.below(5_000),
+            _ => 1 + r.below(200),
+        }
+    }
+
+    fn long_byday(r: &mut Rng) -> String {
+        const CODES: &[&str] = &[
+            "MO", "TU", "WE", "TH", "FR", "SA", "SU", "mo", "Su", "XX", "",
+        ];
+        let len = by_list_len(r);
+        let repeat_one = r.chance(30);
+        let fixed = format!("{}{}", 1 + r.below(5), r.pick(CODES));
+        (0..len)
+            .map(|_| {
+                if repeat_one {
+                    return fixed.clone();
+                }
+                let ordinal = match r.below(6) {
+                    0 | 1 => String::new(),
+                    2 => format!("{}", r.below(12) as i64 - 6),
+                    3 => format!("+{}", r.below(7)),
+                    4 => format!("{}", (r.next() as i64)),
+                    _ => format!("{}", r.below(60) as i64 - 30),
+                };
+                let ws = if r.chance(5) { " " } else { "" };
+                format!("{ws}{ordinal}{}{ws}", r.pick(CODES))
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    fn long_bymonthday(r: &mut Rng) -> String {
+        let len = by_list_len(r);
+        let repeat_one = r.chance(30);
+        let fixed = (r.below(63) as i64 - 31).to_string();
+        (0..len)
+            .map(|_| {
+                if repeat_one {
+                    return fixed.clone();
+                }
+                match r.below(8) {
+                    0 => (r.next() as i32).to_string(),
+                    1 => "é".to_string(),
+                    2 => format!("+{}", r.below(32)),
+                    _ => (r.below(63) as i64 - 31).to_string(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
     fn rrule(r: &mut Rng) -> String {
         let mut parts = vec![format!("FREQ={}", r.pick(FREQS))];
         for _ in 0..r.below(6) {
@@ -2748,7 +2900,9 @@ mod fuzz {
                 0 => format!("INTERVAL={}", r.pick(INTERVALS)),
                 1 => format!("COUNT={}", r.pick(COUNTS)),
                 2 => format!("UNTIL={}", r.pick(DATES)),
+                3 if r.chance(25) => format!("BYDAY={}", long_byday(r)),
                 3 => format!("BYDAY={}", r.pick(BYDAYS)),
+                4 if r.chance(25) => format!("BYMONTHDAY={}", long_bymonthday(r)),
                 4 => format!("BYMONTHDAY={}", r.pick(MONTHDAYS)),
                 5 => format!("BYMONTH={}", r.pick(MONTHS)),
                 6 => format!("WKST={}", r.pick(WKSTS)),
@@ -3401,6 +3555,82 @@ END:VTIMEZONE\r\n",
             }
             let (took, out) = time_parse(&feed);
             eprintln!("N={n} {name}: {} bytes, {took:?} -> {out:?}", feed.len());
+        }
+    }
+
+    // --- Round 4: the largest lists that survive validation ----------------
+    //
+    // Normalisation caps BYDAY at 7 x 11 and BYMONTHDAY at 62, so the worst a
+    // feed can do now is maximal *valid* lists, which nothing dedups away.
+    // Each case below spends the whole feed budget; the time it takes to do
+    // so is the real worst-case cost of a budget unit.
+    fn maximal_lists_feed(freq: &str, events: usize, count_from_year_1: bool) -> String {
+        let days = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
+        let byday: Vec<String> = days
+            .iter()
+            .flat_map(|d| {
+                std::iter::once(d.to_string())
+                    .chain((1..=5).flat_map(move |n| [format!("+{n}{d}"), format!("-{n}{d}")]))
+            })
+            .collect();
+        let bymonthday: Vec<String> = (1..=31)
+            .flat_map(|d| [d.to_string(), format!("-{d}")])
+            .collect();
+        let (start, count) = if count_from_year_1 {
+            ("00010105T090000Z", "COUNT=4000000000;")
+        } else {
+            ("20260105T090000Z", "")
+        };
+        let mut s = String::from("BEGIN:VCALENDAR\r\n");
+        for i in 0..events {
+            s.push_str(&format!(
+                "BEGIN:VEVENT\r\nUID:m{i}\r\nDTSTART:{start}\r\nDTEND:{}\r\nRRULE:FREQ={freq};{count}BYDAY={};BYMONTHDAY={}\r\nEND:VEVENT\r\n",
+                start.replacen("T09", "T10", 1),
+                byday.join(","),
+                bymonthday.join(","),
+            ));
+        }
+        s.push_str("END:VCALENDAR\r\n");
+        s
+    }
+
+    #[test]
+    fn maximal_valid_by_lists_stay_cheap() {
+        let mut slowest = StdDuration::ZERO;
+        for freq in ["DAILY", "WEEKLY", "MONTHLY", "YEARLY"] {
+            for (events, from_year_1) in [(1, true), (2_000, false)] {
+                let feed = maximal_lists_feed(freq, events, from_year_1);
+                assert!(
+                    feed.len() < 5 * 1024 * 1024,
+                    "{freq} {events}: {}",
+                    feed.len()
+                );
+                let (took, out) = time_parse(&feed);
+                eprintln!(
+                    "maximal lists {freq} x{events} (from year 1: {from_year_1}): {} bytes, {took:?} -> {out:?}",
+                    feed.len()
+                );
+                slowest = slowest.max(took);
+            }
+        }
+        // Generous for an unoptimised build on a shared container.
+        assert!(slowest < StdDuration::from_secs(10), "slowest {slowest:?}");
+    }
+
+    #[test]
+    #[ignore = "timing probe; run with --ignored --nocapture"]
+    fn round4_maximal_lists_many_events_probe() {
+        let events: usize = std::env::var("PROBE_EVENTS")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(200);
+        for freq in ["DAILY", "WEEKLY", "MONTHLY", "YEARLY"] {
+            let feed = maximal_lists_feed(freq, events, true);
+            let (took, out) = time_parse(&feed);
+            eprintln!(
+                "maximal lists {freq} x{events} from year 1: {} bytes, {took:?} -> {out:?}",
+                feed.len()
+            );
         }
     }
 
