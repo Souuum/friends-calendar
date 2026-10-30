@@ -2076,4 +2076,282 @@ END:VCALENDAR\r\n";
             "{error}"
         );
     }
+
+    // --- Verifier (SSRF round 2): the production policy at the resolver ---
+    //
+    // `PublicOnly` with a fake resolver, so the *resolver* path is what is
+    // under test - the names are ordinary, so the literal-host check passes
+    // them and only `CheckedResolver` can refuse. Every answer shape a
+    // hostile DNS record can give: each RFC 1918 / loopback / metadata
+    // family, IPv6 loopback, IPv4 mapped into IPv6, and round-robin answers
+    // with the private address in either position.
+    #[sqlx::test]
+    async fn verifier_production_resolver_refuses_every_private_answer_shape(db: PgPool) {
+        let internal = never_reached().await;
+        let port = internal.address().port();
+        let production = feed_client(
+            AddressPolicy::PublicOnly,
+            Some(fake_dns(&[
+                ("loop.example", &["127.0.0.1"]),
+                ("rfc1918.example", &["10.0.0.1"]),
+                ("metadata.example", &["169.254.169.254"]),
+                ("v6loop.example", &["::1"]),
+                ("mapped.example", &["::ffff:127.0.0.1"]),
+                ("compat.example", &["::7f00:1"]),
+                ("nat64.example", &["64:ff9b::a00:1"]),
+                ("sixtofour.example", &["2002:a00:1::"]),
+                ("ula.example", &["fd00::1"]),
+                ("public-first.example", &["8.8.8.8", "127.0.0.1"]),
+                ("private-first.example", &["127.0.0.1", "8.8.8.8"]),
+            ])),
+        );
+        for name in [
+            "loop.example",
+            "rfc1918.example",
+            "metadata.example",
+            "v6loop.example",
+            "mapped.example",
+            "compat.example",
+            "nat64.example",
+            "sixtofour.example",
+            "ula.example",
+            "public-first.example",
+            "private-first.example",
+        ] {
+            let url = format!("http://{name}:{port}/cal.ics");
+            // `sync_error` fails the test if this takes >5s, i.e. if it
+            // tried to connect (8.8.8.8 on a wiremock port would hang).
+            let error = sync_error(&db, &production, &url).await;
+            assert!(error.to_lowercase().contains("private"), "{name}: {error}");
+        }
+    }
+
+    // The same resolver check on a redirect *hop* whose target is a name: the
+    // literal check passes it, so only resolution can refuse it.
+    #[sqlx::test]
+    async fn verifier_a_redirect_to_a_name_that_resolves_privately_is_refused(db: PgPool) {
+        let internal = never_reached().await;
+        let port = internal.address().port();
+        let public = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(302).insert_header(
+                "Location",
+                format!("http://internal.test:{port}/cal.ics").as_str(),
+            ))
+            .mount(&public)
+            .await;
+        let client = feed_client(
+            AddressPolicy::AllowLoopback,
+            Some(fake_dns(&[
+                ("calendar.test", &["127.0.0.1"]),
+                ("internal.test", &["10.0.0.1"]),
+            ])),
+        );
+
+        let error = sync_error(&db, &client, &feed_url(&public)).await;
+
+        assert!(error.to_lowercase().contains("private"), "{error}");
+    }
+
+    // Production client, *system* DNS, names other than `localhost` (which
+    // the literal check catches before DNS). Which of these resolve to
+    // loopback depends on the machine - /etc/hosts usually maps
+    // `ip6-localhost` to ::1, Debian maps the hostname to 127.0.1.1, and
+    // `localtest.me` is public DNS pointing at loopback - so the test asks
+    // the system first and insists at least one of them does.
+    #[sqlx::test]
+    async fn verifier_production_client_refuses_system_dns_names_that_resolve_to_loopback(
+        db: PgPool,
+    ) {
+        let internal = never_reached().await;
+        let port = internal.address().port();
+        let hostname = std::fs::read_to_string("/etc/hostname")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let mut candidates = vec![
+            "ip6-localhost".to_string(),
+            "ip6-loopback".to_string(),
+            "localtest.me".to_string(),
+        ];
+        if !hostname.is_empty() {
+            candidates.push(hostname);
+        }
+        let production = feed_client(AddressPolicy::PublicOnly, None);
+        let mut checked = Vec::new();
+        for name in candidates {
+            let Ok(addrs) = tokio::net::lookup_host((name.as_str(), port)).await else {
+                continue;
+            };
+            if !addrs.into_iter().any(|a| check_feed_ip(a.ip()).is_err()) {
+                continue;
+            }
+            let url = format!("http://{name}:{port}/cal.ics");
+            let error = sync_error(&db, &production, &url).await;
+            assert!(error.to_lowercase().contains("private"), "{name}: {error}");
+            checked.push(name);
+        }
+        assert!(
+            !checked.is_empty(),
+            "no candidate name resolved to a private address on this machine"
+        );
+    }
+
+    // Spellings that might slip past the literal-host check. Each must be
+    // refused (or not parse at all) when the URL is saved.
+    #[test]
+    fn verifier_alternate_spellings_of_private_hosts_are_refused() {
+        for raw in [
+            "http://LOCALHOST/cal.ics",
+            "http://LocalHost./cal.ics",
+            "http://foo.LOCALHOST/cal.ics",
+            "http://0x7f.1/cal.ics",
+            "http://127.1/cal.ics",
+            "http://0177.0.0.1/cal.ics",
+            "http://0/cal.ics",
+            "http://0x0a000001/cal.ics",
+            "http://google.com@127.0.0.1/cal.ics",
+            "http://google.com:80@10.0.0.1/cal.ics",
+            "http://[::]/cal.ics",
+            "http://[::7f00:1]/cal.ics",
+            "http://[::a00:1]/cal.ics",
+            "http://[::ffff:a00:1]/cal.ics",
+            "http://[64:ff9b::a00:1]/cal.ics",
+            "http://[2002:a00:1::1]/cal.ics",
+            "http://[fe80::1%25eth0]/cal.ics",
+            "webcal://127.0.0.1/cal.ics",
+            "webcal://LOCALHOST./cal.ics",
+            " http://127.0.0.1/cal.ics ",
+        ] {
+            assert!(
+                normalise_feed_url(raw).is_err(),
+                "{raw:?} was accepted as {:?}",
+                normalise_feed_url(raw)
+            );
+        }
+    }
+
+    // A redirect to a scheme other than http(s) must not be followed - the
+    // save-time scheme check does not run on redirect hops.
+    #[sqlx::test]
+    async fn verifier_a_redirect_to_a_non_http_scheme_is_not_followed(db: PgPool) {
+        let internal = never_reached().await;
+        let port = internal.address().port();
+        for target in [
+            format!("gopher://calendar.test:{port}/_GET%20/cal.ics"),
+            format!("webcal://calendar.test:{port}/cal.ics"),
+            format!("ftp://calendar.test:{port}/cal.ics"),
+            "file:///etc/passwd".to_string(),
+            "file:///etc/hostname".to_string(),
+            format!("dict://calendar.test:{port}/"),
+        ] {
+            let public = MockServer::start().await;
+            Mock::given(method("GET"))
+                .respond_with(ResponseTemplate::new(302).insert_header("Location", target.as_str()))
+                .mount(&public)
+                .await;
+            let user = a_user(&db, &format!("u{}", public.address().port())).await;
+            let url = feed_url(&public);
+            let id = connect_ics(&db, user, &url, None).await.unwrap();
+
+            let outcome = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                sync_one(&db, &test_feed_client(), id, &url, now()),
+            )
+            .await
+            .expect("still fetching after 5s");
+
+            assert!(outcome.is_err(), "redirect to {target} was followed");
+            assert_eq!(cached(&db, id).await, 0, "{target}");
+        }
+    }
+
+    // A redirect loop ends in a readable error, quickly, not a hang.
+    #[sqlx::test]
+    async fn verifier_a_redirect_loop_is_cut_off(db: PgPool) {
+        let public = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(302).insert_header("Location", "/cal.ics"))
+            .mount(&public)
+            .await;
+        let user = a_user(&db, "alice").await;
+        let url = feed_url(&public);
+        let id = connect_ics(&db, user, &url, None).await.unwrap();
+
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            sync_one(&db, &test_feed_client(), id, &url, now()),
+        )
+        .await
+        .expect("still redirecting after 5s")
+        .expect_err("a redirect loop synced");
+
+        let requests = public.received_requests().await.unwrap_or_default().len();
+        assert!(requests <= MAX_FEED_REDIRECTS + 1, "{requests} requests");
+        let shown = format!("{error:#}").to_lowercase();
+        assert!(shown.contains("redirect"), "{shown}");
+    }
+
+    // ⚠️ Mutates process-wide proxy variables, which `Client::new()` in any
+    // concurrently running test would pick up - so ignored by default and run
+    // on its own: `cargo test verifier_proxy_env -- --ignored`.
+    #[sqlx::test]
+    #[ignore]
+    async fn verifier_proxy_env_vars_are_ignored_by_the_feed_client(db: PgPool) {
+        let proxy = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(FEED))
+            .expect(0)
+            .mount(&proxy)
+            .await;
+        let landing = serving(FEED).await;
+        let proxy_url = proxy.uri();
+        let vars = [
+            "HTTP_PROXY",
+            "http_proxy",
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ];
+        // SAFETY: test is #[ignore]d and run alone; no other thread reads env.
+        unsafe {
+            for v in vars {
+                std::env::set_var(v, &proxy_url);
+            }
+        }
+        let client = test_feed_client();
+        unsafe {
+            for v in vars {
+                std::env::remove_var(v);
+            }
+        }
+        let user = a_user(&db, "alice").await;
+        let url = feed_url(&landing);
+        let id = connect_ics(&db, user, &url, None).await.unwrap();
+
+        let count = sync_one(&db, &client, id, &url, now()).await.unwrap();
+
+        assert_eq!(count, 1, "fetched directly, not through the proxy");
+    }
+
+    // No over-blocking: the real production client, system DNS, a real
+    // public Google calendar feed. Network, so ignored by default:
+    // `cargo test verifier_a_real_google -- --ignored`.
+    #[tokio::test]
+    #[ignore]
+    async fn verifier_a_real_google_feed_fetches_through_the_production_client() {
+        let url = normalise_feed_url(
+            "https://calendar.google.com/calendar/ical/en.usa%23holiday%40group.v.calendar.google.com/public/basic.ics",
+        )
+        .unwrap();
+        let body = fetch_feed(&feed_client(AddressPolicy::PublicOnly, None), &url)
+            .await
+            .expect("a public Google feed must fetch through the production client");
+        assert!(
+            body.contains("BEGIN:VCALENDAR"),
+            "{}",
+            &body[..body.len().min(200)]
+        );
+    }
 }
