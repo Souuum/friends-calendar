@@ -20,6 +20,16 @@ ignore = [
     # `cargo tree -i rsa` finds nothing, i.e. the crate is never compiled.
     "RUSTSEC-2023-0071",
 
+    # libsqlite3-sys 0.30.1 - bundled C SQLite, CVE-2026-119375. Same shape
+    # as rsa above: it is only pulled in via sqlx's `sqlite` feature
+    # (sqlx-sqlite 0.8.6), which this project does not enable, so it sits in
+    # Cargo.lock without ever being compiled - `cargo tree --workspace -i
+    # libsqlite3-sys --target all --all-features` prints nothing. The fixed
+    # version (>= 0.39.0) is outside what sqlx 0.8 accepts; it goes away with
+    # a sqlx 0.9 upgrade, which is not worth doing for a crate that isn't
+    # built. Drop this entry when sqlx is bumped.
+    "RUSTSEC-2026-0459",
+
     # rustls-webpki 0.102.8 (x4) - certificate/CRL parsing and name-constraint
     # flaws. These ARE genuinely compiled into the backend, via:
     #   serenity 0.12.5 -> tokio-tungstenite 0.21 -> rustls 0.22 -> rustls-webpki 0.102
