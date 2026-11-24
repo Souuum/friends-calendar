@@ -3,14 +3,22 @@
   import IconButton from '$lib/components/atoms/ArrowButton.svelte';
   import ViewSwitcher from '$lib/components/atoms/ViewSwitcher.svelte';
 
+  /** Heading text, e.g. the month or date range on screen. Rendered as given. */
   export let title: string;
+  /** The view the switcher highlights: `day`, `week`, `month` or `list`. */
   export let view: ViewType;
+  /** Called when the left arrow ("Previous") is clicked. */
   export let onPrev: () => void;
+  /** Called when the right arrow ("Next") is clicked. */
   export let onNext: () => void;
+  /** Called when "Today" is clicked. */
   export let onToday: () => void;
-  // Lifted to Calendar.svelte (rather than owned here) so the Free-tonight
-  // bar's "Propose a time" button can open the same modal instance - see
-  // .claude/skills/mockup-calendar-redesign/SKILL.md.
+  /**
+   * Called when "+ New Event" is clicked.
+   * Lifted to Calendar.svelte (rather than owned here) so the Free-tonight
+   * bar's "Propose a time" button can open the same modal instance - see
+   * .claude/skills/mockup-calendar-redesign/SKILL.md.
+   */
   export let onNewEvent: () => void;
 </script>
 

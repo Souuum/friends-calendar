@@ -19,6 +19,7 @@ const index = loadIndex();
 const stories = index.filter((entry) => entry.type === 'story');
 const docs = index.filter((entry) => entry.type === 'docs');
 const storyIds = new Set(stories.map((story) => story.id));
+const docIds = new Set(docs.map((doc) => doc.id));
 
 test('the build contains stories', () => {
   // Guards the loop below: an empty index would otherwise pass vacuously.
@@ -68,16 +69,18 @@ for (const doc of docs) {
     await page.goto(`/iframe.html?id=${doc.id}&viewMode=docs`);
     await expect(page.locator('#storybook-docs h1').first()).toBeVisible();
 
-    // Links between pages are plain `?path=/story/<id>` hrefs, which nothing
-    // else checks: renaming a story would leave a dead link on the homepage.
+    // Links between pages are plain `?path=/story/<id>` or `?path=/docs/<id>`
+    // hrefs, which nothing else checks: renaming a story would leave a dead
+    // link on the homepage.
     const linked = await page
-      .locator('#storybook-docs a[href^="?path=/story/"]')
-      .evaluateAll((links) =>
-        links.map((link) => link.getAttribute('href')!.replace('?path=/story/', ''))
-      );
+      .locator('#storybook-docs a[href^="?path=/"]')
+      .evaluateAll((links) => links.map((link) => link.getAttribute('href')!));
     expect(
-      linked.filter((id) => !storyIds.has(id)),
-      'links to stories that do not exist'
+      linked.filter((href) => {
+        const [, kind, id] = /^\?path=\/(story|docs)\/([^&#]+)/.exec(href) ?? [];
+        return !(kind === 'story' ? storyIds : docIds).has(id);
+      }),
+      'links to pages that do not exist'
     ).toEqual([]);
     expect(errors, 'errors were thrown while rendering').toEqual([]);
   });

@@ -2,6 +2,7 @@
   import Icon from '$lib/components/atoms/Icon.svelte';
   import type { Status } from '$lib/types';
   import { createEventDispatcher } from 'svelte';
+  /** The current answer, whose button is filled (`pending` fills none). Bindable: set on click. */
   export let status: Status;
 
   const dispatch = createEventDispatcher();

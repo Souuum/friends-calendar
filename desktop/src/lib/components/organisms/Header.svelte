@@ -10,7 +10,9 @@
   import { resolvedTheme, toggleTheme } from '$lib/theme';
   import Icon from '$lib/components/atoms/Icon.svelte';
 
+  /** The `user` store itself (from `$lib/stores`), not a `User` object: the header reads `$user.username`. */
   export let user;
+  /** Image URL for the avatar in the profile menu trigger. */
   export let avatarUrl: string;
   /** The screen you're on, as the mockup's header shows it. */
   export let title = '';

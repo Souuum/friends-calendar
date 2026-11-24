@@ -6,6 +6,10 @@
   import EventCardParticipant from './EventCardParticipant.svelte';
   import { formatDate } from '$lib/utils/dateUtils';
 
+  /**
+   * The event to show. `is_creator` adds the "Creator" badge and the delete
+   * button; otherwise a set `my_status` adds the RSVP buttons.
+   */
   export let event: EventWithParticipants;
 
   const dispatch = createEventDispatcher();

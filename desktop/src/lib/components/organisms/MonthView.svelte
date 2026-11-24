@@ -10,12 +10,17 @@
   import { dateUtils } from '$lib/utils/dateUtils';
   import type { ExternalBusy } from '$lib/types';
 
+  /** The dates to draw, one cell each, seven per row - normally `dateUtils.getMonthGrid(date)`. */
   export let monthGrid: Date[];
+  /** Any date in the month being shown. Cells outside that month are dimmed. */
   export let currentMonth: Date;
+  /** Returns the events of a given day. Called once per cell. */
   export let eventsForDay: (day: Date) => EventWithParticipants[];
+  /** Called with the event when one of its chips is clicked. */
   export let onEventClick: ((event: EventWithParticipants) => void) | undefined = undefined;
   /** The day currently filtering the list below the grid, if any. */
   export let selectedDay: Date | null = null;
+  /** Called with the day when a cell is clicked, or activated with Enter or Space. */
   export let onDayClick: ((day: Date) => void) | undefined = undefined;
   /** Long press (touch) or double-click (mouse): start an event on that day. */
   export let onDayLongPress: ((day: Date) => void) | undefined = undefined;

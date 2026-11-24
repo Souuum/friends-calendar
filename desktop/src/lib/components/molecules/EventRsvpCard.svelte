@@ -4,13 +4,16 @@
   import EventCardParticipant from '$lib/components/atoms/event/EventCardParticipant.svelte';
   import { formatDate } from '$lib/utils/dateUtils';
 
-  // Read-only: shows whether you (and everyone else) responded to a
-  // calendar event - it doesn't let you change your RSVP from here, that
-  // already exists via EventPeekPanel (opened from the calendar view).
-  // Originally AnnouncementCard.svelte / the old event-RSVP /announcements
-  // page; renamed when that page was replaced by a real Discord-message
-  // feed (services::discord_feed) so "Announcement" stopped meaning this.
-  // Still used by the friend-detail page's "Shared events" section.
+  /**
+   * The event to show. Its `my_status` drives the badge.
+   * Read-only: shows whether you (and everyone else) responded to a
+   * calendar event - it doesn't let you change your RSVP from here, that
+   * already exists via EventPeekPanel (opened from the calendar view).
+   * Originally AnnouncementCard.svelte / the old event-RSVP /announcements
+   * page; renamed when that page was replaced by a real Discord-message
+   * feed (services::discord_feed) so "Announcement" stopped meaning this.
+   * Still used by the friend-detail page's "Shared events" section.
+   */
   export let event: EventWithParticipants;
 
   function statusColor(status?: string) {

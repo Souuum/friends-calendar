@@ -5,7 +5,10 @@
   // The chronological counterpart to MonthView/WeekView/DayView: upcoming
   // events grouped by day. This is what makes the calendar usable at 402px,
   // where a 7-column grid leaves ~55px per day.
+
+  /** Events to list. Ones that have already started are dropped; the rest are grouped by local day, soonest first. */
   export let events: EventWithParticipants[] = [];
+  /** Called with the event when one of its rows is clicked. Omit it and rows do nothing. */
   export let onEventClick: ((event: EventWithParticipants) => void) | undefined = undefined;
 
   // Grid views are anchored to whatever month/week you're looking at; a list

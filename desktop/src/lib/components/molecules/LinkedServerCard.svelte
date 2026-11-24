@@ -2,6 +2,7 @@
   import type { LinkedServerInfo } from '$lib/types';
   import Avatar from '$lib/components/atoms/Avatar.svelte';
 
+  /** The Discord server to show, as returned by `GET /api/discord/server`. `icon_url` and `approximate_member_count` are optional. */
   export let server: LinkedServerInfo;
 </script>
 

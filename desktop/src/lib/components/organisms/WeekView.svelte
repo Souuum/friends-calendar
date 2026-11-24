@@ -9,8 +9,11 @@
   import { mergedBusyForDay, type DayBusy } from '$lib/utils/busyBlocks';
   import type { ExternalBusy } from '$lib/types';
 
+  /** The seven dates of the week being shown, in order - normally `dateUtils.getWeekDays(date)`. */
   export let weekDays: Date[];
+  /** Returns the events of a given day. Called once per day. */
   export let eventsForDay: (day: Date) => EventWithParticipants[];
+  /** Called with the event when its block is clicked. */
   export let onEventClick: ((event: EventWithParticipants) => void) | undefined = undefined;
   /** Imported busy blocks across the week. Context only - never events. */
   export let busy: ExternalBusy[] = [];

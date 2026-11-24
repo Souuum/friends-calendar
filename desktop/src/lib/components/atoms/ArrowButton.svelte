@@ -1,5 +1,7 @@
 <script lang="ts">
+  /** Accessible name, used as `aria-label` - the button has no visible text. */
   export let label: string;
+  /** Which way the chevron points. */
   export let direction: 'left' | 'right' = 'left';
 
   $: commands = direction === 'left' ? 'M15 19l-7-7 7-7' : 'M9 5l7 7-7 7';

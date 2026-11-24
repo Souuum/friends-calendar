@@ -2,6 +2,10 @@
   import type { EventWithParticipants } from '$lib/types';
   import { statusOf } from '$lib/utils/eventStatus';
 
+  /**
+   * The event to show. `my_status` colours the rail, `is_participant: false`
+   * mutes the chip, and `participants.length` is the headcount.
+   */
   export let event: EventWithParticipants;
 
   $: status = statusOf(event.my_status);
