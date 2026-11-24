@@ -2,7 +2,9 @@
   import type { EventWithParticipants } from '$lib/types';
   import { HOUR_HEIGHT } from '$lib/utils/timeGrid';
 
+  /** The event to draw. Its start minute sets the top offset and its duration the height (one hour when it has no `end_time`). */
   export let event: EventWithParticipants;
+  /** Called when the block is clicked. */
   export let onClick: (() => void) | undefined = undefined;
 
   // HOUR_HEIGHT rather than a literal 80: it has to match TimeSlot's

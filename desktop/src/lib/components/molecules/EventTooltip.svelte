@@ -3,8 +3,11 @@
   import EventCard from '$lib/components/EventCardImpl.svelte';
   import { createEventDispatcher } from 'svelte';
 
+  /** The events to show, one card each. An empty list renders nothing, even when `isVisible`. */
   export let events: EventWithParticipants[];
+  /** Whether the tooltip is rendered at all. */
   export let isVisible = false;
+  /** Top-left corner in viewport pixels (`position: fixed`), usually derived from the hovered cell. */
   export let position: { x: number; y: number } = { x: 0, y: 0 };
 
   const dispatch = createEventDispatcher();

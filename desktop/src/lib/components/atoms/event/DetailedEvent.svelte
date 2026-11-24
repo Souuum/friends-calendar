@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { EventWithParticipants } from '$lib/types';
 
+  /** The event to show: `title`, `start_time`/`end_time` (time of day only) and `description`. */
   export let event: EventWithParticipants;
 
   function formatTime(time?: string) {

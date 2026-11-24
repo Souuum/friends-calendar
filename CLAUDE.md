@@ -2671,8 +2671,40 @@ top-level ones). Two shared helpers:
   - Code blocks render **asynchronously**: the highlighter loads after the
     page. A screenshot taken straight after load shows them missing.
   - The smoke test also renders every docs page and fails on a
-    `?path=/story/<id>` link to a story that doesn't exist, so renaming a
-    story can't leave the homepage with a dead link. Mutation-tested.
+    `?path=/story/<id>` or `?path=/docs/<id>` link to a page that doesn't
+    exist, so renaming a story can't leave the homepage with a dead link.
+    Mutation-tested.
+- **Every component has a Docs page** (2026-11-12): `tags: ['autodocs']` in
+  `.storybook/preview.js`. The page is generated but its words are not: a
+  `/** */` above `defineMeta` in the story file is the description and usage
+  example, a `/** */` above each `export let` is that prop's row, and an HTML
+  comment above a `<Story>` is that story's text. `docs.test.ts` (in
+  `yarn test`) fails on a missing description, an undocumented prop, or a prop
+  no story sets. How to write one: `.claude/skills/add-tests/SKILL.md`,
+  "Documenting a component".
+  - ⚠️ A `<!-- @component -->` block in the component is **not** shown. Only
+    the comment above `defineMeta` is.
+  - ⚠️ **Children of `<Story>` are not slot content.** Without `asChild` the
+    addon renders `<Component {...args} {children} />`, and a Svelte 4
+    `<slot />` ignores a `children` prop: the Button story had rendered an
+    empty button since it was written, and two chevron stories rendered the
+    wrong icon. Both built, type-checked and passed the smoke test. Slot
+    content goes through a `template` snippet; other markup needs `asChild`.
+  - ⚠️ **A docs page mounts every story of a file in one document**, so
+    stories that set a store or stub `api` in `beforeEach` all show whichever
+    state was set last, and `position: fixed` UI covers the page. Those files
+    set `parameters.docs.story = { inline: false, height }` to get a frame
+    each. Found by reading a screenshot of AdminGate's page: four stories, one
+    state. `docs.test.ts` requires it for any file using `beforeEach`.
+  - ⚠️ **`globals.viewport` does nothing on a docs page by itself.** It only
+    resizes the canvas in story view, so a "mobile" story showed the desktop
+    layout there. `narrowDocsFrame` in `.storybook/preview.js` narrows a
+    story's own frame from inside it, which only works for a story that has
+    one: a story that sets a viewport must also be `inline: false`
+    (`docs.test.ts` requires it).
+  - ⚠️ **Docs frames are `loading="lazy"`.** One below the fold has not
+    loaded, so it measures ~1000px wide and looks un-narrowed. Scroll it into
+    view before measuring or taking a screenshot.
 - `src/test/stories/fixtures.ts` - typed fixtures, with times relative to
   *now* so the grid views always open on a month/week/day that has events.
 - `src/test/stories/mockApi.ts` - `mockApi({...})` stubs methods on the

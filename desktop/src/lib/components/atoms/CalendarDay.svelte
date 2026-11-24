@@ -1,7 +1,11 @@
 <script lang="ts">
+  /** The day to show. Only its day-of-month number is rendered. */
   export let date: Date;
+  /** Draws the filled accent circle behind the number. */
   export let isToday = false;
+  /** `false` for a day outside the shown month: a lighter font weight. Ignored when `isToday`. */
   export let isCurrentMonth = true;
+  /** `large` is a 25px box (month grid, week header), `small` a 22px one (mobile day strip). */
   export let size: 'small' | 'large' = 'large';
 
   $: isLarge = size === 'large';

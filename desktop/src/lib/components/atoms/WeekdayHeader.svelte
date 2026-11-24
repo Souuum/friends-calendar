@@ -1,4 +1,5 @@
 <script lang="ts">
+  /** Seven column labels, in display order. Defaults to English names, Monday first. */
   export let weekdays: string[] = [
     'Monday',
     'Tuesday',

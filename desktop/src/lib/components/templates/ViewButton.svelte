@@ -1,5 +1,7 @@
 <script lang="ts">
+  /** The row: `label` is the text, `badge` a count shown on the right (hidden when 0 or absent). `view` is the route the caller navigates to in `on:click` - the button itself never reads it. */
   export let item: { label: string; view: string; badge?: number };
+  /** Marks this row as the page being shown: tint pill, accent dot and `aria-current="page"`. Default `false`. */
   export let current: boolean = false;
 </script>
 

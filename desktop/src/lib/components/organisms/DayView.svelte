@@ -9,7 +9,9 @@
   import { mergedBusyForDay, type DayBusy } from '$lib/utils/busyBlocks';
   import type { ExternalBusy } from '$lib/types';
 
+  /** The events of the day being shown, already filtered to it by the caller. Required. */
   export let events: EventWithParticipants[];
+  /** Called with the event when its block is clicked. */
   export let onEventClick: ((event: EventWithParticipants) => void) | undefined = undefined;
   /** Imported busy blocks for this day. Context only - never events. */
   export let busy: ExternalBusy[] = [];

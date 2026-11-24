@@ -2,8 +2,11 @@
   import Avatar from '$lib/components/atoms/Avatar.svelte';
   import ChevronDown from '$lib/components/icons/ChevronDown.svelte';
   import ChevronUp from '$lib/components/icons/ChevronUp.svelte';
+  /** Name shown next to the avatar. Hidden below the `sm` breakpoint, truncated when long. */
   export let username = '';
+  /** Avatar image URL. */
   export let avatar = '';
+  /** Whether the menu is open: picks the chevron (up when `true`). The chevron button flips it, so `bind:show` works. */
   export let show = false;
 </script>
 

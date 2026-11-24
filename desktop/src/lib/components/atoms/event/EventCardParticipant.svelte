@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ParticipantInfo } from '$lib/types';
 
+  /** The guest list. The first five are shown, tinted by `status`; the rest become "+N more". */
   export let participants: ParticipantInfo[];
 
   function getStatusColor(status: string) {

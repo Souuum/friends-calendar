@@ -73,6 +73,7 @@
 </script>
 
 <script lang="ts">
+  /** Which glyph to draw. Names describe meaning (`price`), not shape. */
   export let name: IconName;
   /** Pixel size of the square box. Matches the adjacent text's line height. */
   export let size: number | string = 20;

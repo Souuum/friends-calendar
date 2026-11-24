@@ -1,6 +1,9 @@
 <script lang="ts">
   import type { ButtonType } from '$lib/types';
+
+  /** Visual style. `primary` is the only one defined; any other value renders unstyled. */
   export let variant = 'primary';
+  /** Native `type` attribute. Use `submit` inside a `<form>` so Enter submits it. */
   export let type: ButtonType = 'button';
 </script>
 

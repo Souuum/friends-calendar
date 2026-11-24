@@ -15,6 +15,8 @@
   // that component was deleted rather than revived as the mobile sheet, since
   // it predated the mockup's STATUS palette and had no edit or
   // is_participant handling.
+
+  /** The selected event. `null` shows a "Select an event" hint in the side panel and renders no sheet. */
   export let event: EventWithParticipants | null = null;
 
   const dispatch = createEventDispatcher();

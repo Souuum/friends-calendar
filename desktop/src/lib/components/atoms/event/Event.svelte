@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { EventWithParticipants } from '$lib/types';
 
+  /** The event to show: its `title` and the time of day of `start_time`. */
   export let event: EventWithParticipants;
 </script>
 

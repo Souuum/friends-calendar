@@ -14,6 +14,7 @@
   import { statusOf } from '$lib/utils/eventStatus';
   import { createEventDispatcher } from 'svelte';
 
+  /** Every event to show, already fetched by the parent - the views, filter chips and peek panel all work from this list. Default `[]` renders an empty calendar. */
   export let events: EventWithParticipants[] = [];
 
   const dispatch = createEventDispatcher();

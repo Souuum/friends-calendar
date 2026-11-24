@@ -104,6 +104,22 @@ beforeEach: () => mockApi({ getFriends: async () => FRIENDS });
 The stubs are type-checked against the real client, so a fake response with the wrong shape
 fails `yarn run check`.
 
+### Documenting a component
+
+Every component has a **Docs** page: how to use it, a props table with live controls, and its
+stories. The page is generated, and its words come from three comments:
+
+- **How to use it:** a `/** ... */` comment directly above `defineMeta` in the story file.
+  Markdown, with a usage example, plus what a props table can't say: slot content, events,
+  stores and API calls.
+- **What each prop does:** a `/** ... */` comment directly above each `export let` in the
+  component.
+- **What each story shows:** an HTML comment directly above its `<Story>`.
+
+[Atoms / Button](?path=/docs/components-atoms-button--docs) is the reference. `yarn test` fails
+on a component with no description, an undocumented prop, or a prop no story sets
+(`docs.test.ts`).
+
 `yarn test:storybook` builds Storybook and opens every story in Chromium. It fails on any
 story that throws or logs an error, and it runs in CI as the **Storybook** job.
 

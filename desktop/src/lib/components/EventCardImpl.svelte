@@ -4,6 +4,7 @@
   import type { EventWithParticipants } from '$lib/types';
   import EventCard from './atoms/event/EventCard.svelte';
 
+  /** The event to show. Passed straight to `EventCard`; its `id` is what the RSVP and delete calls target. */
   export let event: EventWithParticipants;
 
   const dispatch = createEventDispatcher();

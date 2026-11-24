@@ -1,6 +1,9 @@
 <script lang="ts">
+  /** Whether the overlay is rendered at all. `false` renders nothing, slot included. */
   export let visible = false;
+  /** How strongly the page behind is blurred. */
   export let blurAmount: 'sm' | 'md' | 'lg' = 'sm';
+  /** How dark the tint over the page is: 30%, 50% or 70%. */
   export let opacity: 'light' | 'medium' | 'dark' = 'medium';
 
   const blurClasses = {

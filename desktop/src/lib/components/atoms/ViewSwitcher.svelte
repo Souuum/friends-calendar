@@ -2,6 +2,7 @@
   import type { ViewType } from '$lib/types';
   import { createEventDispatcher } from 'svelte';
 
+  /** The selected view: `day`, `week`, `month` or `list`. Set on click, so `bind:view` works. */
   export let view: ViewType;
 
   const dispatch = createEventDispatcher();

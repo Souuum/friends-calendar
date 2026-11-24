@@ -6,9 +6,11 @@
   import { dateUtils } from '$lib/utils/dateUtils';
   import type { EventWithParticipants, FriendInfo, GuildInfo, Visibility } from '$lib/types';
 
-  // Null = create a new event, an event = edit that one. One nullable
-  // prop rather than a separate `isEditing` boolean, so the two can't
-  // contradict each other.
+  /**
+   * Null = create a new event, an event = edit that one. One nullable
+   * prop rather than a separate `isEditing` boolean, so the two can't
+   * contradict each other.
+   */
   export let event: EventWithParticipants | null = null;
   /**
    * A date to open a *new* event on, when creation started from a specific

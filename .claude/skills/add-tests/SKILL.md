@@ -238,6 +238,62 @@ and opens every story in Chromium, failing on any that throws or logs an
 error; type-checking and the build both pass on a story that crashes on
 mount. CI runs it as the **Storybook** job.
 
+### Documenting a component
+
+`tags: ['autodocs']` in `.storybook/preview.js` gives every story file a
+**Docs** page: a description, a props table with live controls, then each
+story. The page is generated, but the words on it come from three places, and
+`src/test/stories/docs.test.ts` (in `yarn test`) fails naming the file or prop
+when one is missing. The reference pair is `atoms/Button.svelte` +
+`atoms/button.stories.svelte`.
+
+1. **How to use it: a `/** ... */` comment directly above
+   `const { Story } = defineMeta(`** in the story file. Markdown. Say what the
+   component is for, show a real call site in a ` ```svelte ` fence, and name
+   what a props table can't: slot content, dispatched events, stores it reads,
+   `api` calls it makes on mount.
+   ⚠️ A `<!-- @component -->` block inside the component is **not** shown on
+   the docs page. Only this comment is.
+2. **What each prop does: a `/** ... */` comment directly above each
+   `export let`** in the component. It becomes that row's description; type
+   and default are read from the code. Say what the value changes, not what
+   its type is.
+3. **Every prop is illustrated by a story**, each with an HTML comment
+   (`<!-- ... -->`) directly above its `<Story>`, which becomes the text over
+   that story. For a closed set of values, add `argTypes` so the control is a
+   picker rather than a text box:
+   `argTypes: { size: { control: 'inline-radio', options: ['sm', 'md'] } }`.
+
+`component:` must be the real component. The props table is generated from
+it, so a story-only wrapper there (needed for `bind:` or an event handler)
+documents the wrapper. Render the wrapper from a `template` snippet instead.
+
+Two traps, both of which type-check and build:
+
+- ⚠️ **Children of `<Story>` are not slot content.** Without `asChild`, the
+  addon renders `<Component {...args} {children} />`, and a Svelte 4
+  component with a `<slot />` ignores a `children` prop, so the story shows
+  the component **empty** (or, if the children were other markup entirely,
+  the meta component alone). For slot content use
+  `{#snippet template(args)}<Button {...args}>Label</Button>{/snippet}`, which
+  keeps the controls working. For arbitrary markup use `<Story asChild>`.
+- ⚠️ **Stories that use `beforeEach` need a frame each on the docs page.** The
+  page mounts every story of the file in one document, and `beforeEach` here
+  means a store or the `api` singleton is being set, which is shared: inline,
+  every story shows whichever state was set last. The same goes for
+  `position: fixed` UI (modals, sheets, the tab bar), which would cover the
+  page. In the meta:
+  `parameters: { docs: { story: { inline: false, height: '140px' } } }`.
+  Set `height`; the default frame is 100px tall.
+- ⚠️ **A story that sets `globals.viewport` needs a frame too.** The viewport
+  only resizes the canvas in story view; on the docs page an inline story is
+  as wide as the page, so a "mobile" story shows the desktop layout.
+  `narrowDocsFrame` in `.storybook/preview.js` narrows the story's frame to
+  the viewport's width, and only a story with `inline: false` has a frame.
+  Per story:
+  `<Story name="Mobile" globals={{ viewport: { value: 'mobile1', isRotated: false } }} parameters={{ docs: { story: { inline: false, height: '600px' } } }} />`.
+  Docs frames load lazily, so scroll one into view before judging its width.
+
 ## Checklist before calling a feature done
 
 - [ ] Pure logic pulled out and unit-tested where it was easy to do so
@@ -251,6 +307,9 @@ mount. CI runs it as the **Storybook** job.
 - [ ] Every new or changed component has stories for those same states
       under `src/test/stories/components/` (`coverage.test.ts` enforces
       that one exists), and `yarn test:storybook` passes
+- [ ] Its Docs page says how to use it: a description with a usage example
+      above `defineMeta`, a doc comment on every prop, and a story for each
+      (`docs.test.ts` enforces all three, and the two `inline: false` rules)
 - [ ] `cargo test`, `cargo clippy -D warnings` (backend) and `yarn test`,
       `yarn run check` (frontend) all pass, with no *new* warnings beyond
       this repo's known pre-existing ones

@@ -1,9 +1,15 @@
 <script lang="ts">
+  /** Whether the dialog is rendered. Nothing is in the DOM while `false`. */
   export let isOpen = false;
+  /** Maximum width of the panel: `sm` (28rem), `md` (42rem), `lg` (56rem), `xl` (72rem) or `full`. */
   export let size: 'sm' | 'md' | 'lg' | 'xl' | 'full' = 'md';
+  /** Where the panel sits vertically in the viewport: `center`, `top` or `bottom`. */
   export let position: 'center' | 'top' | 'bottom' = 'center';
+  /** Called when a backdrop click or Escape asks to close. The caller sets `isOpen` to `false`; without it neither closes anything. */
   export let onClose: (() => void) | undefined = undefined;
+  /** Whether a click outside the panel calls `onClose`. */
   export let closeOnBackdrop = true;
+  /** Whether pressing Escape while open calls `onClose`. */
   export let closeOnEscape = true;
 
   const sizeClasses = {

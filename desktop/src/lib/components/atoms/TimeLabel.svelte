@@ -1,5 +1,7 @@
 <script lang="ts">
+  /** Hour of the day, 0-23. Shown on a 12-hour clock: `9` is "09:00 AM", `15` is "03:00 PM". */
   export let hour: number;
+  /** Text alignment inside the label's box. */
   export let align: 'left' | 'right' = 'right';
   /**
    * Drops the minutes and pads less: "9 AM" instead of "09:00 AM". The

@@ -2,10 +2,15 @@
   import type { EventWithParticipants } from '$lib/types';
   import CalendarEvent from '$lib/components/atoms/CalendarEvent.svelte';
 
+  /** The events to list, in the order given. Only the first `maxVisible` are rendered. */
   export let events: EventWithParticipants[];
+  /** How each event is drawn, passed to `CalendarEvent`: `compact`, `default`, `detailed` or `card`. */
   export let variant: 'compact' | 'default' | 'detailed' | 'card' = 'default';
+  /** How many events to render before cutting the list off. */
   export let maxVisible = 3;
+  /** Show a "+N more" line when there are more than `maxVisible` events. Off by default: the rest are dropped silently. */
   export let showMore = false;
+  /** Called with the event when one is clicked. The click does not propagate to the parent. */
   export let onEventClick: ((event: EventWithParticipants) => void) | undefined = undefined;
 </script>
 

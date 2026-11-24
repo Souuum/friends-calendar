@@ -1,5 +1,7 @@
 <script lang="ts">
+  /** The hour this cell stands for. Not rendered - the cell looks the same for every hour. */
   export let hour: number;
+  /** Tints the cell to show that something happens during this hour. */
   export let hasEvents = false;
 </script>
 
